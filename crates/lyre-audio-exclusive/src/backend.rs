@@ -586,7 +586,7 @@ impl AudioBackend for ExclusiveBackend {
                     // 目标就是旧设备，没有可回滚的别处，交给失联退避或下一次显式操作。
                     return Err(AudioError::from(switch_err));
                 }
-                // 新设备不可用，把旧设备的流重建回来，别让一次失败的切换把声音弄没。
+                // 新设备不可用，回滚到旧设备；避免一次失败的切换中断声音。
                 let rollback = match self.configure(previous, preferred) {
                     Ok(()) => self
                         .rebuild(decoder, &path, start, playing)

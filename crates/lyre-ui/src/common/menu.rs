@@ -122,7 +122,7 @@ impl TrackMenuHooks {
     }
 
     /// 换掉「播放」的落点，默认是列表规则（见 [`track_context_menu`]）。
-    /// 队列行必须换。走 `activate_in_view` 会把队列重设成曲库顺序，随机模式当场失效。
+    /// 队列行必须换。走 `activate_in_view` 会把队列重设成曲库顺序，随机模式立即失效。
     pub fn play(mut self, hook: impl Fn(TrackId, &mut App) + 'static) -> Self {
         self.play = Some(Rc::new(hook));
         self

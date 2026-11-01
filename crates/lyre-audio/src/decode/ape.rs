@@ -1,5 +1,5 @@
 //! APE（Monkey's Audio）解码。symphonia 的 `ape` feature 只注册标签读取器，没有音频解码器。
-//! 它的 MPEG 探测会把 APE 的压缩数据误判成 MP3 帧同步并报「成功」，实际吐出满刻度噪声。
+//! 其 MPEG 探测会把 APE 压缩数据误判为 MP3 帧同步并返回成功，实际输出满刻度噪声。
 //! 这里用 `ape-decoder`。纯 Rust、无 FFI；按帧解码，`decode_all()` 会把整首装进内存。
 
 use std::fs::File;

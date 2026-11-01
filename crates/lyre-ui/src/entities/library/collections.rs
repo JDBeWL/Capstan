@@ -20,7 +20,7 @@ pub struct CollectionSummary {
     pub cover_id: Option<TrackId>,
 }
 
-/// 认得的图片扩展名，只决定拷贝时保留哪个后缀；能否解码由图片库判定。
+/// 可识别的图片扩展名，只决定拷贝时保留哪个后缀；能否解码由图片库判定。
 const IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "webp", "gif", "bmp"];
 
 /// FNV-1a。只当文件名用，稳定即可。

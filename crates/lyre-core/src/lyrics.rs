@@ -1,5 +1,5 @@
 //! 歌词侧文件，负责 `.lrc`、`.ass`、`.ssa` 的解析与同目录查找。不读音频、不依赖 UI，可单测。
-//! 双语是同一时间戳上的两行，第一条是原文。ASS 的角色靠 Style 名认，LDDC 把 `ts` 整块写在 `orig` 之前。
+//! 双语是同一时间戳上的两行，第一条是原文。ASS 的角色依据 Style 名称识别，LDDC 把 `ts` 整块写在 `orig` 之前。
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -108,7 +108,7 @@ pub fn parse(text: &str) -> Lyrics {
         let mut body = line.trim_start();
         let mut starts: Vec<Duration> = Vec::new();
 
-        // 只吃掉行首连续的标签；遇到段名这类非时间戳的方括号就停下，但保留已收集的时间戳。
+        // 只处理行首连续的标签；遇到段名这类非时间戳的方括号就停止，但保留已收集的时间戳。
         while let Some(tag) = leading_tag(body) {
             if let Some(start) = parse_time(tag.content) {
                 starts.push(start);
@@ -631,7 +631,7 @@ pub fn load_for_audio(audio: &Path) -> Option<Lyrics> {
     (!lyrics.is_empty()).then_some(lyrics)
 }
 
-/// 侧文件没有强制编码，中文发行里 GBK/GB18030 仍常见。UTF-8 解不动就整段退到 GB18030，
+/// 侧文件没有强制编码，中文发行里 GBK/GB18030 仍常见。UTF-8 解码失败时整体回退到 GB18030，
 /// 不逐行试；逐行会让一首歌里混进两种编码。
 fn decode_text(bytes: &[u8]) -> String {
     if let Ok(text) = std::str::from_utf8(bytes) {

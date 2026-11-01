@@ -19,7 +19,7 @@ use crate::error::{AudioError, Result};
 
 /// 淡入、淡出与换设备交叉淡化的时长。60ms 够抹平接缝。
 const FADE: Duration = Duration::from_millis(60);
-/// 淡出结束后再多留一会儿才丢旧输出流，确保增益真的走到了 0。
+/// 淡出结束后再多保留一段时间才丢弃旧输出流，确保增益确实到达 0。
 const FADE_MARGIN: Duration = Duration::from_millis(20);
 
 /// 一次构建的产物，含音源、时长与用于淡出的增益手柄。
@@ -328,7 +328,7 @@ impl RodioBackend {
         self.pending = None;
 
         // 平滑切换。旧流继续出声、增益推向 0，几十毫秒后才断开。盖住新流预建的那段空窗。
-        // 不平滑则当场断开。
+        // 不平滑时立即断开。
         if self.smooth_switch && self.gain.is_some() {
             if let Some(control) = self.gain.take() {
                 control.set_target(0.0);
@@ -546,7 +546,7 @@ mod tests {
         path
     }
 
-    /// 先让解码线程把素材搬进通道再读。欠载时 `LockFreeSource` 会吐 0.0 撑流，
+    /// 先让解码线程把素材搬进通道再读。欠载时 `LockFreeSource` 会输出 0.0 维持流，
     /// 样本数与声道相位都会对不上。
     fn drain(source: Box<dyn rodio::Source<Item = f32> + Send>) -> Vec<f32> {
         std::thread::sleep(Duration::from_millis(100));

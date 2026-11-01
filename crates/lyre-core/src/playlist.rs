@@ -817,7 +817,7 @@ mod tests {
         assert_eq!(p.current().unwrap().id, track(4).id);
     }
 
-    /// 整队都播不了不能原地打转，也不能假装播得了。一律当成走到头。
+    /// 整队都无法播放时不能原地循环，也不能按可播放处理；一律按到达末尾处理。
     #[test]
     fn an_entirely_unplayable_queue_stops_instead_of_spinning() {
         let mut p = Playlist::new();

@@ -58,8 +58,8 @@ impl SearchBox {
         }
     }
 
-    /// 别处把查询词清掉后框里要跟上，否则留着的是一个已经不存在的过滤。
-    /// 只镜像不是我们提交的那份。防抖的 120ms 里用户可能又打了字，旧值盖掉新值等于吃掉 keystroke。
+    /// 别处清除查询词后输入框需要同步，否则会保留一个已不存在的过滤条件。
+    /// 只镜像非本组件提交的值。防抖的 120ms 内用户可能继续输入，旧值覆盖新值会导致按键丢失。
     fn mirror_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let query = self.library.read(cx).query().to_string();
         if query == self.submitted {

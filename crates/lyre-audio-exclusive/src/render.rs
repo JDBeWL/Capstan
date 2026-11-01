@@ -418,7 +418,7 @@ impl Renderer {
         self.check_drained();
     }
 
-    /// 推送已结束且环已排空。整首放完了，如实上报，但先别停流。
+    /// 推送已结束且环已排空。整首已播放完毕，如实上报，但暂不停止流。
     /// 宽限到点仍无新曲目时，才交给 [`Self::release_if_idle`] 释放设备。
     fn check_drained(&mut self) {
         if !self.shared.producer_done() {

@@ -268,7 +268,7 @@ fn natural_end_is_reported_exactly_once() {
     });
     wait_for(&rx, |e| matches!(e, PlayerEvent::Loaded { .. }));
 
-    // 先播一会儿。线程要看到过一次「未播空」，之后 empty() 的结论才被采信（防切歌瞬间误报）
+    // 先播放一段时间。线程需观察到一次「未播空」，之后 empty() 的结论才被采信（防切歌瞬间误报）。
     std::thread::sleep(Duration::from_millis(150));
 
     state.finished.store(true, Relaxed);
@@ -404,7 +404,7 @@ fn switching_device_mid_playback_does_not_report_the_track_as_ended() {
         autoplay: true,
     });
     wait_for(&rx, |e| matches!(e, PlayerEvent::Loaded { .. }));
-    // 先让它播一会儿，`seen_content` 才会置真。之后 empty() 的结论才被采信。
+    // 先播放一段时间，`seen_content` 才会置真。之后 empty() 的结论才被采信。
     std::thread::sleep(Duration::from_millis(150));
 
     // 换流的那一瞬间新音源还没出声，empty() 会短暂为 true。
@@ -515,7 +515,7 @@ fn dropping_one_clone_keeps_the_audio_thread_running() {
             Err(RecvTimeoutError::Timeout) | Ok(_) => {}
         }
     }
-    assert!(disconnected, "最后一个句柄析构之后音频线程才该收工");
+    assert!(disconnected, "最后一个句柄析构之后音频线程才应结束");
 }
 
 #[test]
@@ -540,7 +540,7 @@ fn dropping_the_handle_shuts_the_thread_down() {
             Err(RecvTimeoutError::Timeout) | Ok(_) => {}
         }
     }
-    assert!(disconnected, "句柄析构之后音频线程应当收工");
+    assert!(disconnected, "句柄析构之后音频线程应当结束");
 }
 
 #[test]
@@ -589,8 +589,8 @@ fn the_backend_output_detail_is_announced_after_every_load() {
     wait_for(&rx, |e| matches!(e, PlayerEvent::OutputModeChanged { .. }))
         .expect("创建后端时应当报一次输出模式");
 
-    // 模拟一次重新协商。独占会按新曲目的声源口径重开流，报出来的口径跟着变。
-    // 只在创建后端时报一次的话，界面上会一直停在第一首的口径上，看着像「切歌没重新协商」。
+    // 模拟一次重新协商。独占会按新曲目的声源格式重开流，上报的格式随之变化。
+    // 若只在创建后端时上报一次，界面会一直沿用第一首的格式，表现为「切歌后未重新协商」。
     *state.reported.lock().unwrap() = "44100 Hz / 2 声道 / 32-bit int".to_owned();
     handle.send(PlayerCommand::Load {
         path: PathBuf::from("/music/夏の終わり.flac"),

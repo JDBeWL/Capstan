@@ -190,8 +190,8 @@ pub fn group_by_album(tracks: &[Track]) -> Vec<AlbumGroup> {
         group.absorb(track);
     }
 
-    // `order` 就是按这个 map 的键攒出来的，两边一一对应；`remove` 顺手把 map 抽干，
-    // 所以不需要「取不到就 panic」的兜底。
+    // `order` 按这个 map 的键生成，两边一一对应；`remove` 会同时清空 map，
+    // 因此不需要「取不到就 panic」的兜底。
     let mut result: Vec<AlbumGroup> = order
         .into_iter()
         .filter_map(|title| groups.remove(&title))

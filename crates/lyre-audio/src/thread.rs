@@ -315,7 +315,7 @@ impl AudioThread {
     }
 
     /// 把后端切到目标设备。换流之后新音源在头几毫秒里 `empty()` 仍可能为 true，所以要和 [`Self::handle`]
-    /// 里 `Play` 那样清掉两个结束判定标记，否则 `tick` 会误报 Ended，界面当场跳下一曲。
+    /// 里 `Play` 那样清掉两个结束判定标记，否则 `tick` 会误报 Ended，界面立即跳到下一曲。
     fn switch_output(&mut self, id: Option<&str>) {
         let outcome = self
             .backend
@@ -771,7 +771,7 @@ mod tests {
             events.try_recv(),
             Ok(PlayerEvent::State(PlaybackState::Paused))
         ));
-        // 后端此刻报 is_finished，但流是断的，不能顺手报 Ended。
+        // 后端此刻报 is_finished，但流已断开，不能同时报告 Ended。
         assert!(matches!(events.try_recv(), Err(mpsc::TryRecvError::Empty)));
 
         notices

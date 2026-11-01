@@ -340,7 +340,7 @@ impl Terrain {
     }
 
     fn at(&self, x: f32, y: f32) -> f32 {
-        // 先把地面掰弯一点，线才会漂，不会笔直穿过整片。
+        // 先将坐标系轻微弯曲，线条才会偏移，不会笔直穿过整片。
         let bent_x = x + 0.06 * self.width * bend(y / self.height, 1.3, 1.7);
         let bent_y = y + 0.06 * self.height * bend(x / self.width, 0.9, 0.4);
         let mut value = (bent_x * self.slope.0 + bent_y * self.slope.1) / self.width;

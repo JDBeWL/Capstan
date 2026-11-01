@@ -131,8 +131,8 @@ impl RingReader {
         let epoch = self.ring.epoch();
         if epoch != self.epoch {
             self.epoch = epoch;
-            // 只丢作废那一刻的存量。作废之后写进来的是新一代的数据，留着当场就能读出去。
-            // 整环清空的话，切歌时新曲目开头那一段就被白扔了。
+            // 只丢作废那一刻的存量。作废之后写入的是新一代数据，保留后可直接读出。
+            // 整环清空的话，切歌时新曲目开头的一段会被丢弃。
             self.discard(self.ring.stale());
         }
 
@@ -203,7 +203,7 @@ mod tests {
         assert_eq!(writer.write(&[0.1, 0.2]), 0, "满了就该写不进去");
     }
 
-    /// 作废之后写进来的样本属于新世代。读取端第一次读要丢掉旧存量，同时当场交出新的。
+    /// 作废之后写入的样本属于新世代。读取端第一次读要丢掉旧存量，同时立即交出新的。
     #[test]
     fn a_swap_discards_only_what_was_there_before_it() {
         let (ring, writer, mut reader) = SampleRing::new();

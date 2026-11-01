@@ -48,7 +48,7 @@ pub fn recent_cards(tracks: &[Track], limit: usize) -> Vec<RecentCard> {
     out
 }
 
-/// 「N 首」→「N+1 首」。只认 `recent_cards` 写出去的格式，认不出的按 1 首重起。
+/// 「N 首」→「N+1 首」。只接受 `recent_cards` 写出的格式，无法识别时按 1 首重新开始。
 fn bump(meta: &str) -> String {
     let n: usize = meta
         .strip_suffix(" 首")

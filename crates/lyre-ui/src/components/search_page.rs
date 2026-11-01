@@ -754,7 +754,7 @@ impl SearchPage {
         col.into_any_element()
     }
 
-    /// `AlbumGrid` 不读搜索词，「查看全部」切过去是全量网格。这里只保证入口可达，不假装已过滤。
+    /// `AlbumGrid` 不读搜索词，「查看全部」切过去是全量网格。这里只保证入口可达，不代表已应用过滤。
     fn block_header(&self, title: &'static str, section: NavSection, total: usize) -> AnyElement {
         let mut row = div()
             .flex_none()

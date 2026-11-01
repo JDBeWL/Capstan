@@ -50,7 +50,7 @@ impl Roots {
         true
     }
 
-    /// 移掉一条。只认完全相同的目录，不做包含判断，移除父目录不该顺手带走子目录那一行。
+    /// 移掉一条。只匹配完全相同的目录，不做包含判断；移除父目录不应一并移除子目录对应行。
     pub fn remove(&mut self, path: &Path) -> bool {
         let path = normalise(path);
         let before = self.items.len();

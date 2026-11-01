@@ -222,8 +222,8 @@ impl Render for VolumeControl {
                     this.end_drag(cx);
                 }),
             )
-            // 条外松手也要结束拖动。`on_mouse_up` 要求松手时元素仍被命中，横着甩出去就收不到，
-            // 那样 `drag` 一直留着，轨道和滑块卡在「正在拖」的样子上。
+            // 条外松手也要结束拖动。`on_mouse_up` 要求松手时元素仍被命中，在控件外松手就收不到，
+            // 那样 `drag` 会一直保留，轨道和滑块停留在「正在拖」的状态。
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|this, _event: &MouseUpEvent, _window, cx| {

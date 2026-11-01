@@ -1,4 +1,4 @@
-//! Symphonia 解码器。逐样本吐交错 f32，不依赖 GPUI，也不依赖输出设备。
+//! Symphonia 解码器。逐样本输出交错 f32，不依赖 GPUI，也不依赖输出设备。
 
 use std::fs::File;
 use std::io::{Read, Seek};
@@ -117,7 +117,7 @@ impl AudioBuffer {
     }
 }
 
-/// 一个音轨的 symphonia 解码器。实现 [`Iterator`]，逐样本吐交错 f32，声道数与声源一致。
+/// 一个音轨的 symphonia 解码器。实现 [`Iterator`]，逐样本输出交错 f32，声道数与声源一致。
 pub struct SymphoniaDecoder {
     path: PathBuf,
     sample_rate: u32,
@@ -130,7 +130,7 @@ pub struct SymphoniaDecoder {
     track_id: Option<u32>,
     current_sample: u64,
     source_channels: u16,
-    /// 累计解出的样本数。把「一个样本都没有」（文件放不了，必须报错）和「正常放完」分开。
+    /// 累计解出的样本数。用于区分「没有任何样本」（文件无法解码，必须报错）与「正常结束」。
     decoded_samples: u64,
 }
 
@@ -138,7 +138,7 @@ impl SymphoniaDecoder {
     pub fn new(path: &Path) -> Result<Self> {
         let mut file = File::open(path).map_err(AudioError::FileOpen)?;
 
-        // 魔数认得出的文件在探测前拦下。改了扩展名的 APE / WavPack / Ogg-Opus 会被 symphonia 当成可播，实际输出满刻度噪声或全零。
+        // 可识别魔数的文件在格式探测前拦截。改了扩展名的 APE / WavPack / Ogg-Opus 会被 symphonia 当作可播放文件，实际输出满刻度噪声或全零。
         // `initialize` 只由这里建出的实例调用。
         let mut head = Vec::with_capacity(lyre_core::SIGNATURE_PROBE_LEN);
         (&mut file)
@@ -257,8 +257,8 @@ impl SymphoniaDecoder {
             attempts += 1;
         }
 
-        // 一个样本都没解出来就是「这个文件放不了」，必须当错误报上去。放在 `EndOfStream` 放行之前：
-        // 只剩外壳的文件会立刻 EOF，吞下去这首一上来就被判成放完，列表循环时像队列在无声快进。
+        // 一个样本都没解出来说明文件无法解码，必须当错误上报。放在 `EndOfStream` 放行之前：
+        // 只有外壳的文件会立即 EOF；若按正常结束处理，该曲会被判为已播完，列表循环时表现为无声快进。
 
         if self.decoded_samples == 0 {
             return Err(AudioError::NoAudioData);

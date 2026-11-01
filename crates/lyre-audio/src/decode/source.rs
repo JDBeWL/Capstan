@@ -31,7 +31,7 @@ const CHUNK: usize = 16_384;
 /// 有界通道容量，按块计。约 5 秒 48kHz 立体声 PCM，约 2MB。
 const CHANNEL_CAPACITY_CHUNKS: usize = 30;
 
-/// 回收通道容量，音频通道里的块 + 生产端手里的一块 + 消费端手里的一块。
+/// 回收通道容量，音频通道里的块 + 生产端持有的一块 + 消费端持有的一块。
 /// 定了这个上界，消费端归还时就不会遇到「通道满」，稳态下不产生释放。
 const RECYCLE_CAPACITY_CHUNKS: usize = CHANNEL_CAPACITY_CHUNKS + 2;
 
@@ -49,7 +49,7 @@ const WAIT_LIMIT: Duration = Duration::from_millis(200);
 /// 通道空置、解码尚未跟上时的策略，空时输出的 `0.0` 会被下游当作曲目内容。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WhenEmpty {
-    /// 立刻吐静音顶上。rodio 的 mixer 在音频回调线程上拉，那里绝不能阻塞。
+    /// 立即输出静音。rodio 的 mixer 在音频回调线程上拉取，该线程绝不能阻塞。
     /// 亏欠仅为一次回调的量，在几十毫秒以内，代价可以接受。
     PadWithSilence,
     /// 先等待真实样本，最长 `WAIT_LIMIT`；等不到时才以静音兜底。
@@ -80,7 +80,7 @@ impl LockFreeSource {
         let sample_rate = decoder.sample_rate();
         let total_duration = decoder.total_duration();
 
-        // 起线程之前先解一段出来，避免音频回调一上来就饿着。
+        // 起线程之前先解出一段，避免音频回调启动时无样本可读。
         decoder.prefill()?;
 
         let (sender, receiver) = bounded(CHANNEL_CAPACITY_CHUNKS);
@@ -154,7 +154,7 @@ impl LockFreeSource {
         self.producer_finished.load(Ordering::Acquire)
     }
 
-    /// 回调线程当前是否在靠静音撑流，说明解码跟不上播放。
+    /// 回调线程当前是否依赖静音维持流，表示解码速度跟不上播放。
     pub fn is_stalled(&self) -> bool {
         self.stalled
     }

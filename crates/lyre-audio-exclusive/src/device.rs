@@ -333,7 +333,7 @@ fn wave_format(
     )
 }
 
-/// 把设备接受的 `WaveFormat` 读回成我们的格式。认不出的容器直接跳过。
+/// 把设备接受的 `WaveFormat` 读回成我们的格式。无法识别的容器直接跳过。
 fn interpret(accepted: &WaveFormat) -> Option<ExclusiveFormat> {
     let bits = accepted.get_bitspersample();
     let valid = accepted.get_validbitspersample();

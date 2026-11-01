@@ -36,7 +36,7 @@ pub fn bucket_for(size: f32) -> u32 {
 const MAX_BYTES: usize = 32 * 1024 * 1024;
 
 /// 同时在解码的封面数上限。解码要按原尺寸分配一次 RGBA（库里最大的一张是 1366×1366 ≈ 7.5MB）。
-/// 等名额用定时重试而不是阻塞线程，等待者占着线程会把正在解的饿死。
+/// 等名额用定时重试而不是阻塞线程，等待者占用线程会阻塞正在进行的解码。
 const MAX_CONCURRENT_DECODES: usize = 4;
 const DECODE_SLOT_POLL: Duration = Duration::from_millis(20);
 

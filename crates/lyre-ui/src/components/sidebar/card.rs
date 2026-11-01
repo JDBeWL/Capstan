@@ -359,7 +359,7 @@ impl Sidebar {
     }
 }
 
-/// 下卡片外壳。`fills` = true 吃掉剩余高度（展开态列表要滚），false 按内容定高（图标态）。
+/// 下卡片外壳。`fills` = true 时占满剩余高度（展开态列表要滚动），false 时按内容定高（图标态）。
 /// 左右内边距与导航卡片相同。标题、Chip 与列表块共用一条边线。
 fn card_shell(fills: bool) -> Div {
     let card = div()

@@ -479,7 +479,7 @@ pub const MOTION_TOAST_IN_MS: u64 = 280;
 pub const MOTION_TOAST_OUT_MS: u64 = 160;
 
 /// CSS `cubic-bezier(x1, y1, x2, y2)` 的求值。牛顿迭代解 x(u) = t，再取 y(u)。
-/// gpui 的 `with_easing` 只吃 `Fn(f32) -> f32`，没有现成的贝塞尔构造器。
+/// gpui 的 `with_easing` 只接受 `Fn(f32) -> f32`，没有现成的贝塞尔构造器。
 fn cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32) -> impl Fn(f32) -> f32 {
     let sample = move |a: f32, b: f32, u: f32| {
         let v = 1.0 - u;

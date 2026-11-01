@@ -156,7 +156,7 @@ impl Render for SettingsPanel {
             for_resume.update(cx, |this, cx| this.set_resume_position(index == 0, cx));
         });
 
-        // 音频线程是另一条线程，落盘之外还得当场把新值送过去。
+        // 音频线程是另一条线程，落盘之外还需立即把新值发送过去。
         let smooth: Picker = Rc::new(move |index: usize, cx: &mut App| {
             let value = index == 0;
             for_smooth.update(cx, |this, cx| this.set_smooth_device_switch(value, cx));

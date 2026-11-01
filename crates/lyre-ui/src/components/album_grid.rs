@@ -348,7 +348,7 @@ fn card_item(
     let grid = grid.clone();
     let event = match card.kind {
         NavSection::Albums => GridEvent::OpenAlbum(title.clone()),
-        // `Tracks` 分支不可达，这里只是给个明确兜底。
+        // `Tracks` 分支不可达，这里只提供明确的兜底。
         _ => GridEvent::OpenArtist(title.clone()),
     };
 

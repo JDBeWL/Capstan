@@ -99,7 +99,7 @@ impl LibraryEntity {
         .detach();
     }
 
-    /// 导入一批路径（对话框、拖放、命令行）。目录顺手记成曲库根，以后补扫从这里出发。
+    /// 导入一批路径（对话框、拖放、命令行）。目录同时记录为曲库根，后续补扫从这里出发。
     pub fn import(&mut self, inputs: Vec<PathBuf>, cx: &mut Context<Self>) {
         if inputs.is_empty() {
             return;
@@ -149,7 +149,7 @@ impl LibraryEntity {
     }
 
     /// 重新扫描全部曲库根。只读新文件的标签，已在库的原样留着，
-    /// 所以重扫一个大目录也只是走一遍文件系统，不会把整库重读一遍。
+    /// 所以重扫一个大目录也只遍历文件系统，不会重读整个曲库。
     pub fn rescan(&mut self, cx: &mut Context<Self>) {
         self.rescan_with(false, cx);
     }

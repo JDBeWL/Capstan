@@ -16,7 +16,7 @@ const MAGIC: &[u8; 4] = b"wvpk";
 const HEADER_LEN: usize = 8;
 
 /// 按组解码。`StreamIndex` 只走块头、不解码，播放时按成员组一组一组解。
-/// 整首解进内存（24bit 5.1）是每五分钟 500MB；独占后端拿 `open` 做格式协商，全解要白等一秒多。
+/// 整首解进内存（24bit 5.1）是每五分钟 500MB；独占后端拿 `open` 做格式协商，全解会额外等待一秒以上。
 pub struct WavPackSource {
     /// 整个文件读进来并按块链截掉尾部标签。压缩数据比解出的 PCM 小得多，
     /// 而按组跳转要能随机访问，所以留整份。跨 seek 复用同一份（见 [`load_package`]）。
@@ -442,7 +442,7 @@ mod tests {
         assert!(trim_trailing_tag(b"wvpk").is_empty(), "只有魔数、没有头");
     }
 
-    /// `ck_size` 为 0 也是合法块，走完它应当继续看下一块而不是原地打转。
+    /// `ck_size` 为 0 也是合法块，走完它应当继续处理下一块，而不是反复读取同一块。
     #[test]
     fn a_zero_length_block_does_not_loop_forever() {
         let mut bytes = block(0);

@@ -91,7 +91,7 @@ fn the_head_of_a_track_never_gets_padded_with_invented_silence() {
     );
     let mut chain = SoftClip::new(ramped);
 
-    // 照推送线程那样一口气拉 40 万个样本（约 4 秒 @48k 立体声）
+    // 按推送线程的方式连续拉取 40 万个样本（约 4 秒 @48k 立体声）。
     let head: Vec<f32> = chain.by_ref().take(400_000).collect();
     assert!(head.len() > 300_000, "拉到的样本太少：{}", head.len());
 
@@ -327,7 +327,7 @@ fn a_zero_sample_rate_header_never_panics() {
 }
 
 /// 每个真实样本至少且恰好交付一次，且最终能判定结束。
-/// 断言非零样本数而非总数。欠载时源会吐 `0.0` 静音撑流，无节流的测试线程必然掺进静音。
+/// 断言非零样本数而非总数。欠载时源会输出 `0.0` 静音维持流，无节流的测试线程必然混入静音。
 #[test]
 fn lockfree_source_delivers_every_sample_then_reports_end() {
     let (_dir, path) = temp_wav("tone.wav");
@@ -353,7 +353,7 @@ fn lockfree_source_delivers_every_sample_then_reports_end() {
         real, 1_600,
         "800 帧立体声 = 1600 个真实样本，每个恰好交付一次"
     );
-    assert!(source.producer_finished(), "取完之后解码线程应当已经收工");
+    assert!(source.producer_finished(), "取完之后解码线程应当已经结束");
 }
 
 #[test]
@@ -399,7 +399,7 @@ fn dropping_the_source_releases_the_producer() {
     }
     assert!(
         released,
-        "drop 之后解码线程应当立刻收工并释放文件句柄，因为丢掉 receiver 是唯一能解开阻塞 send 的动作"
+        "drop 之后解码线程应当立即结束并释放文件句柄，因为丢弃 receiver 是唯一能解除阻塞 send 的动作"
     );
 }
 
@@ -421,8 +421,8 @@ fn a_renamed_ape_goes_to_the_ape_decoder_instead_of_the_mpeg_probe() {
     );
 }
 
-/// 伪装成 `.flac` 的 WavPack 必须按 `wvpk` 路由到 `oxideav-wavpack`，坏内容由它报 `Decode`。
-/// symphonia 没有 WavPack 的格式读取器，漏到它手里只会得到一句「认不出来」。
+/// 伪装成 `.flac` 的 `WavPack` 必须按 `wvpk` 路由到 `oxideav-wavpack`，坏内容由它报 `Decode`。
+/// symphonia 没有 `WavPack` 的格式读取器，格式探测会以 `Probe`（无法识别格式）失败。
 #[test]
 fn a_renamed_wavpack_goes_to_the_wavpack_decoder() {
     let (_dir, path) = temp_wav("disguised.flac");
@@ -440,7 +440,7 @@ fn a_renamed_wavpack_goes_to_the_wavpack_decoder() {
 }
 
 /// 伪装成 `.flac` 的 Ogg Opus 必须按「`OggS` + 偏移 28 处的 `OpusHead`」路由到 `opus-pure`。
-/// symphonia 认得 Ogg 容器，但里面装 Opus 它就只剩 `unsupported audio codec`。
+/// symphonia 支持 Ogg 容器，但没有 Opus 解码器，只会报 `unsupported audio codec`。
 #[test]
 fn a_renamed_ogg_opus_goes_to_the_opus_decoder() {
     let (_dir, path) = temp_wav("disguised.flac");
@@ -469,7 +469,7 @@ fn the_generic_engine_refuses_a_magic_it_recognises() {
     std::fs::write(&path, &bytes).unwrap();
 
     let Err(error) = SymphoniaDecoder::new(&path) else {
-        panic!("魔数认得出的文件不该落在通用引擎上");
+        panic!("可识别魔数的文件不应落到通用引擎上");
     };
     assert!(
         matches!(&error, AudioError::Unsupported(name) if name == "APE"),
@@ -477,8 +477,8 @@ fn the_generic_engine_refuses_a_magic_it_recognises() {
     );
 }
 
-/// 容器能打开、但一个样本都解不出来。必须报错，不能当成「放完了」：
-/// 这首一上来就「放完」，列表循环时看着像无声快进。
+/// 容器可打开、但解不出任何样本时必须报错，不能视为正常播放结束：
+/// 否则该曲会立即结束，列表循环时表现为无声快进。
 #[test]
 fn a_container_without_any_audio_data_reports_an_error() {
     let (_dir, path) = temp_wav("empty.wav");
@@ -486,7 +486,7 @@ fn a_container_without_any_audio_data_reports_an_error() {
 
     let decoder = TrackDecoder::open(&path).unwrap();
     let Err(error) = LockFreeSource::new(decoder, WhenEmpty::Wait) else {
-        panic!("一个样本都没有的文件不该建得起解码链路");
+        panic!("没有任何样本的文件不应建立解码链路");
     };
     assert!(
         matches!(error, AudioError::NoAudioData),

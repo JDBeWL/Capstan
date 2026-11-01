@@ -76,7 +76,7 @@ impl IconButton {
         self
     }
 
-    /// 选中态，整块黄底墨字。只靠白与灰两档认不出开关是开是关。
+    /// 选中态，整块黄底墨字。仅凭白与灰两档无法判断开关状态。
     pub fn active(mut self, active: bool) -> Self {
         if active {
             self.base_bg = theme::accent();

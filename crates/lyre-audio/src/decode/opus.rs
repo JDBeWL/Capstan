@@ -1,6 +1,6 @@
 //! Opus 与 Ogg 解码。
 //! symphonia 的 `all` 特性只注册 aac、adpcm、alac、flac、mpa、pcm、vorbis 七种。
-//! Ogg 认得出 Opus 流，建解码器时才报不支持，所以这里用 `opus-pure`，它纯 Rust 且自带 Ogg 封装。
+//! symphonia 能解析 Ogg 中的 Opus 流，但直到创建解码器才报告不支持；这里改用 `opus-pure`，纯 Rust 实现且自带 Ogg 封装。
 //! Opus 恒在 48kHz 解码，头里的 `input_sample_rate` 只是原素材的说明，不影响解码。
 
 use std::fs::File;
@@ -249,7 +249,7 @@ impl OpusSource {
         self.total
     }
 
-    /// 先把第一个包解出来，让「容器认得、里面解不动」在建链阶段就暴露。
+    /// 先解出第一个包，让「容器可解析、内容无法解码」在建链阶段暴露。
     pub fn prefill(&mut self) -> Result<()> {
         while self.pos >= self.packet.len() {
             if !self.pump()? {

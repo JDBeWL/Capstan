@@ -23,7 +23,7 @@ pub fn read_track(path: &Path) -> Result<Track> {
 }
 
 /// 读一首曲目，带同目录上下文。字段按「标签 → 文件名 → 目录名」三级兜底：
-/// 标签里写着的永远优先，标签缺的那一项才去猜。三级都拿不到就留空，不拿占位值糊弄界面。
+/// 标签优先，标签缺失的字段才从文件名推断。三级都取不到时留空，不使用占位值。
 pub fn read_track_in(path: &Path, folder: &FolderContext<'_>) -> Result<Track> {
     let tagged = Probe::open(path)
         .map_err(|source| CoreError::Tag {

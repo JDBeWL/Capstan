@@ -214,7 +214,7 @@ impl RootView {
                     refreshed,
                     quiet,
                 } => {
-                    // 补扫没有新增就不打扰用户，开机时「一切照旧」不是新闻。
+                    // 补扫没有新增时不提示用户，开机时状态未变无需通知。
                     // 放在最前面，空文件夹这类结果也别每次都报一遍。
                     if *quiet && *added == 0 {
                         return;
@@ -462,7 +462,7 @@ impl RootView {
         }
     }
 
-    /// 关面板与关歌词时外壳会立刻把状态置空，退出动画得由根视图把旧内容多留一会儿。
+    /// 关面板与关歌词时外壳会立刻把状态置空，退出动画需由根视图把旧内容多保留一段时间。
     #[allow(clippy::used_underscore_binding)]
     fn sync_overlay_closing(
         &mut self,

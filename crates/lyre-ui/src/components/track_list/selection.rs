@@ -15,7 +15,7 @@ impl TrackList {
         cx.entity().downgrade()
     }
 
-    /// 开关多选模式。关掉时顺手清掉勾选，下次打开从干净状态开始。
+    /// 开关多选模式。关闭时同时清除勾选，下次打开从空选择开始。
     pub(super) fn toggle_selection_mode(&mut self, cx: &mut Context<Self>) {
         self.selecting = !self.selecting;
         if self.selecting {

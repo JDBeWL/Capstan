@@ -43,7 +43,7 @@ struct Frame {
     lyrics_open: bool,
     sidebar: SidebarState,
     nav: NavSection,
-    /// 这一页画不画左上角的浮动返回按钮。只给「钻进去」的页面（作用域收窄、设置），一级区段走顶栏。
+    /// 这一页画不画左上角的浮动返回按钮。只给进入下级的页面（作用域收窄、设置），一级区段走顶栏。
     /// 搜索页用顶栏的后退和 Esc 退出，不画浮动按钮。
     /// 判据是历史栈而不是作用域。从网格进专辑时作用域收窄了，但历史里记着网格。
     show_back: bool,
@@ -455,7 +455,7 @@ impl RootView {
             .left_0()
             .size_full()
             .bg(theme::text().opacity(0.5))
-            // 命中测试默认会连下层一起收，不拦住的话点遮罩会顺手点到底下的卡片。
+            // 命中测试默认会包含下层元素；若不拦截，点击遮罩会同时命中底层卡片。
             .occlude()
             .on_click(move |_, _, cx| {
                 shell.update(cx, ShellEntity::close_panel);
@@ -568,7 +568,7 @@ fn panel_id(tab: PanelTab) -> &'static str {
     }
 }
 
-/// 只在拖拽期间存在于元素树，常驻但靠透明度隐藏的遮罩仍会吃掉整窗点击（透明度不参与命中测试）。
+/// 只在拖拽期间存在于元素树；常驻但靠透明度隐藏的遮罩仍会拦截整个窗口的点击（透明度不参与命中测试）。
 fn drop_hint() -> impl IntoElement {
     div()
         .id(DROP_HINT_ID)

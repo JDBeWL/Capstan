@@ -135,7 +135,7 @@ impl Render for SeekBar {
                         }),
                     )
                     // 条外松手也要结束拖动。`on_mouse_up` 要求松手时元素仍被命中，
-                    // 甩出这条 22px 命中区再松手就收不到，`drag` 会一直留着、进度显示冻结在预览值。
+                    // 在 22px 命中区外松手就收不到，`drag` 会一直保留、进度显示冻结在预览值。
                     .on_mouse_up_out(
                         MouseButton::Left,
                         cx.listener(|this, _event: &MouseUpEvent, _window, cx| {

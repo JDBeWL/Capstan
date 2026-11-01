@@ -583,7 +583,7 @@ fn role_of(kind: Bracket, text: &str, dirs: DirHints<'_>, folder: &FolderContext
             }
         }
         // 圆括号里是「(周杰伦)」还是「(Live)」只能看内容。纯中文的短名字当艺术家，
-        // 其余一律接回标题。弄错了只是标题多一个括号，弄丢了才是信息永久消失。
+        // 其余一律接回标题。判断错误只会让标题多一个括号，丢弃则会导致信息永久丢失。
         Bracket::Round => {
             if is_cjk_name(text) {
                 Role::Artist
@@ -660,7 +660,7 @@ const VERSION_MARKERS: &[&str] = &[
     "版",
 ];
 
-/// 只可能是垃圾的词，如压制组、论坛、码率、格式。看着像这些的括号内容整段丢掉。
+/// 只可能是噪声的词，如压制组、论坛、码率、格式。括号内容若属于这些类别则整段丢弃。
 const JUNK_MARKERS: &[&str] = &[
     "www.", "http", "://", ".com", ".cn", "论坛", "压制", "首发", "整理", "分享", "kbps", "320k",
     "128k", "flac", "mp3", "wav", "dsd", "hires", "hi-res",
