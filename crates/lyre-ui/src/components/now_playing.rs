@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use lyre_core::{Track, UNKNOWN_ARTIST, artist_key_str, format_duration};
+use lyre_core::{Track, UNKNOWN_ARTIST, artist_keys_str, format_duration};
 
 use crate::common::thousands;
 use crate::cover::CoverCache;
@@ -110,49 +110,45 @@ impl NowPlaying {
         }
     }
 
-    /// 从曲库派生的三样：当前曲的艺术家名、该艺术家的分组统计、队列里的下一首。
+    /// 从曲库派生的三样：当前曲的艺术家们、每位艺术家的分组统计、队列里的下一首。
     /// 全部读缓存 / 只取两首，适合每帧调用。
     fn derived(&self, track: Option<&Track>, cx: &mut App) -> Derived {
         App::update_entity(cx, &self.library, |library, _| {
-            let artist = track
-                .and_then(|t| t.artist.as_deref())
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(str::to_owned);
+            // 标签里的「甲/乙」是两个人，不是一个人名：艺术家分组里也没有这一整串。
+            // 按拆开的单人查统计与关注，一栏里就该列几行；查整串会让统计和关注一起消失。
+            let groups = library.artists();
+            let artists = shown_artists(track.and_then(|t| t.artist.as_deref()))
+                .into_iter()
+                .map(|name| ArtistLine {
+                    stats: groups
+                        .iter()
+                        .find(|group| group.name == name)
+                        .map(|group| (group.track_count(), group.album_count())),
+                    following: library.is_following(name),
+                    name: name.to_owned(),
+                })
+                .collect();
 
-            // 统计与关注都认拆分后的第一位：艺术家分组里没有「甲/乙」这一整串，
-            // 拿整串去查会让这一栏的统计和关注按钮一起消失。显示的艺术家名仍是标签原文。
-            let primary = artist
-                .as_deref()
-                .map(|name| artist_key_str(Some(name)))
-                .filter(|name| *name != UNKNOWN_ARTIST);
-
-            let stats = primary.and_then(|name| {
-                library
-                    .artists()
-                    .iter()
-                    .find(|group| group.name == name)
-                    .map(|group| (group.track_count(), group.album_count()))
-            });
-
-            let following = primary.map(|name| library.is_following(name));
             // `upcoming(2)` 的第一首是当前曲（光标位），第二首才是真正的「下一首」。
             let next = library.upcoming(2).into_iter().nth(1);
 
-            Derived {
-                artist,
-                stats,
-                following,
-                next,
-            }
+            Derived { artists, next }
         })
     }
 }
 
-struct Derived {
-    artist: Option<String>,
+/// 「关于艺术家」卡里的一行。一首歌有几位艺术家就有几行 —— 每行各自关注、各自计数。
+struct ArtistLine {
+    /// 拆分后的单个名字，见 `lyre_core::artist_keys`。
+    name: String,
+    /// 这位艺术家名下的曲目数与专辑数；曲库里查不到（刚移出）时为 `None`。
     stats: Option<(usize, usize)>,
-    following: Option<bool>,
+    following: bool,
+}
+
+struct Derived {
+    /// 空表表示这一首没有可显示的艺术家，整张卡不画。
+    artists: Vec<ArtistLine>,
     next: Option<Track>,
 }
 
@@ -167,12 +163,7 @@ impl Render for NowPlaying {
                 playback.error().map(ToOwned::to_owned),
             )
         };
-        let Derived {
-            artist,
-            stats,
-            following,
-            next,
-        } = self.derived(track.as_ref(), cx);
+        let Derived { artists, next } = self.derived(track.as_ref(), cx);
 
         let canvas = div()
             .relative()
@@ -321,13 +312,8 @@ impl Render for NowPlaying {
             .gap(px(theme::GAP_LG))
             .child(hero);
 
-        if let Some(artist) = artist {
-            body = body.child(about_artist(
-                artist,
-                stats,
-                following.unwrap_or(false),
-                self.library.clone(),
-            ));
+        if !artists.is_empty() {
+            body = body.child(about_artist(artists, &self.library));
         }
 
         if let Some(track) = track.as_ref() {
@@ -384,22 +370,53 @@ fn card() -> Div {
         .p(px(theme::GAP_MD))
 }
 
-/// 「关于艺术家」卡：纸色底 + 1px 细线，不引入第二套色相。
-fn about_artist(
-    name: String,
-    stats: Option<(usize, usize)>,
-    following: bool,
-    library: Entity<LibraryEntity>,
-) -> AnyElement {
-    let stats_text = match stats {
-        Some((tracks, albums)) => {
-            format!("{} 首 │ {} 张专辑", thousands(tracks), thousands(albums))
-        }
-        None => String::new(),
-    };
+/// 这一栏要列的艺术家：标签按「/」「,」拆成单个人，并剔掉「未知艺术家」——
+/// 那一位没有主页也没有统计，列出来只是一行噪音，整张卡这时干脆不画。
+/// 拆分口径必须与 [`lyre_core::artist_keys`] 一致，否则点进去的组与这里的名字对不上。
+fn shown_artists(artist: Option<&str>) -> Vec<&str> {
+    artist_keys_str(artist)
+        .into_iter()
+        .filter(|name| *name != UNKNOWN_ARTIST)
+        .collect()
+}
 
+/// 「关于艺术家」卡：纸色底 + 1px 细线，不引入第二套色相。
+/// 一首歌挂了几位艺术家就画几行：标签里的「甲/乙」是两个人，不是一个人名，
+/// 关注与曲目数都得各算各的，所以下面没有「合起来」的那一条。
+fn about_artist(artists: Vec<ArtistLine>, library: &Entity<LibraryEntity>) -> AnyElement {
+    let mut card = div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap(px(theme::GAP_SM))
+        .bg(theme::window_base())
+        .border_1()
+        .border_color(theme::border())
+        .p(px(theme::GAP_MD))
+        .child(crate::common::section::eyebrow("Artist"));
+
+    for (index, line) in artists.into_iter().enumerate() {
+        // 第二位起先压一条细线：不留缝的话几位艺术家的名字会挤成一段，看不出是两个人。
+        if index > 0 {
+            card = card.child(div().w_full().h(px(1.)).bg(theme::border()));
+        }
+        card = card.child(artist_row(index, line, library.clone()));
+    }
+
+    card.into_any_element()
+}
+
+/// 一位艺术家：名字 + 关注按钮，下面是这位名下的曲目数与专辑数。
+fn artist_row(index: usize, line: ArtistLine, library: Entity<LibraryEntity>) -> AnyElement {
+    let ArtistLine {
+        name,
+        stats,
+        following,
+    } = line;
+
+    // id 必须带序号：同一个卡里出现两枚同 id 的按钮，悬停与点击状态会串。
     let follow = crate::common::button::toggle_chip(
-        "np-follow",
+        SharedString::from(format!("np-follow-{index}")),
         if following {
             Glyph::HeartFilled
         } else {
@@ -422,16 +439,11 @@ fn about_artist(
         }
     });
 
-    let mut card = div()
+    let mut row = div()
         .w_full()
         .flex()
         .flex_col()
         .gap(px(theme::GAP_SM))
-        .bg(theme::window_base())
-        .border_1()
-        .border_color(theme::border())
-        .p(px(theme::GAP_MD))
-        .child(crate::common::section::eyebrow("Artist"))
         .child(
             div()
                 .w_full()
@@ -451,30 +463,41 @@ fn about_artist(
                 .child(follow),
         );
 
-    if !stats_text.is_empty() {
-        card = card.child(
+    if let Some((tracks, albums)) = stats {
+        row = row.child(
             div()
                 .text_size(px(theme::FONT_CAPTION))
                 .text_color(theme::text_muted())
-                .child(stats_text),
+                .child(format!(
+                    "{} 首 │ {} 张专辑",
+                    thousands(tracks),
+                    thousands(albums)
+                )),
         );
     }
 
-    card.into_any_element()
+    row.into_any_element()
 }
 
 /// 「制作人员」：曲目标签里只有艺术家 / 专辑 / 格式，没有词曲、制作人，只列可得的字段。
+/// 艺术家逐行列（第二行起不重复标签）：一行只写一个人，不把「甲/乙」当成一个人名。
 fn credits(track: &Track) -> AnyElement {
     let format = track.format().unwrap_or_else(|| "未知".to_owned());
+    let artists = shown_artists(track.artist.as_deref());
 
-    card()
+    let mut card = card()
         .child(crate::common::section::eyebrow("Credits"))
-        .child(crate::common::section::section_heading("制作人员"))
-        .child(credit_row(
-            "艺术家",
-            track.artist.as_deref().unwrap_or("未知"),
-        ))
-        .child(credit_row("专辑", track.album.as_deref().unwrap_or("未知")))
+        .child(crate::common::section::section_heading("制作人员"));
+
+    if artists.is_empty() {
+        card = card.child(credit_row("艺术家", "未知"));
+    } else {
+        for (index, name) in artists.into_iter().enumerate() {
+            card = card.child(credit_row(if index == 0 { "艺术家" } else { "" }, name));
+        }
+    }
+
+    card.child(credit_row("专辑", track.album.as_deref().unwrap_or("未知")))
         .child(credit_row("格式", format.as_str()))
         .into_any_element()
 }
@@ -612,4 +635,55 @@ fn placeholder(initial: Option<char>) -> impl IntoElement {
         .text_size(px(56.))
         .text_color(theme::text_faint())
         .child(text)
+}
+
+#[cfg(test)]
+mod tests {
+    // 不写 `use super::*`：`crate::platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
+    use super::shown_artists;
+    use lyre_core::UNKNOWN_ARTIST;
+
+    /// 一栏里列的是人，不是标签原文：`23.exe/初音ミク` 必须拆成两位。
+    #[test]
+    fn a_collaboration_credit_lists_each_artist() {
+        assert_eq!(
+            shown_artists(Some("23.exe/初音ミク")),
+            ["23.exe", "初音ミク"]
+        );
+        assert_eq!(
+            shown_artists(Some("初星学園, SHiNTA")),
+            ["初星学園", "SHiNTA"],
+            "逗号也是分隔符"
+        );
+        assert_eq!(
+            shown_artists(Some("カンザキイオリ/25時、ナイトコードで。")),
+            ["カンザキイオリ", "25時、ナイトコードで。"],
+            "顿号属于组合名本身，不能切开"
+        );
+    }
+
+    /// 拆出来的名字必须与艺术家分组同名，否则统计与关注按钮查不到东西。
+    #[test]
+    fn split_names_match_the_artist_groups() {
+        let track = lyre_core::Track {
+            artist: Some("23.exe/初音ミク".to_owned()),
+            ..lyre_core::Track::fallback(std::path::Path::new("/music/a.flac"))
+        };
+        assert_eq!(
+            shown_artists(track.artist.as_deref()),
+            lyre_core::artist_keys(&track)
+        );
+    }
+
+    /// 没有艺术家就一行都不列，整张卡不画。
+    #[test]
+    fn no_artist_lists_nothing() {
+        assert!(shown_artists(None).is_empty());
+        assert!(shown_artists(Some("   ")).is_empty());
+        assert!(shown_artists(Some("/")).is_empty());
+        assert!(
+            !shown_artists(None).contains(&UNKNOWN_ARTIST),
+            "「未知艺术家」不该占一行"
+        );
+    }
 }

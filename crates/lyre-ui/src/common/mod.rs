@@ -2,6 +2,7 @@
 
 pub mod anim;
 pub mod button;
+pub mod contour;
 pub mod cover;
 pub mod hover;
 pub mod menu;

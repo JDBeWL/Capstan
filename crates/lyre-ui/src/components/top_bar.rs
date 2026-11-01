@@ -1,6 +1,8 @@
 //! 顶部栏，兼任自绘的窗口标题栏：导航 + 居中搜索 + 设置入口 + 窗口控件。
-//! 命中测试取第一个命中的条目，所以拖拽区不能包住任何可点击元素 —— 窗口控件必须是它的兄弟节点。
 //! 左右两组各取 `flex_1` 且都不写 `min_w_0`：一边定宽搜索框就不在正中，塌成 0 会把关闭键推出窗口。
+//!
+//! 拖拽热区一律做可点击元素的**兄弟**：命中测试取第一个命中的条目，把按钮包进去，
+//! 点它就会变成拖窗口。真要包，被包的那个得自己 `.occlude()` 把命中测试挡在那儿。
 
 use crate::components::search_box::SearchBox;
 use crate::components::window_controls;
@@ -108,16 +110,22 @@ impl Render for TopBar {
                     ))
                     .child(drag_area()),
             )
-            // 中组：搜索框。顶栏唯一能让步的一块 —— 定宽会把两组按钮挤出窗口，关闭键就点不到了。
+            // 中组：搜索框居中，左右余量各是一条拖拽区。搜索框定宽 280，窗口一拉宽
+            // 两侧就空出上百像素 —— 看着是标题栏，落上去却拖不动窗口。
+            // 两条都是搜索框的**兄弟**节点：拖拽区不能包住它，否则点搜索框会变成拖窗口。
+            // 搜索框照旧 `w_full` + `max_w`：窄窗口下它吃满整条，两条拖拽区自然收成 0 宽。
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
+                    .h_full()
                     .flex()
                     .items_center()
                     .justify_center()
                     .px(px(theme::GAP_MD))
-                    .child(self.search.clone()),
+                    .child(drag_area())
+                    .child(self.search.clone())
+                    .child(drag_area()),
             )
             .child(
                 div()

@@ -24,6 +24,8 @@ pub mod recents;
 /// 上次播放位置的读写（`resume.json`）。
 pub mod resume;
 pub mod root;
+/// 曲库根（`roots.json`）读写：记住导入过的文件夹，补扫从这里出发。
+pub mod roots_store;
 pub mod settings;
 pub mod shell;
 /// 键位与步进量的唯一来源，`lyre-app` 的绑定和设置页的展示都读它。

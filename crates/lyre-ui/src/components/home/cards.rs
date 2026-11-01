@@ -12,7 +12,7 @@ pub struct RecentCard {
     pub meta: String,
 }
 
-/// 按专辑名去重（保留最近那次），顺序由近及远。
+/// 按专辑名去重（保留最近那次），顺序由近及远：卡片位置由这张专辑**最近**一次播放决定。
 /// 前提：`tracks` 已由近及远排好（`recent_tracks` 即此顺序），乱序会弄错顺序与代表曲目。
 pub fn recent_cards(tracks: &[Track], limit: usize) -> Vec<RecentCard> {
     let mut out: Vec<RecentCard> = Vec::new();
@@ -25,16 +25,16 @@ pub fn recent_cards(tracks: &[Track], limit: usize) -> Vec<RecentCard> {
             .unwrap_or_else(|| lyre_core::UNKNOWN_ALBUM.to_string());
 
         if let Some(existing) = out.iter_mut().find(|card| card.album == album) {
-            // 同一张专辑又出现：累加曲目数并把这张卡提到最前，出循环后因此不必再排序。
+            // 同一张专辑又出现：只累加曲目数，卡片留在原地。它的位置由这张专辑**最近**那次播放
+            // 决定 —— 而那次就是它被推进来的那一趟，所以这里挪到最前反而会把一张旧专辑顶到
+            // 「最近播放」第一位，压住真正刚播过的那张。代表曲目同理，保留最近那次。
             existing.meta = bump(existing.meta.as_str());
-            let promoted = existing.clone();
-            out.retain(|card| card.album != album);
-            out.insert(0, promoted);
             continue;
         }
 
         if out.len() >= limit {
-            break;
+            // 卡片够了就不再收新专辑，但要接着往下走：更早的曲目仍属于已有专辑，得记进「N 首」。
+            continue;
         }
 
         out.push(RecentCard {
@@ -171,6 +171,38 @@ mod tests {
         assert_eq!(cards.len(), 2);
         assert_eq!(cards[0].album, "A");
         assert_eq!(cards[1].album, "B");
+        assert_eq!(cards[0].meta, "2 首");
+    }
+
+    /// 一张多曲专辑在最近播放里占了好几格时，它只能停在自己**最近**那首的位置上，
+    /// 不能因为「又见到同名专辑」就跳到第一位 —— 那会让刚播过的专辑永远排不到它前面。
+    #[test]
+    fn an_album_stays_where_its_newest_track_is() {
+        let tracks = vec![
+            track(1, "newest", Some("刚播的"), None),
+            track(2, "older", Some("多曲专辑"), None),
+            track(3, "oldest", Some("多曲专辑"), None),
+        ];
+        let cards = recent_cards(&tracks, 6);
+        assert_eq!(cards.len(), 2);
+        assert_eq!(cards[0].album, "刚播的", "最近播的那张要排第一");
+        assert_eq!(cards[1].album, "多曲专辑");
+        assert_eq!(cards[1].meta, "2 首", "曲目数照旧要累加");
+        assert_eq!(cards[1].id, TrackId(2), "代表曲目仍是这张专辑最近的那首");
+    }
+
+    /// 卡片攒够之后不再开新卡，但更早的曲目仍属于已有专辑，得算进它的「N 首」。
+    #[test]
+    fn tracks_past_the_limit_still_count_toward_their_album() {
+        let tracks = vec![
+            track(1, "a", Some("A"), None),
+            track(2, "b", Some("B"), None),
+            track(3, "c", Some("C"), None),
+            track(4, "d", Some("A"), None),
+        ];
+        let cards = recent_cards(&tracks, 2);
+        assert_eq!(cards.len(), 2, "limit 只限制卡片张数");
+        assert_eq!(cards[0].album, "A");
         assert_eq!(cards[0].meta, "2 首");
     }
 

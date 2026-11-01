@@ -66,6 +66,28 @@ pub fn field(text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
+/// 页头那行字段，后面拖一条极淡的斜线纹带，把标题和右边的控件接起来。
+/// 带子占满剩下的宽度，窄窗口下自己缩没，不会把字段挤掉。
+pub fn field_band(text: impl Into<SharedString>) -> Div {
+    div()
+        .w_full()
+        .flex()
+        .items_center()
+        .gap(px(theme::GAP_MD))
+        .child(field(text))
+        .child(
+            div()
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .h(px(10.))
+                .overflow_hidden()
+                .child(crate::common::ornament::hatch_fill(
+                    theme::text().opacity(0.05),
+                )),
+        )
+}
+
 /// 竖线分隔的一组字段。
 pub fn fields(items: impl IntoIterator<Item = impl Into<SharedString>>) -> Div {
     let mut row = div().flex().items_center().gap(px(theme::GAP_SM));

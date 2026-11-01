@@ -280,7 +280,7 @@ fn grid_header(section: NavSection, count: usize, columns: usize) -> impl IntoEl
         .border_color(theme::border())
         .child(crate::common::section::eyebrow(eyebrow))
         .child(crate::common::section::page_title(title_for(section)))
-        .child(crate::common::section::field(hint))
+        .child(crate::common::section::field_band(hint))
 }
 
 fn title_for(section: NavSection) -> &'static str {

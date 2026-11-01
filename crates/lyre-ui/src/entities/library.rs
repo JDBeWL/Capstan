@@ -3,9 +3,11 @@
 
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use lyre_core::{
-    AlbumGroup, ArtistGroup, Collections, PlayMode, Playlist, SortKey, Track, TrackId,
+    AlbumGroup, ArtistGroup, Collections, PlayMode, Playlist, Roots, SortKey, Track, TrackId,
 };
 
 use crate::platform::*;
@@ -36,10 +38,13 @@ pub enum LibraryEvent {
     FollowChanged,
     /// 作用域真的换了才发：`set_scope` 是唯一发出者，值没变不发；歌词遮罩只监听它。
     ScopeChanged,
-    /// 一次导入扫完了。`scanned` 是扫到的首数，`added` 是新入库的；重导只刷新标签，added 可为 0。
+    /// 一次导入或补扫完了。`scanned` 是扫到的文件数（含已在库的），`added` 是新入库的，
+    /// `refreshed` 是重读过标签的；`quiet` 表示这是启动补扫，没有新增就不必打扰用户。
     Imported {
         scanned: usize,
         added: usize,
+        refreshed: usize,
+        quiet: bool,
     },
     /// 启动时的曲库缓存已经读完并合并。续播要等它，才不会在空曲库里把 resume.json 清掉。
     Loaded,
@@ -78,6 +83,11 @@ pub struct LibraryEntity {
     seed: u64,
     /// 导入时是否递归子目录（来自设置）
     recursive: bool,
+    /// 导入过的文件夹。曲库只存曲目，没有「是从哪扫来的」这层信息，
+    /// 补扫新歌与「我加过哪几个文件夹」都要靠这份根。
+    roots: Roots,
+    /// 当前这轮扫描的停止标志：换目标时先立起来，后台线程才不会白读剩下的标签。
+    scan_cancel: Option<Arc<AtomicBool>>,
     /// 随机轴，另一轴是 [`Self::repeat`]，由 [`Self::effective_mode`] 折算成 `PlayMode`
     shuffle: bool,
     repeat: RepeatState,
@@ -119,6 +129,8 @@ impl LibraryEntity {
             groups_generation: 0,
             seed: 0x2545_f491_4f6c_dd1d,
             recursive: true,
+            roots: crate::roots_store::load(),
+            scan_cancel: None,
             shuffle: false,
             repeat: RepeatState::Off,
             liked: crate::likes::Likes::load(),
@@ -165,6 +177,11 @@ impl LibraryEntity {
         }
         cx.emit(LibraryEvent::Loaded);
         cx.notify();
+        // 上次退出之后新加进这些文件夹的歌，在这里补进来；
+        // 排在 `Loaded` 之后，续播先按旧曲库装好位置，补扫只往后追加。
+        if !self.roots.is_empty() {
+            self.rescan_quietly(cx);
+        }
     }
 
     /// 把曲库按导入顺序写盘。曲目集合变化的每个出口都要调一次；排序与播放模式不落盘。

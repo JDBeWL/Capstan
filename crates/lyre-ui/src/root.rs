@@ -208,12 +208,23 @@ impl RootView {
                 }
                 // FocusMoved 由 TrackList 自己处理（滚动跟随）
                 LibraryEvent::FocusMoved(_) => {}
-                LibraryEvent::Imported { scanned, added } => {
-                    let message = match (scanned, added) {
-                        (0, _) => "这里没有找到音频文件".to_owned(),
-                        // 扫到了但一首都没新增 = 整批都在库里，这次是刷新标签。
-                        (s, 0) => format!("这 {s} 首已在曲库里，刷新了标签"),
-                        (_, a) => format!("已导入 {a} 首"),
+                LibraryEvent::Imported {
+                    scanned,
+                    added,
+                    refreshed,
+                    quiet,
+                } => {
+                    // 补扫没有新增就不打扰用户：开机时「一切照旧」不是新闻。
+                    // 放在最前面，空文件夹这类结果也别每次都报一遍。
+                    if *quiet && *added == 0 {
+                        return;
+                    }
+                    let message = match (scanned, added, refreshed) {
+                        (0, _, _) => "这里没有找到音频文件".to_owned(),
+                        // 扫到了、也重读了标签，但没有一首是新的：这次是刷新标签。
+                        (_, 0, read) if *read > 0 => format!("这 {read} 首已在曲库里，刷新了标签"),
+                        (found, 0, _) => format!("扫到 {found} 首，都已在曲库里"),
+                        (_, a, _) => format!("已导入 {a} 首"),
                     };
                     this.toast
                         .update(cx, |toast, cx| toast.show_plain(message, cx));

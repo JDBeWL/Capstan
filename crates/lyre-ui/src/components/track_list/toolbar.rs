@@ -141,7 +141,7 @@ pub(super) fn toolbar(
                 .when(!headed_elsewhere, |col| {
                     col.child(crate::common::section::eyebrow(eyebrow))
                         .child(crate::common::section::page_title(title).flex_shrink_1())
-                        .child(crate::common::section::field(meta))
+                        .child(crate::common::section::field_band(meta))
                 })
                 .children(scanning.map(scan_indicator)),
         );

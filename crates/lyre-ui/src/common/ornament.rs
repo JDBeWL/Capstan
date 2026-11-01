@@ -116,79 +116,110 @@ pub fn hatch_fill(color: Rgba) -> impl IntoElement {
     .size_full()
 }
 
-/// 两角各一小片极淡的等高线，不闭合、像水流。铺满所在容器。
+/// 两角各一片极淡的等高线，不闭合、像水流。铺满所在容器。
+/// 几何由 [`crate::common::contour`] 生成：坡度加涟漪上的等值线，只留横穿整片的开放线。
+/// 两片各贴一条边、各朝一边淡出，所以看上去没有轮廓，也没有一条线是直挺挺划过去的。
 pub fn contour_fill() -> impl IntoElement {
     canvas(
         |_bounds, _window, _cx| (),
         move |bounds, (), window, _cx| {
             let (x, y) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
             let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
-            if w < 40.0 || h < 40.0 {
+            if w < 200.0 || h < 150.0 {
                 return;
             }
-            let color = theme::text().opacity(0.07);
-            let mut path = Path::new(point(px(x), px(y)));
-            // 右上角：三条向下弯的水流线，向边缘渐隐由透明度很低的整体色负责。
-            for (offset, amp) in [(0.0, 10.0), (12.0, 18.0), (24.0, 10.0)] {
-                let pts = curve_points(
-                    (w * 0.56, -12.0 + offset),
-                    (w * 0.94, h * 0.18 + offset),
-                    amp,
-                );
-                push_ribbon(&mut path, &pts, 1.2, x, y);
-            }
-            // 左下角：两小片。
-            for (offset, amp) in [(0.0, -8.0), (14.0, -14.0)] {
-                let pts = curve_points(
-                    (-12.0 + offset, h * 0.74),
-                    (w * 0.22 + offset, h * 0.94),
-                    amp,
-                );
-                push_ribbon(&mut path, &pts, 1.2, x, y);
-            }
-            window.paint_path(path, color);
+            let ink = theme::text();
+            // 右上：页头右侧那条空带，线从上边垂下来。
+            let band_w = (w * 0.46).clamp(240.0, 460.0);
+            let band_h = (h * 0.20).clamp(96.0, 148.0);
+            paint_patch(
+                window,
+                ink.opacity(CONTOUR_INK),
+                (x + w - band_w, y),
+                (band_w, band_h),
+                CONTOUR_SEED_TOP,
+            );
+            // 左下：贴着左边与下边的一小片。它压在曲目上，比页头那条带淡一档。
+            let corner_w = (w * 0.32).clamp(200.0, 340.0);
+            let corner_h = (h * 0.26).clamp(120.0, 200.0);
+            paint_patch(
+                window,
+                ink.opacity(CONTOUR_INK * 0.7),
+                (x, y + h - corner_h),
+                (corner_w, corner_h),
+                CONTOUR_SEED_BOTTOM,
+            );
         },
     )
     .absolute()
     .size_full()
 }
 
-fn curve_points(from: (f32, f32), to: (f32, f32), amp: f32) -> Vec<(f32, f32)> {
-    let mut pts = Vec::with_capacity(25);
-    for i in 0..=24 {
-        let t = i as f32 / 24.0;
-        let x = from.0 + (to.0 - from.0) * t;
-        let y = from.1 + (to.1 - from.1) * t + amp * (t * std::f32::consts::PI).sin();
-        pts.push((x, y));
+/// 一整片等高线的墨色。只做底色质感，深色主题里同样是一层薄墨。
+const CONTOUR_INK: f32 = 0.085;
+/// 线宽。比 1px 细线略粗一点，缩放到高分屏才不会掉成虚线。
+const CONTOUR_W: f32 = 1.2;
+/// 淡出用的指数：压过线性，片缘那几档掉得更快，线不会被片的矩形边掐断。
+const CONTOUR_FALLOFF: f32 = 1.5;
+/// 两片各用一个种子；换了就是另一片地形。
+const CONTOUR_SEED_TOP: u32 = 20_261_013;
+const CONTOUR_SEED_BOTTOM: u32 = 7_741;
+
+fn paint_patch(window: &mut Window, ink: Rgba, origin: (f32, f32), size: (f32, f32), seed: u32) {
+    let patch = crate::common::contour::patch(size.0, size.1, seed);
+    let steps = usize::from(crate::common::contour::FADE_STEPS);
+    // 每一档两条：普通线一条、计曲线一条，计曲线要粗一点只能分开填。
+    let lanes = steps * 2;
+    let mut paths: Vec<Path<Pixels>> = (0..lanes)
+        .map(|_| Path::new(point(px(0.), px(0.))))
+        .collect();
+    let mut used = vec![false; lanes];
+    for run in &patch.runs {
+        let bucket = usize::from(run.weight.max(1) - 1).min(steps - 1);
+        let index = bucket * 2 + usize::from(run.heavy);
+        let width = if run.heavy {
+            CONTOUR_W * 1.5
+        } else {
+            CONTOUR_W
+        };
+        emit_run(&mut paths[index], run, origin, width);
+        used[index] = true;
     }
-    pts
+    for (index, path) in paths.into_iter().enumerate() {
+        if !used[index] {
+            continue;
+        }
+        // 片心那一档用满墨色，往片缘一档比一档淡，最后一档几乎看不见。
+        let strength = (index / 2 + 1) as f32 / steps as f32;
+        window.paint_path(path, ink.opacity(strength.powf(CONTOUR_FALLOFF)));
+    }
 }
 
-/// 把折线加宽成一条细带，追加进同一个 `Path`。
-fn push_ribbon(path: &mut Path<Pixels>, pts: &[(f32, f32)], width: f32, ox: f32, oy: f32) {
-    for pair in pts.windows(2) {
+/// 一条等值线画成一根细带：`paint_path` 是填充不是描边，
+/// 直接填一条折线会被首尾连起来，变成一大片墨。
+fn emit_run(
+    path: &mut Path<Pixels>,
+    run: &crate::common::contour::Run,
+    origin: (f32, f32),
+    width: f32,
+) {
+    let at = |(x, y): (f32, f32)| point(px(origin.0 + x), px(origin.1 + y));
+    for pair in run.points.windows(2) {
         let ((x1, y1), (x2, y2)) = (pair[0], pair[1]);
         let (dx, dy) = (x2 - x1, y2 - y1);
-        let len = (dx * dx + dy * dy).sqrt().max(0.001);
+        let len = dx.hypot(dy).max(0.001);
         let (nx, ny) = (-dy / len * width * 0.5, dx / len * width * 0.5);
-        path.move_to(point(px(ox + x1 + nx), px(oy + y1 + ny)));
-        path.line_to(point(px(ox + x2 + nx), px(oy + y2 + ny)));
-        path.line_to(point(px(ox + x2 - nx), px(oy + y2 - ny)));
-        path.line_to(point(px(ox + x1 - nx), px(oy + y1 - ny)));
+        path.move_to(at((x1 + nx, y1 + ny)));
+        path.line_to(at((x2 + nx, y2 + ny)));
+        path.line_to(at((x2 - nx, y2 - ny)));
+        path.line_to(at((x1 - nx, y1 - ny)));
     }
 }
 
-/// 页面背景：两角等高线 + 右上角一条极淡的斜线纹带。不含渐变与投影。
+/// 页面背景：两角各一片等高线。不含渐变与投影，也不叠别的纹样 ——
+/// 纸面上只有一层薄墨，标题、列表和按钮读起来才不吵。
 pub fn page_backdrop() -> impl IntoElement {
-    div().absolute().inset_0().child(contour_fill()).child(
-        div()
-            .absolute()
-            .top_0()
-            .right_0()
-            .w(px(300.))
-            .h(px(104.))
-            .child(hatch_fill(theme::text().opacity(0.045))),
-    )
+    div().absolute().inset_0().child(contour_fill())
 }
 
 /// 三色条必须是一条窄带，不能变成色块。

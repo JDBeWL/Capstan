@@ -7,6 +7,7 @@ pub mod group;
 pub mod lyrics;
 pub mod metadata;
 pub mod playlist;
+pub mod roots;
 pub mod scanner;
 pub mod track;
 
@@ -22,6 +23,7 @@ pub use lyrics::{
 };
 pub use metadata::{Cover, read_cover, read_track};
 pub use playlist::{Advance, PlayMode, Playlist, SortKey};
+pub use roots::Roots;
 pub use scanner::{
     AUDIO_EXTENSIONS, SIGNATURE_PROBE_LEN, Signature, UNSUPPORTED_EXTENSIONS, collect_audio_paths,
     collect_audio_paths_with, is_audio_extension, is_audio_file, is_decodable_extension,

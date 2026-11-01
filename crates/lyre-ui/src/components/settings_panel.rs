@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use crate::common::anim;
-use crate::common::button::TAB_STOP;
+use crate::common::button::{ButtonKind, TAB_STOP, text_button_animated};
 use crate::common::thousands;
 use crate::entities::{LibraryEntity, PlaybackEntity, PlaybackEvent};
 use crate::icon::{Glyph, icon};
@@ -70,7 +70,7 @@ impl SettingsPanel {
         };
         Some(
             div()
-                .text_size(px(theme::FONT_MICRO))
+                .text_size(px(theme::FONT_CAPTION))
                 .text_color(theme::text_muted())
                 .child(text),
         )
@@ -258,17 +258,19 @@ impl Render for SettingsPanel {
                 ],
                 &resume,
             ));
-        let import_card = card("Import", "导入").child(choice_row(
-            window,
-            cx,
-            Glyph::Folder,
-            "文件夹",
-            &[
-                ("含子目录", settings.recursive_import),
-                ("仅顶层", !settings.recursive_import),
-            ],
-            &recursive,
-        ));
+        let import_card = card("Import", "导入")
+            .child(choice_row(
+                window,
+                cx,
+                Glyph::Folder,
+                "文件夹",
+                &[
+                    ("含子目录", settings.recursive_import),
+                    ("仅顶层", !settings.recursive_import),
+                ],
+                &recursive,
+            ))
+            .child(roots_block(&self.library, window, cx));
 
         let audio_card = card("Audio", "音频")
             .child(choice_row(
@@ -451,12 +453,14 @@ fn header(back_inset: bool) -> impl IntoElement {
     )
 }
 
+/// 快捷键表里每组的小标题。用 `text_muted` 而不是 `text_faint`：它是一组行的抬头，
+/// 比行文字还淡的话整块会先糊掉。
 fn sub_title(text: &str) -> impl IntoElement {
     div()
         .font(theme::label_font())
-        .text_size(px(theme::FONT_MICRO))
+        .text_size(px(theme::FONT_CAPTION))
         .font_weight(theme::WEIGHT_BUTTON)
-        .text_color(theme::text_faint())
+        .text_color(theme::text_muted())
         .child(text.to_owned())
 }
 
@@ -581,14 +585,42 @@ fn segmented(
     track
 }
 
-/// 一行「名字 + 值」的只读信息。值靠右、过长时截断，免得长路径把这一行顶宽。
+/// 一行「名字 + 值」的只读信息（快捷键表的每一行、独占格式那类短值）。
+/// 名字吃剩余宽度、放不下就折行；值固定不收缩、靠右 —— 反过来做的话，长名字
+/// （`后退一层：歌词 → 返回 → 面板 → 搜索`）会把按键挤成省略号，等于把要查的东西藏了。
+/// 字号用 `FONT_CAPTION` 而不是 `FONT_MICRO`：10px 的中文在浅色底上糊成一片。
 fn info_row(label: &str, value: impl Into<String>) -> impl IntoElement {
     div()
         .flex()
         .items_start()
         .justify_between()
         .gap(px(theme::GAP_MD))
-        .text_size(px(theme::FONT_MICRO))
+        .text_size(px(theme::FONT_CAPTION))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_color(theme::text_muted())
+                .child(label.to_owned()),
+        )
+        .child(
+            div()
+                .flex_none()
+                .text_color(theme::text())
+                .text_right()
+                .child(value.into()),
+        )
+}
+
+/// 一行「名字 + 长值」（数据目录那种路径）。与 [`info_row`] 相反：值必须能截断，
+/// 否则一条 `/Users/…/Library/Application Support/…` 会把整张卡顶宽。
+fn path_row(label: &str, value: String) -> impl IntoElement {
+    div()
+        .flex()
+        .items_start()
+        .justify_between()
+        .gap(px(theme::GAP_MD))
+        .text_size(px(theme::FONT_CAPTION))
         .child(
             div()
                 .flex_none()
@@ -602,7 +634,7 @@ fn info_row(label: &str, value: impl Into<String>) -> impl IntoElement {
                 .truncate()
                 .text_color(theme::text())
                 .text_right()
-                .child(value.into()),
+                .child(value),
         )
 }
 
@@ -621,9 +653,11 @@ fn stat_cell(label: &str, value: String) -> Div {
                 .child(value),
         )
         .child(
+            // 数字下面那行说明也用 `FONT_CAPTION` + `text_muted`：10px 的淡灰在纸色底上
+            // 只剩下一道影子，读不出这一格统计的是什么。
             div()
-                .text_size(px(theme::FONT_MICRO))
-                .text_color(theme::text_faint())
+                .text_size(px(theme::FONT_CAPTION))
+                .text_color(theme::text_muted())
                 .child(label.to_owned()),
         )
 }
@@ -731,7 +765,7 @@ fn data_section(library: &Entity<LibraryEntity>, cx: &App) -> Div {
         content = content.child(
             div()
                 .mt(px(theme::GAP_MD))
-                .child(info_row("数据目录", dir.display().to_string())),
+                .child(path_row("数据目录", dir.display().to_string())),
         );
     }
 
@@ -740,6 +774,136 @@ fn data_section(library: &Entity<LibraryEntity>, cx: &App) -> Div {
 
 /// 把内部写法 `ctrl-up` 翻成界面上的 `Ctrl + ↑`，只翻展示层。
 /// `keymap.rs` 绑定的仍是原始串，两边都从 `crate::shortcuts::keys` 取值。
+/// 音乐文件夹：把「记住哪些目录」摆出来，并且能加、能重扫、能移除。
+/// 曲库只存曲目，不存「这首是从哪个文件夹扫来的」，所以这层关系只能显式记一份根。
+fn roots_block(
+    library: &Entity<LibraryEntity>,
+    window: &mut Window,
+    cx: &mut Context<SettingsPanel>,
+) -> Div {
+    let (roots, counts, scanning) = {
+        let state = library.read(cx);
+        let roots = state.roots().to_vec();
+        let mut counts = vec![0usize; roots.len()];
+        for track in state.tracks() {
+            if let Some(index) = roots.iter().position(|root| track.path.starts_with(root)) {
+                counts[index] += 1;
+            }
+        }
+        (roots, counts, state.scanning().is_some())
+    };
+
+    let mut list = div().flex().flex_col().gap(px(theme::GAP_SM));
+    if roots.is_empty() {
+        list = list.child(
+            div()
+                .text_size(px(theme::FONT_CAPTION))
+                .text_color(theme::text_muted())
+                .child("还没有音乐文件夹。添加之后，里面新加的歌下次启动会自动补进来。"),
+        );
+    }
+    for (index, root) in roots.iter().enumerate() {
+        let path = root.clone();
+        let remove = text_button_animated(
+            ("root-remove", index),
+            "移除",
+            ButtonKind::Ghost,
+            window,
+            cx,
+            {
+                let library = library.clone();
+                move |_, _, cx| {
+                    library.update(cx, |library, cx| library.forget_root(&path, cx));
+                }
+            },
+        );
+
+        list = list.child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(theme::GAP_MD))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(theme::FONT_CAPTION))
+                                .text_color(theme::text())
+                                .child(root.display().to_string()),
+                        )
+                        // 移动硬盘没插、共享盘没挂载都会走到这里：不是错误，只是现在扫不到
+                        .when(!root.is_dir(), |column| {
+                            column.child(
+                                div()
+                                    .text_size(px(theme::FONT_MICRO))
+                                    .text_color(theme::text_muted())
+                                    .child("这个文件夹现在不在，接上之后重新扫描即可"),
+                            )
+                        }),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .font(theme::field_font())
+                        .text_size(px(theme::FONT_FIELD_SIZE))
+                        .text_color(theme::text_faint())
+                        .child(format!("{} 首", thousands(counts[index]))),
+                )
+                .child(remove),
+        );
+    }
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(theme::GAP_MD))
+        .mt(px(theme::GAP_SM))
+        .child(sub_title("音乐文件夹"))
+        .child(list)
+        .child(
+            div()
+                .flex()
+                .gap(px(theme::GAP_SM))
+                .child(text_button_animated(
+                    "root-add",
+                    "添加文件夹",
+                    ButtonKind::Secondary,
+                    window,
+                    cx,
+                    {
+                        let library = library.clone();
+                        move |_, _, cx| {
+                            library.update(cx, LibraryEntity::open_dialog);
+                        }
+                    },
+                ))
+                .child(text_button_animated(
+                    "root-rescan",
+                    if scanning {
+                        "正在扫描"
+                    } else {
+                        "重新扫描"
+                    },
+                    ButtonKind::Primary,
+                    window,
+                    cx,
+                    {
+                        let library = library.clone();
+                        move |_, _, cx| {
+                            library.update(cx, LibraryEntity::rescan);
+                        }
+                    },
+                )),
+        )
+}
+
 fn pretty_keys(raw: &str) -> String {
     raw.split('-')
         .map(|part| match part {
