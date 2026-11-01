@@ -1,5 +1,5 @@
-//! 「关注」的艺术家集合，落盘到 `follows.json`：读不到退回空集合，写不进只记日志。
-//! 键是艺术家名而不是 id：本仓库没有账户体系，关注只是本地记号。
+//! 「关注」的艺术家集合，落盘到 `follows.json`。读不到退回空集合，写不进只记日志。
+//! 键是艺术家名而不是 id。本仓库没有账户体系，关注只是本地记号。
 
 use std::collections::HashSet;
 
@@ -7,7 +7,7 @@ use crate::persist;
 
 const FILE: &str = "follows.json";
 
-/// 用 `HashSet`：详情页与右面板每帧都要问「这位艺术家关注了吗」，`Vec` 的线性查找可测量。
+/// 用 `HashSet`。详情页与右面板每帧都要问「这位艺术家关注了吗」，`Vec` 的线性查找可测量。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Follows {
     names: HashSet<String>,

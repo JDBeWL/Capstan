@@ -1,4 +1,4 @@
-//! 根视图上的动作：一次用户意图落到多个实体上，这里不持有状态。
+//! 根视图上的动作。一次用户意图落到多个实体上，这里不持有状态。
 
 use std::time::Duration;
 
@@ -7,8 +7,8 @@ use crate::platform::*;
 
 use super::RootView;
 
-/// 键盘焦点是否落在可 Tab 到的控件上。gpui 内建会把 Enter / Space 转成聚焦控件自己的 `on_click`，
-/// 而这两个键绑着播放动作；鼠标点过按钮同样留下焦点，所以还要「上一次输入是键盘」。
+/// 键盘焦点是否落在可 Tab 到的控件上。gpui 内建会将 Enter / Space 转为聚焦控件自身的 `on_click`，
+/// 而这两个键已绑定播放动作；鼠标点击按钮同样留下焦点，故还需判定「上一次输入为键盘」。
 pub(super) fn control_has_focus(window: &Window, cx: &App) -> bool {
     window.last_input_was_keyboard() && window.focused(cx).is_some_and(|handle| handle.tab_stop)
 }
@@ -34,7 +34,7 @@ impl RootView {
             return;
         }
 
-        // 什么都没装载时不能走「光标那一首」：光标完全可能停在一首引擎播不了的曲目上
+        // 什么都没装载时不能走「光标那一首」，光标完全可能停在一首引擎播不了的曲目上
         // （列表里它们照常显示、置灰），那时按空格只该得到一条提示。
         self.library.update(cx, LibraryEntity::play_first_playable);
     }

@@ -1,6 +1,6 @@
 //! 随机与循环是两条轴，四态 `PlayMode` 装不下它们的组合，所以这里存 [`RepeatState`] 与 `shuffle`。
-//! 由 [`LibraryEntity::effective_mode`] 折算成 `PlayMode`、[`LibraryEntity::set_mode`] 拆回来，
-//! 两个方向必须成对改。
+//! 由 [`LibraryEntity::effective_mode`] 折算成 `PlayMode`，
+//! 再由 [`LibraryEntity::set_mode`] 拆回来；两个方向必须成对修改。
 
 use lyre_core::{Advance, PlayMode, Track, TrackId, album_key, artist_keys};
 
@@ -23,17 +23,17 @@ pub enum Step {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum RepeatState {
-    /// 不循环：走到队尾停下
+    /// 不循环时，走到队尾停下。
     #[default]
     Off,
-    /// 列表循环：走到队尾绕回开头
+    /// 列表循环时，走到队尾绕回开头。
     All,
-    /// 单曲循环：一首放完原地重播
+    /// 单曲循环时，一首放完原地重播。
     One,
 }
 
 impl RepeatState {
-    /// 循环按钮的下一档：关 → 列表 → 单曲 → 关。
+    /// 循环按钮的下一档，关 → 列表 → 单曲 → 关。
     pub fn next_in_cycle(self) -> Self {
         match self {
             Self::Off => Self::All,
@@ -94,7 +94,7 @@ impl LibraryEntity {
         self.playlist.order().len()
     }
 
-    /// 从一张专辑卡开始播放：队列定为这张专辑的曲目，再跳到这一首；查不到这张专辑时不起队列。
+    /// 从一张专辑卡开始播放。队列定为这张专辑的曲目，再跳到这一首；查不到这张专辑时不起队列。
     pub fn activate_album(
         &mut self,
         title: &str,
@@ -113,7 +113,7 @@ impl LibraryEntity {
         self.activate(id, cx)
     }
 
-    /// 从一位艺术家卡开始播放：队列定为这位艺术家的曲目，查不到时不起队列。
+    /// 从一位艺术家卡开始播放。队列定为这位艺术家的曲目，查不到时不起队列。
     pub fn activate_artist(
         &mut self,
         name: &str,
@@ -132,10 +132,10 @@ impl LibraryEntity {
         self.activate(id, cx)
     }
 
-    /// 从当前可见列表开始播放：先把队列定为可见行（按显示顺序），再跳到这一首。
+    /// 从当前可见列表开始播放。先把队列定为可见行（按显示顺序），再跳到这一首。
     /// 可见列表恰好就是整库时不起队列，队列继续跟着曲库走。
     pub fn activate_in_view(&mut self, id: TrackId, cx: &mut Context<Self>) -> Option<Track> {
-        // 必须先拦：`set_queue` 会把队列重设成可见行，播不了的曲目会换掉队列却没放出声。
+        // 必须先拦。`set_queue` 会把队列重设成可见行，播不了的曲目会换掉队列却没放出声。
         if self.refuse_unplayable(id, cx) {
             return None;
         }
@@ -163,7 +163,7 @@ impl LibraryEntity {
             return None;
         }
         self.set_focus(id, cx);
-        // 鼠标点不是键盘导航：光标跟过来了，底色不该因此亮起来（`↑↓` 走 `move_focus` 才会亮）。
+        // 鼠标点不是键盘导航。光标跟过来了，底色不该因此亮起来（`↑↓` 走 `move_focus` 才会亮）。
         self.cursor_visible = false;
         let track = self.playlist.current()?.clone();
         self.now_playing = Some(id);
@@ -215,7 +215,7 @@ impl LibraryEntity {
         self.repeat
     }
 
-    /// 两条轴折算成四态：随机 + 列表循环取随机序（循环靠 [`Playlist::set_wrap_at_end`] 另传），
+    /// 两条轴折算成四态。随机 + 列表循环取随机序（循环靠 [`Playlist::set_wrap_at_end`] 另传），
     /// 随机 + 单曲循环取单曲循环。
     fn effective_mode(&self) -> PlayMode {
         match (self.shuffle, self.repeat) {
@@ -248,13 +248,13 @@ impl LibraryEntity {
         self.apply_mode(on, cx);
     }
 
-    /// `R` 键：非随机直接进随机、已是随机则回到顺序，不经过列表 / 单曲循环。
+    /// `R` 键。非随机直接进随机、已是随机则回到顺序，不经过列表循环与单曲循环。
     pub fn toggle_shuffle(&mut self, cx: &mut Context<Self>) {
         let on = !self.shuffle;
         self.set_shuffle(on, cx);
     }
 
-    /// 循环按钮：关 → 列表 → 单曲 → 关，不影响随机轴。
+    /// 循环按钮。关 → 列表 → 单曲 → 关，不影响随机轴。
     pub fn cycle_repeat(&mut self, cx: &mut Context<Self>) {
         self.repeat = self.repeat.next_in_cycle();
         self.apply_mode(false, cx);
@@ -273,7 +273,7 @@ impl LibraryEntity {
         self.apply_mode(true, cx);
     }
 
-    /// 由四态模式反推两条轴，不是 [`Self::effective_mode`] 的逆：单曲循环那档排不出随机序。
+    /// 由四态模式反推两条轴，不是 [`Self::effective_mode`] 的逆，单曲循环那档排不出随机序。
     fn set_axes_from_mode(&mut self, mode: PlayMode) {
         (self.shuffle, self.repeat) = match mode {
             PlayMode::Sequential => (false, RepeatState::Off),

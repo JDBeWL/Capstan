@@ -15,8 +15,8 @@ use crate::snapshot::Snapshot;
 /// 轮询间隔，收命令与刷新进度都用它。50ms ≈ 进度条 20fps。
 const TICK: Duration = Duration::from_millis(50);
 
-/// 后端工厂，参数是目标设备标识（`None` 为跟随系统默认）。
-/// 可以重复调用：切换设备、选定设备被拔掉都要重开一条输出流。
+/// 后端工厂，参数为目标设备标识，`None` 表示跟随系统默认。
+/// 可以重复调用。切换设备、选定设备被拔掉都要重开一条输出流。
 pub(crate) type OpenFn = Box<dyn FnMut(Option<&str>) -> Result<Box<dyn AudioBackend>> + Send>;
 
 pub(crate) fn run(
@@ -35,7 +35,7 @@ pub(crate) fn run(
         open_exclusive,
         output_mode: OutputMode::Shared,
         current: None,
-        // 启动时还没开过流，把手上的选择当作已生效的目标，免得第一条命令就白切一次
+        // 启动时还没开过流，把手上的选择当作已生效的目标，免得第一条命令就白切一次。
         device: initial_device.clone(),
         last_target: initial_device,
         default_id: device::default_device_id(),
@@ -48,7 +48,7 @@ pub(crate) fn run(
 
     loop {
         match rx.recv_timeout(TICK) {
-            // 收到 Shutdown，或 UI 侧的句柄全部 drop 了 —— 两种都是收工
+            // 收到 Shutdown，或 UI 侧句柄全部 drop，两者均表示结束。
             Ok(PlayerCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
             Ok(command) => thread.handle(command),
             Err(RecvTimeoutError::Timeout) => {}
@@ -58,7 +58,7 @@ pub(crate) fn run(
     }
 }
 
-/// 音频线程状态。`!Send`（持有后端），永远不离开它所在那条线程。
+/// 音频线程状态。`!Send`，因其持有后端；永不离开所在线程。
 struct AudioThread {
     events: Sender<PlayerEvent>,
     snapshot: Arc<Snapshot>,
@@ -67,7 +67,7 @@ struct AudioThread {
     open_exclusive: Option<ExclusiveOpenFn>,
     /// 当前生效的输出模式。
     output_mode: OutputMode,
-    /// 最近一次成功装载的曲目。切输出模式之后要用它把播放接回原位置 ——
+    /// 最近一次成功装载的曲目。切输出模式之后要用它把播放接回原位置。
     /// 位置与播放状态本身从快照读，不另存一份，免得两份状态各自漂移。
     current: Option<PathBuf>,
     /// 用户选定的输出设备；`None` 表示跟随系统默认，拔掉时不清空。
@@ -79,19 +79,19 @@ struct AudioThread {
     default_id: Option<String>,
     /// 还没打开过时是 `None`。
     backend: Option<Box<dyn AudioBackend>>,
-    /// 打开失败后置真，避免后台拍子反复重试开设备刷屏；
-    /// 用户显式播放 / 装载 / 切设备时复位。
+    /// 打开失败后置真，避免后台定时器反复重试开启设备而导致日志洪泛；
+    /// 用户显式播放、装载、切设备时复位。
     open_failed: bool,
-    /// 本曲是否已经真正出声过 —— 用来区分「刚开始装载」和「播完了」
+    /// 本曲是否已经真正出声过，用来区分「刚开始装载」和「播完了」
     seen_content: bool,
-    /// 本轮播放是否已经上报过 Ended，避免重复上报
+    /// 本轮播放是否已经上报过 Ended，避免重复上报。
     ended_reported: bool,
     /// 换设备时是否交叉淡化。后端是懒创建的，所以标志得先在控制线程里存着。
     smooth_switch: bool,
 }
 
 impl AudioThread {
-    /// 懒创建：真的收到命令时才去开设备。
+    /// 懒创建，真的收到命令时才去开设备。
     fn backend(&mut self) -> Option<&mut dyn AudioBackend> {
         if self.backend.is_none() {
             if self.open_failed {
@@ -100,7 +100,7 @@ impl AudioThread {
             match self.open_backend() {
                 Ok((mut backend, mode, detail)) => {
                     backend.set_smooth_switch(self.smooth_switch);
-                    // 音量可能在设备打开之前就设过了，新后端得补上，否则会是默认的满音量
+                    // 音量可能在设备打开之前就设过了，新后端得补上，否则会是默认的满音量。
                     backend.set_volume(self.snapshot.volume());
                     self.backend = Some(backend);
                     self.output_mode = mode;
@@ -143,7 +143,7 @@ impl AudioThread {
                         detail: err.to_string(),
                     });
                 }
-                // 本次运行没有注入独占后端，直接走共享
+                // 本次运行没有注入独占后端，直接走共享。
                 None => {}
             }
         }
@@ -187,7 +187,7 @@ impl AudioThread {
             detail: String::new(),
         });
 
-        // 后端是懒创建的，这里不主动开流；但正在播的曲目必须接回原位置
+        // 后端是懒创建的，这里不主动开流；但正在播的曲目必须接回原位置。
         self.restore_after_switch();
     }
 
@@ -251,8 +251,8 @@ impl AudioThread {
         let _ = self.events.send(PlayerEvent::State(self.snapshot.state()));
     }
 
-    /// 把后端实际用的输出口径播报出去。独占口径会随曲目变（要按声源重开流），
-    /// 只在创建后端时报一次的话，界面会停在第一首协商到的口径上。
+    /// 把后端实际使用的输出口径播报出去。独占口径随曲目变化，因为需按声源重开流；
+    /// 若仅在创建后端时播报一次，界面会停留在首曲协商得到的口径上。
     fn announce_output(&self) {
         let Some(backend) = self.backend.as_deref() else {
             return;
@@ -263,8 +263,8 @@ impl AudioThread {
         });
     }
 
-    /// 当前真正生效的设备：优先信后端（它知道流实际落在哪个设备上，选定设备被拔掉时
-    /// 它会顶在默认设备上），后端还没建起来时才轮到用户的选择。
+    /// 当前实际生效的设备。优先采信后端，因后端知道流实际落在哪台设备上，选定设备被拔出时
+    /// 会占用默认设备；后端尚未建立时才采用用户的选择。
     fn effective_device(&self, devices: &[AudioDeviceInfo]) -> (Option<String>, String) {
         let selected = match self.backend.as_deref() {
             Some(backend) => backend.current_device(),
@@ -300,12 +300,12 @@ impl AudioThread {
     }
 
     /// 现在该往哪台设备开流。选定的设备还在就用它；没选、或者选的那台被拔掉了，
-    /// 就用系统默认顶着 —— 拔掉期间不能没声音，插回来还要自动切回去。
+    /// 就用系统默认顶着。拔掉期间不能没声音，插回来还要自动切回去。
     fn target_now(&self) -> Option<String> {
         Self::target_of(self.device.as_deref(), &device::enumerate_output_devices())
     }
 
-    /// 从设备列表里挑出该用的那台：选定设备还在列表里就是它，否则是 `None`（用系统默认）。
+    /// 从设备列表里挑出该用的那台。选定设备仍在列表里即取它，否则为 `None`，即使用系统默认设备。
     fn target_of(selected: Option<&str>, devices: &[AudioDeviceInfo]) -> Option<String> {
         let id = selected?;
         devices
@@ -329,17 +329,17 @@ impl AudioThread {
                 self.last_target = id.map(str::to_owned);
             }
             Some(Err(err)) => {
-                // 后端会回滚到旧设备接着播，记忆的目标也必须留在旧值上
+                // 后端会回滚到旧设备接着播，记忆的目标也必须留在旧值上。
                 let _ = self.events.send(PlayerEvent::Error(err.to_string()));
             }
-            // 后端还没建起来：下次懒创建自然用新设备，此刻没有音源需要重置
+            // 后端还没建起来。下次懒创建自然用新设备，此刻没有音源需要重置。
             None => self.last_target = id.map(str::to_owned),
         }
     }
 
     fn select_device(&mut self, id: Option<String>) {
         self.device = id;
-        // 换了目标设备就该再给一次机会：上一次的失败是针对旧设备的
+        // 换了目标设备就该再给一次机会，上一次的失败是针对旧设备的。
         self.open_failed = false;
 
         let target = self.target_now();
@@ -348,8 +348,8 @@ impl AudioThread {
         self.refresh_devices();
     }
 
-    /// 设备列表变了。三件事都要处理：选定的设备被拔掉（先拿默认顶着）、跟随默认时默认设备换了、
-    /// 以及选定的设备插回来了（切回去）。cpal 的流不会自己迁移到别的设备上，不重建就一直没声。
+    /// 设备列表变更时需处理三种情形。选定设备被拔出，先以默认设备顶替；跟随默认时默认设备更换；
+    /// 以及选定设备重新接入，需切回。cpal 的流不会自行迁移至其它设备，不重建则一直无声。
     fn handle_topology_changed(&mut self) {
         let devices = device::enumerate_output_devices();
         let default_id = devices
@@ -362,7 +362,7 @@ impl AudioThread {
             log::info!("选定的输出设备已断开，暂用系统默认设备顶上");
         }
 
-        // 跟随默认时目标恒为「默认」，所以默认设备换掉要多判一次；其余情况看目标本身有没有变
+        // 跟随默认时目标恒为「默认」，所以默认设备换掉要多判一次；其余情况看目标本身有没有变。
         let follows_default = self.device.is_none() && self.default_id != default_id;
         let target_moved = self.last_target != target;
         self.default_id = default_id;
@@ -407,13 +407,13 @@ impl AudioThread {
             }
 
             PlayerCommand::Load { path, autoplay } => {
-                // 用户显式装载：上一次打不开不代表这次也不行，必须先给设备一次机会
+                // 用户显式装载。上一次打不开不代表这次也不行，必须先给设备一次机会。
                 self.open_failed = false;
                 let outcome = self.backend().map(|backend| backend.load(&path, autoplay));
 
                 let Some(outcome) = outcome else {
-                    // `backend()` 已经上报了具体原因（并把快照退回 Idle），这里只把状态同步给界面，
-                    // 否则 `PlaybackEntity::load` 乐观设成的播放状态会一直挂着
+                    // `backend()` 已上报具体原因，并将快照退回 Idle；此处仅把状态同步给界面，
+                    // 否则 `PlaybackEntity::load` 乐观设成的播放状态会一直悬挂。
                     self.emit_state();
                     return;
                 };
@@ -432,7 +432,7 @@ impl AudioThread {
                         });
                         let _ = self.events.send(PlayerEvent::Loaded { path, duration });
                         self.emit_state();
-                        // 独占会按这一首的口径重开流，协商结果要跟上，否则界面显示的还是上一首的
+                        // 独占会按这一首的口径重开流，协商结果要跟上，否则界面显示的还是上一首的。
                         self.announce_output();
                     }
                     Err(err) => {
@@ -444,18 +444,18 @@ impl AudioThread {
             }
 
             PlayerCommand::Play => {
-                // 显式播放是用户对「设备现在能用了」的重试机会
+                // 显式播放是用户对「设备现在能用了」的重试机会。
                 self.open_failed = false;
                 match self.backend().map(AudioBackend::play) {
                     Some(Ok(())) => {
                         // 刚 append 的音源在头几毫秒里 empty() 仍为 true，两个标记都得清掉，
-                        // 否则 tick 会立刻误报 Ended
+                        // 否则 tick 会立刻误报 Ended。
                         self.ended_reported = false;
                         self.seen_content = false;
                         self.snapshot.set_state(PlaybackState::Playing);
                         self.emit_state();
                     }
-                    // 重建失败：退回 Idle，界面不该在静音时显示「正在播放」
+                    // 重建失败。退回 Idle，界面不该在静音时显示「正在播放」
                     Some(Err(err)) => {
                         self.snapshot.set_state(PlaybackState::Idle);
                         let _ = self.events.send(PlayerEvent::Error(err.to_string()));
@@ -497,11 +497,11 @@ impl AudioThread {
                 let result = self.backend().map(|b| b.seek(position));
                 match result {
                     Some(Ok(())) => {
-                        // 乐观更新：不等下一次 tick，进度条立刻跟手
+                        // 乐观更新。不等下一次 tick，进度条立刻跟手。
                         self.snapshot.set_position(position);
                         self.ended_reported = false;
                     }
-                    // 失败必须抛出异常，否则进度条自己弹回去，界面上看不出任何原因。
+                    // 失败必须上报事件，否则进度条会自行回弹，界面上无任何原因可循。
                     Some(Err(err)) => {
                         let _ = self.events.send(PlayerEvent::Error(err.to_string()));
                     }
@@ -512,7 +512,7 @@ impl AudioThread {
             PlayerCommand::SetVolume(volume) => {
                 let clamped = volume.clamp(0.0, 1.0);
                 self.snapshot.set_volume(clamped);
-                // 不为调音量开输出流：启动时下发的存档音量是最早到的一条命令，
+                // 不为调音量开输出流。启动时下发的存档音量是最早到的一条命令，
                 // 开流会让音量合成器留下会话；设备留到装载时再碰，音量由 `backend()` 补发。
                 if let Some(backend) = self.backend.as_deref_mut() {
                     backend.set_volume(clamped);
@@ -527,7 +527,7 @@ impl AudioThread {
         let Some(backend) = self.backend.as_deref_mut() else {
             return;
         };
-        // 淡出、挂起的交接这类收尾要等时间，靠这一拍推着走；设备失联的恢复也在这里推进
+        // 淡出、挂起的交接这类收尾要等时间，靠这一拍推着走；设备失联的恢复也在这里推进。
         backend.tick();
         let notices: Vec<BackendNotice> = std::iter::from_fn(|| backend.take_notice()).collect();
         let (position, finished) = (backend.position(), backend.is_finished());
@@ -539,14 +539,14 @@ impl AudioThread {
                     if self.snapshot.state().is_playing() {
                         self.snapshot.set_state(PlaybackState::Paused);
                     }
-                    // 界面收到 Error 会先把状态显示成 Idle；这里把音频线程的真实状态补发一次
+                    // 界面收到 Error 会先把状态显示成 Idle；这里把音频线程的真实状态补发一次。
                     self.emit_state();
-                    // 流已经断了，不能再把下一拍的空缓冲判成自然播完
+                    // 流已经断了，不能再把下一拍的空缓冲判成自然播完。
                     self.seen_content = false;
                     self.ended_reported = true;
                 }
                 BackendNotice::Resumed => {
-                    // 后端从断流里自己恢复了：状态和输出口径都重新播报一遍
+                    // 后端已从断流中自行恢复，状态与输出口径都要重新播报。
                     self.seen_content = false;
                     self.ended_reported = false;
                     self.snapshot.set_state(PlaybackState::Playing);
@@ -559,12 +559,12 @@ impl AudioThread {
         self.snapshot.set_position(position);
 
         if !finished {
-            // 真的流淌过音频数据了，之后 empty() 才是真的 empty
+            // 真的流淌过音频数据了，之后 empty() 才是真的 empty。
             self.seen_content = true;
             return;
         }
 
-        // 刚 append 的头几十毫秒里 empty() 仍可能为 true，必须先真正出过声再判定结束
+        // 刚 append 的头几十毫秒里 empty() 仍可能为 true，必须先真正出过声再判定结束。
         if self.seen_content
             && !self.ended_reported
             && self.snapshot.state() == PlaybackState::Playing
@@ -710,7 +710,7 @@ mod tests {
         );
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
 
-        // 设备可能只是被别的程序临时占着：用户再点一次播放必须真的重试，而不是被 open_failed 挡住
+        // 设备可能只是被别的程序临时占着。用户再点一次播放必须真的重试，而不是被 open_failed 挡住。
         thread.handle(PlayerCommand::Play);
         assert_eq!(
             attempts.load(Ordering::SeqCst),
@@ -771,7 +771,7 @@ mod tests {
             events.try_recv(),
             Ok(PlayerEvent::State(PlaybackState::Paused))
         ));
-        // 后端此刻报 is_finished，但流是断的，不能顺手报 Ended
+        // 后端此刻报 is_finished，但流是断的，不能顺手报 Ended。
         assert!(matches!(events.try_recv(), Err(mpsc::TryRecvError::Empty)));
 
         notices
@@ -815,7 +815,7 @@ mod tests {
             "没选就是跟随默认"
         );
 
-        // 用户的选择不因拔插消失：设备回到列表里，目标又会指向它 —— 这就是「插回来切回去」的依据
+        // 用户的选择不因拔插消失。设备回到列表里，目标又会指向它。这就是「插回来切回去」的依据。
         let reattached = [device("speakers", true), device("usb-dac", false)];
         assert_eq!(
             AudioThread::target_of(Some("usb-dac"), &reattached).as_deref(),

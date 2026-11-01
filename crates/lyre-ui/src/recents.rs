@@ -1,5 +1,5 @@
-//! 「最近播放」列表，落盘到 `recents.json`：读不到退回空表，写不进只记日志。
-//! 与队列面板的「已播放」（`LibraryEntity::just_played`）是两回事：这一份跨重启留着给首页。
+//! 「最近播放」列表，落盘到 `recents.json`。读不到退回空表，写不进只记日志。
+//! 与队列面板的「已播放」（`LibraryEntity::just_played`）是两回事，这一份跨重启留着给首页。
 
 use lyre_core::TrackId;
 
@@ -29,7 +29,7 @@ impl Recents {
         persist::save_lossy(FILE, self.ids.clone());
     }
 
-    /// 记一笔：同一首反复播放只挪到最前，不占两格。
+    /// 记一笔。同一首反复播放只挪到最前，不占两格。
     pub fn record(&mut self, id: TrackId) {
         self.ids.retain(|existing| *existing != id);
         self.ids.insert(0, id);

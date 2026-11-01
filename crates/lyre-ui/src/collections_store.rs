@@ -1,4 +1,4 @@
-//! 歌单落盘到 `collections.json`：读不到退回空集，写不进只记日志。
+//! 歌单落盘到 `collections.json`。读不到退回空集，写不进只记日志。
 
 use lyre_core::Collections;
 
@@ -21,7 +21,7 @@ pub fn save(collections: Collections) {
 mod tests {
     use lyre_core::{CollectionId, Collections, TrackId};
 
-    /// 落盘形状是 `{ next, items }` 而不是裸数组：`next` 那个计数器必须活下来，
+    /// 落盘形状是 `{ next, items }` 而不是裸数组。`next` 那个计数器必须活下来，
     /// 否则重启后第一个新歌单会顶用老 id，把导航历史里还没退出的条目指到别处去。
     #[test]
     fn 计数器跟着一起往返() {

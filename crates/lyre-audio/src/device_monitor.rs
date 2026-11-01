@@ -32,7 +32,7 @@ impl DeviceMonitor {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
 
-        // 起不来线程只是失去热插拔跟随，不该让整个音频链路失败
+        // 起不来线程只是失去热插拔跟随，不该让整个音频链路失败。
         let handle = std::thread::Builder::new()
             .name("device-monitor".to_owned())
             .spawn(move || poll_loop(&signals, &thread_stop))
@@ -67,7 +67,7 @@ fn poll_loop(signals: &Sender<DeviceSignal>, stop: &AtomicBool) {
         }
         last = current;
 
-        // 控制线程退出后接收端关闭，send 失败即收工
+        // 控制线程退出后接收端关闭，send 失败即视为结束。
         if signals.send(DeviceSignal::TopologyChanged).is_err() {
             return;
         }

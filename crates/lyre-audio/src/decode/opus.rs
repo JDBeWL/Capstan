@@ -1,5 +1,6 @@
-//! Opus / Ogg 解码。symphonia `all` 只注册 aac / adpcm / alac / flac / mpa / pcm / vorbis。
-//! Ogg 认得出 Opus 流，建解码器时才报不支持，所以这里用 `opus-pure`：纯 Rust、自带 Ogg 封装。
+//! Opus 与 Ogg 解码。
+//! symphonia 的 `all` 特性只注册 aac、adpcm、alac、flac、mpa、pcm、vorbis 七种。
+//! Ogg 认得出 Opus 流，建解码器时才报不支持，所以这里用 `opus-pure`，它纯 Rust 且自带 Ogg 封装。
 //! Opus 恒在 48kHz 解码，头里的 `input_sample_rate` 只是原素材的说明，不影响解码。
 
 use std::fs::File;
@@ -11,24 +12,24 @@ use opus_pure::{MAX_PACKET_SAMPLES, OggOpusReader, OpusMSDecoder};
 
 use crate::error::{AudioError, Result};
 
-/// Opus 解码器的工作采样率，固定 48k（RFC 6716）。
+/// Opus 解码器的工作采样率，固定为 48kHz，见 RFC 6716。
 const RATE: u32 = 48_000;
 
 /// 找最后一页时往回看的字节数。Ogg 页通常 4–8 KB，64 KB 足够覆盖最后一页。
 const TAIL_SCAN: u64 = 64 * 1024;
 
-/// 跳转时向前多解的预滚。RFC 7845 §4.6 建议至少 3840 个 48kHz 样本（80ms）。
+/// 跳转时向前多解的预滚。RFC 7845 §4.6 建议至少 3840 个 48kHz 样本，即 80ms。
 const PREROLL_FRAMES: u64 = 3_840;
 
-/// Ogg 页头固定长度：`OggS` + 版本 + 头类型 + granule + serial + seq + crc + 段数。
+/// Ogg 页头固定长度，`OggS` + 版本 + 头类型 + granule + serial + seq + crc + 段数。
 const PAGE_HEADER: usize = 27;
 
-/// Vorbis 声道顺序 → 引擎假定的 WAV 顺序，`table[dst] = src`：两边只有 1 / 2 声道一致。
+/// Vorbis 声道顺序 → 引擎假定的 WAV 顺序，`table[dst] = src`，两边只有 1 与 2 声道一致。
 /// 多声道差在 LFE，Vorbis 排末路、WAV 排第四路；3 / 4 / 5 / 7 声道两边对不上，原样返回。
 const WAV_ORDER: [(usize, &[usize]); 2] = [
-    // 5.1：Vorbis FL FC FR RL RR LFE → WAV FL FR FC LFE BL BR
+    // 5.1 时 Vorbis 的 FL FC FR RL RR LFE 映射到 WAV 的 FL FR FC LFE BL BR。
     (6, &[0, 2, 1, 5, 3, 4]),
-    // 7.1：Vorbis FL FC FR RL RR SL SR LFE → WAV FL FR FC LFE BL BR SL SR
+    // 7.1 时 Vorbis 的 FL FC FR RL RR SL SR LFE 映射到 WAV 的 FL FR FC LFE BL BR SL SR。
     (8, &[0, 2, 1, 7, 3, 4, 5, 6]),
 ];
 
@@ -56,30 +57,30 @@ pub struct OpusSource {
     pos: usize,
     /// 还要丢掉的交错样本数，用来消化 `pre_skip`。
     to_skip: usize,
-    /// 头里的 `pre_skip`（每声道样本数），跳转时用来把 granule 换算成交付帧。
+    /// 头里的 `pre_skip`，按每声道计；跳转时用来把 granule 换算成交付帧。
     pre_skip: u64,
-    /// 整首的帧数（每声道样本数）。末包补齐到整包的填充不属于音频，交付满这个数必须停。
+    /// 整首的帧数，按每声道计。末包补齐到整包的填充不属于音频，交付满此数必须停止。
     limit: Option<u64>,
     /// 已经交付出去的帧数。
     handed_out: u64,
     total: Option<Duration>,
     /// 首次 seek 时扫描页头得到的索引；只用于跳转，不参与顺序播放。
     index: Option<PageIndex>,
-    /// 测试用：最近一次 seek 实际解了多少个包，用来确认没有从头解到目标。
+    /// 测试用。最近一次 seek 实际解了多少个包，用来确认没有从头解到目标。
     #[cfg(test)]
     seek_packets: usize,
 }
 
-/// 测试用：从文件里实际读出的字节数，验收 seek 的读取量。
+/// 测试用。从文件里实际读出的字节数，验收 seek 的读取量。
 #[cfg(test)]
 static READ_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// 读取端：虚拟流 = 文件头 + 从 `target` 开始的后半段。
+/// 读取端，虚拟流 = 文件头 + 从 `target` 开始的后半段。
 /// 让 `OggOpusReader` 正常解析 OpusHead/Tags 之后，直接落到目标页继续读。
 struct OpusInput {
     file: File,
     len: u64,
-    /// 虚拟流中「跳过去」的位置（通常是音频第一页的偏移）。
+    /// 虚拟流中「跳过」的位置，通常是音频第一页的偏移。
     split: u64,
     /// `split` 之后对应的真实文件偏移。
     target: u64,
@@ -157,7 +158,7 @@ impl Seek for OpusInput {
     }
 }
 
-/// 只走页头的索引。granule 是页尾已解码到的绝对帧号（含 `pre_skip`）。
+/// 只走页头的索引。granule 是页尾已解码到的绝对帧号，含 `pre_skip`。
 #[derive(Clone, Copy)]
 struct PageEntry {
     offset: u64,
@@ -167,7 +168,7 @@ struct PageEntry {
 struct PageIndex {
     /// 音频第一页的偏移，也是拼接读取器的切点。
     audio_start: u64,
-    /// 只保留包边界页（非续页）且 granule 有效的页，按文件顺序递增。
+    /// 只保留 granule 有效且非续页的包边界页，按文件顺序递增。
     pages: Vec<PageEntry>,
 }
 
@@ -195,7 +196,7 @@ impl OpusSource {
         // 普通 OpusDecoder 在声道数 > 2 时直接报错。
         let mut decoder = OpusMSDecoder::new(RATE.cast_signed(), channels, family)
             .map_err(|err| AudioError::Decode(format!("建 Opus 解码器失败：{err:?}")))?;
-        // RFC 7845 §5.1：头里声明的增益必须落实，否则整首音量不对且没有别的症状。
+        // RFC 7845 §5.1 要求落实头里声明的增益，否则整首音量不对，且没有别的症状。
         // multistream 是 N 条子流，每条都得设一遍。
         for stream in decoder.streams_mut() {
             stream.gain_q8 = gain;
@@ -258,7 +259,7 @@ impl OpusSource {
         Ok(())
     }
 
-    /// 跳转：优先走 Ogg 页索引，只从目标前 80ms 的包边界开始解；
+    /// 跳转。优先走 Ogg 页索引，只从目标前 80ms 的包边界开始解；
     /// 索引不可用时才退回从头顺序解码。
     pub fn seek(&mut self, time: Duration) -> Result<()> {
         self.decoder
@@ -308,14 +309,14 @@ impl OpusSource {
         let idx = index.pages.partition_point(|page| {
             (page.granule.max(0) as u64).saturating_sub(self.pre_skip) <= point
         });
-        // 没有页在预滚点之前结束：目标落在第一页里，回到从头顺序解码。
+        // 没有页在预滚点之前结束，说明目标落在第一页里，回到从头顺序解码。
         if idx == 0 {
             return None;
         }
         Some((index.audio_start, index.pages[idx - 1]))
     }
 
-    /// 用「文件头 + 目标页」的拼接源重建读取器：头部只读一次，中间的数据包整段跳过。
+    /// 用「文件头与目标页」的拼接源重建读取器，头部只读一次，中间的数据包整段跳过。
     fn reader_at(
         &self,
         audio_start: u64,
@@ -347,7 +348,7 @@ impl OpusSource {
             if reached + frames > target {
                 self.packet = decoded.pcm;
                 self.pos = ((target - reached) as usize) * channels;
-                // 交付计数要跟上跳进的位置，否则末包的截断上限会算错
+                // 交付计数要跟上跳进的位置，否则末包的截断上限会算错。
                 self.handed_out = target;
                 return Ok(());
             }
@@ -358,7 +359,7 @@ impl OpusSource {
         Ok(())
     }
 
-    /// 从索引页开始解码：该页 granule 给出页尾的绝对输出帧，之后按解码帧数推进到目标。
+    /// 从索引页开始解码。该页 granule 给出页尾的绝对输出帧，之后按解码帧数推进到目标。
     fn decode_from_page(&mut self, page_granule: i64, target: u64) -> Result<()> {
         let channels = self.channels;
         let page_end = (page_granule.max(0) as u64).saturating_sub(self.pre_skip);
@@ -376,10 +377,10 @@ impl OpusSource {
             }
             if !mapped {
                 if decoded.page_granule == page_granule {
-                    // 这一包完成在索引页上，整页都在目标之前
+                    // 这一包完成在索引页上，整页都在目标之前。
                     continue;
                 }
-                // 第一包跨到下一页：从它开始，输出位置就是索引页的页尾
+                // 第一包跨到下一页，从它开始，输出位置就是索引页的页尾。
                 mapped = true;
             }
             let start = page_end.saturating_add(after);
@@ -398,7 +399,7 @@ impl OpusSource {
         Ok(())
     }
 
-    /// 解下一个包，返回交错 f32（已扣掉 `pre_skip`）与包所在页的 granule。`None` 表示流结束。
+    /// 解下一个包，返回交错 f32 与包所在页的 granule，其中样本已扣掉 `pre_skip`。`None` 表示流结束。
     fn decode_next(&mut self) -> Result<Option<DecodedPacket>> {
         loop {
             let packet = self
@@ -451,7 +452,7 @@ struct DecodedPacket {
 }
 
 impl PageIndex {
-    /// 只读页头建立索引：不碰音频包，也不校验 CRC。
+    /// 只读页头建立索引，不碰音频包，也不校验 CRC。
     fn scan(path: &Path, serial: u32) -> Result<Self> {
         let mut file = File::open(path).map_err(AudioError::FileOpen)?;
         let len = file
@@ -525,7 +526,7 @@ impl Iterator for OpusSource {
             Ok(true) => {
                 let sample = self.packet[self.pos];
                 self.pos += 1;
-                // 交错布局里每满一帧（`channels` 个样本）才计一帧
+                // 交错布局里每满一帧即 `channels` 个样本才计一帧。
                 if self.pos.is_multiple_of(self.channels) {
                     self.handed_out += 1;
                 }
@@ -540,11 +541,11 @@ impl Iterator for OpusSource {
     }
 }
 
-/// 整首的帧数（每声道样本数）：Ogg 只有最后一页的 granule 是全曲长度，
+/// 整首的帧数，按每声道计。Ogg 只有最后一页的 granule 是全曲长度，
 /// 播放器起播前就要有总时长，所以直接回扫文件尾而不是流式读完。
 fn total_frames(path: &Path) -> Option<u64> {
     let (pre_skip, granule) = last_granule(path)?;
-    // granule 从流的起点算起（含 pre_skip），交付的样本从 pre_skip 之后才数
+    // granule 从流的起点算起，含 pre_skip；交付的样本自 pre_skip 之后才开始计数。
     let frames = granule.checked_sub(i64::from(pre_skip))?;
     u64::try_from(frames).ok().filter(|frames| *frames > 0)
 }
@@ -558,14 +559,14 @@ fn last_granule(path: &Path) -> Option<(u16, i64)> {
     let mut tail = Vec::with_capacity((size - start) as usize);
     file.take(size - start).read_to_end(&mut tail).ok()?;
 
-    // 页头：0..4 "OggS"、5 头类型、6..14 granule position（i64 小端）
+    // 页头。0..4 "OggS"、5 头类型、6..14 granule position，按 i64 小端。
     let index = rfind(&tail, b"OggS")?;
     if index + 14 > tail.len() {
         return None;
     }
     let granule = i64::from_le_bytes(tail[index + 6..index + 14].try_into().ok()?);
 
-    // pre_skip 在第一页的 OpusHead 里；这里只需要它，单独取一次
+    // pre_skip 在第一页的 OpusHead 里；这里只需要它，单独取一次。
     let pre_skip = pre_skip_of(path).unwrap_or(0);
     Some((pre_skip, granule))
 }
@@ -582,7 +583,7 @@ fn pre_skip_of(path: &Path) -> Option<u16> {
     Some(u16::from_le_bytes([head[at + 10], head[at + 11]]))
 }
 
-/// 在字节串里找子串。`slice` 上的 `find` / `rfind` 还没稳定，这里自己走窗口。
+/// 在字节串中查找子串。`slice` 上的 `find` / `rfind` 尚未稳定，此处自行实现窗口扫描。
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
@@ -606,7 +607,7 @@ mod tests {
         READ_BYTES.swap(0, Ordering::Relaxed)
     }
 
-    /// 用 opus-pure 自己的编码器生成一个真实 Ogg/Opus 文件（6 秒 440Hz 立体声）。
+    /// 用 opus-pure 自身的编码器生成 6 秒 440Hz 立体声的真实 Ogg/Opus 文件。
     fn fixture(path: &std::path::Path, seconds: u32) {
         let mut encoder = OpusEncoder::new(48_000, 2, Application::Audio).expect("建编码器");
         let head = OpusHead::for_encoder(&encoder, 48_000);
@@ -702,7 +703,7 @@ mod tests {
         );
     }
 
-    /// 性能基准：29 秒处的 seek 不该把前 29 秒全部解码。
+    /// 性能基准，29 秒处的 seek 不该把前 29 秒全部解码。
     #[test]
     #[ignore = "性能基准，手动运行"]
     fn seeking_near_the_end_skips_most_packets() {
@@ -753,11 +754,11 @@ mod tests {
         assert_eq!(find(haystack, b"OggS"), Some(2));
         assert_eq!(rfind(haystack, b"OggS"), Some(10));
         assert_eq!(find(haystack, b"nope"), None);
-        // 针比草长：`windows` 给不出窗口，不该 panic
+        // 窗口比片段长时，`windows` 给不出任何窗口，此处不该 panic。
         assert_eq!(find(b"ab", b"abc"), None);
     }
 
-    /// 造一个 Ogg 页：捕获串 + 版本 + 头类型 + 8 字节 granule + 页内容。
+    /// 造一个 Ogg 页，捕获串 + 版本 + 头类型 + 8 字节 granule + 页内容。
     fn page(granule: i64, body: &[u8]) -> Vec<u8> {
         let mut bytes = b"OggS".to_vec();
         bytes.extend_from_slice(&[0, 0]);
@@ -766,7 +767,7 @@ mod tests {
         bytes
     }
 
-    /// 首页：`OpusHead` 落在偏移 28 —— 27 字节页头 + 1 字节段表。
+    /// 首页。`OpusHead` 落在偏移 28，即 27 字节页头加 1 字节段表。
     /// 头之后依次是版本、声道数、`pre_skip`。
     fn first_page(pre_skip: u16) -> Vec<u8> {
         let mut body = vec![0u8; 28 - 14];
@@ -778,7 +779,7 @@ mod tests {
         page(0, &body)
     }
 
-    /// 帧数 = 最后一页 granule − `pre_skip`：只有末页的 granule 是全曲长度。
+    /// 帧数 = 最后一页 granule − `pre_skip`，只有末页的 granule 是全曲长度。
     #[test]
     fn duration_comes_from_the_last_page_minus_pre_skip() {
         let dir = tempfile::tempdir().expect("建临时目录");
@@ -791,7 +792,7 @@ mod tests {
         assert_eq!(total_frames(&path), Some(48_000));
     }
 
-    /// granule 还没追上 `pre_skip` 时没有有效样本，宁可不报也不报个负的。
+    /// granule 尚未追上 `pre_skip` 时无有效样本，故不报告该值，而非报告负值。
     #[test]
     fn a_granule_below_pre_skip_yields_no_frames() {
         let dir = tempfile::tempdir().expect("建临时目录");
@@ -815,7 +816,7 @@ mod tests {
         assert_eq!(total_frames(&path), Some(48_000));
     }
 
-    /// 6 声道：Vorbis 的 FL FC FR RL RR LFE 要变成 WAV 的 FL FR FC LFE BL BR。
+    /// 6 声道，Vorbis 的 FL FC FR RL RR LFE 要变成 WAV 的 FL FR FC LFE BL BR。
     #[test]
     fn six_channels_move_lfe_to_the_fourth_slot() {
         let mut pcm: Vec<f32> = (1..=6).map(|v| v as f32).collect();
@@ -846,7 +847,7 @@ mod tests {
         );
     }
 
-    /// 单声道 / 立体声两边一致，不该动。
+    /// 单声道与立体声两边一致，不该动。
     #[test]
     fn mono_and_stereo_are_left_alone() {
         let mut stereo = vec![1.0, 2.0, 3.0, 4.0];

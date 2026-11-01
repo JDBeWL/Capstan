@@ -1,4 +1,4 @@
-//! 拖拽排序：行首手柄、行内落点区，以及跟随鼠标的小卡片。
+//! 拖拽排序。行首手柄、行内落点区，以及跟随鼠标的小卡片。
 
 use crate::entities::LibraryEntity;
 use crate::icon::{Glyph, icon, icon_inherit};
@@ -7,7 +7,7 @@ use crate::theme;
 
 use super::HANDLE_W;
 
-/// 拖拽载荷：被拖起来的是第几行（可见行号），与落点边界同一坐标。
+/// 拖拽载荷。被拖起来的是第几行（可见行号），与落点边界同一坐标。
 struct DragRow {
     row: usize,
 }
@@ -15,9 +15,9 @@ struct DragRow {
 /// 行内落点的两个半边，各自对应一个插入边界。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum DropEdge {
-    /// 插在这一行之前
+    /// 插在这一行之前。
     Above,
-    /// 插在这一行之后
+    /// 插在这一行之后。
     Below,
 }
 
@@ -74,7 +74,7 @@ pub(super) fn handle_cell(index: usize, title: String, group: SharedString) -> A
         .flex()
         .items_center()
         .justify_center()
-        // `CursorStyle::OpenHand` 就是 CSS 的 grab
+        // `CursorStyle::OpenHand` 就是 CSS 的 grab。
         .cursor(CursorStyle::OpenHand)
         .text_color(theme::text_faint())
         .group_hover(group, |style| style.text_color(theme::text_muted()))
@@ -120,7 +120,7 @@ mod tests {
         assert_eq!(boundary_of(0, DropEdge::Above), 0);
         assert_eq!(boundary_of(0, DropEdge::Below), 1);
         assert_eq!(boundary_of(3, DropEdge::Below), 4);
-        // 相邻两行的接缝报的是同一个边界，线才不会跳
+        // 相邻两行的接缝报的是同一个边界，线才不会跳。
         assert_eq!(
             boundary_of(2, DropEdge::Below),
             boundary_of(3, DropEdge::Above)

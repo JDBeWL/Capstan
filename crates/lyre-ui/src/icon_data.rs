@@ -161,7 +161,7 @@ pub fn stroke_svg(glyph: Glyph) -> &'static str {
             r#"  <circle cx="6" cy="18" r="3" />"#,
             r#"  <circle cx="18" cy="16" r="3" />"#,
         ),
-        // 顶栏右上用户区，数据源：Lucide bell / user
+        // 顶栏右上用户区，图标取自 Lucide 的 bell 与 user。
         Glyph::Bell => wrap!(
             r#"  <path d="M10.268 21a2 2 0 0 0 3.464 0" />"#,
             r#"  <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" />"#,
@@ -170,7 +170,7 @@ pub fn stroke_svg(glyph: Glyph) -> &'static str {
             r#"  <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />"#,
             r#"  <circle cx="12" cy="7" r="4" />"#,
         ),
-        // 底栏入口，数据源：Lucide mic / cast / maximize / panel-right
+        // 底栏入口，图标取自 Lucide 的 mic、cast、maximize 与 panel-right。
         Glyph::Lyrics => wrap!(
             r#"  <path d="M12 19v3" />"#,
             r#"  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />"#,

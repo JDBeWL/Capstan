@@ -1,4 +1,4 @@
-//! 搜索页：未输入时画探索网格（从专辑分组派生），输入中画「最佳结果」+「艺人 / 专辑 / 歌单」区块。
+//! 搜索页。未输入时画探索网格（从专辑分组派生），输入中画「最佳结果」+「艺人、专辑、歌单」区块。
 //! 输入框只有顶栏那一份；歌曲结果由 [`crate::components::TrackList`]（曲库可见投影）承载，这里不另建列表。
 
 use std::collections::HashSet;
@@ -23,20 +23,20 @@ const BLOCK_MAX: usize = 4;
 const TOP_W: f32 = 320.0;
 const TOP_COVER: f32 = 120.0;
 const ROW_THUMB: f32 = 36.0;
-/// 一个分组栏的最小可读宽度：再窄，栏头「艺术家」本身就要折行。
+/// 一个分组栏的最小可读宽度。再窄，栏头「艺术家」本身就要折行。
 const RESULT_COL_MIN_W: f32 = 150.0;
-/// 三个分组栏并排所需最小宽度：三栏各 `RESULT_COL_MIN_W` + 栏间两条间距。
+/// 三个分组栏并排所需最小宽度，三栏各 `RESULT_COL_MIN_W` + 栏间两条间距。
 /// 达不到就退成单列。
 const GROUPS_ROW_MIN_W: f32 = RESULT_COL_MIN_W * 3.0 + theme::GAP_XL * 2.0;
 
-/// 探索网格每行几块：按可用宽度反推，夹在 2–4 列之间。
+/// 探索网格每行几块。按可用宽度反推，夹在 2–4 列之间。
 fn browse_columns(usable: f32) -> usize {
     let gap = theme::GAP_MD;
     let columns = ((usable + gap) / (BROWSE_TILE_MIN_W + gap)).floor() as usize;
     columns.clamp(2, 4)
 }
 
-/// 分组栏一行放几栏：宽到能放下三栏才并排，否则单列。
+/// 分组栏一行放几栏。宽到能放下三栏才并排，否则单列。
 fn group_columns(usable: f32, groups: usize) -> usize {
     if groups > 0 && usable >= GROUPS_ROW_MIN_W {
         groups
@@ -45,7 +45,7 @@ fn group_columns(usable: f32, groups: usize) -> usize {
     }
 }
 
-/// 最佳结果与分组栏能否并排：按实际命中的分组数算，空分组不占宽，也不硬挤。
+/// 最佳结果与分组栏能否并排。按实际命中的分组数算，空分组不占宽，也不硬挤。
 fn results_side_by_side(usable: f32, groups: usize) -> bool {
     groups > 0
         && usable
@@ -98,7 +98,7 @@ impl SearchPage {
         cx: &mut Context<Self>,
     ) -> Self {
         let observe = cx.observe(&library, |_, _, cx| cx.notify());
-        // 只对当前结果里等的那几张封面重绘：整页 observe 会让每次解码都重算分组与 Hero。
+        // 只对当前结果里等的那几张封面重绘，整页 observe 会让每次解码都重算分组与 Hero。
         let on_cover = cx.subscribe(&covers, |this, _, event: &CoverCacheEvent, cx| {
             let relevant = match event {
                 CoverCacheEvent::Ready(key) => this
@@ -257,7 +257,7 @@ impl Render for SearchPage {
         // 主区宽度已扣掉侧栏与停靠的面板，这里再扣页面左右内边距。
         let usable = (self.shell.read(cx).center_width() - theme::PAGE_PAD * 2.0).max(0.0);
 
-        // 搜索页不画浮动返回按钮：顶栏的后退与 Esc 已经能退回上一处，页头按普通上留白。
+        // 搜索页不画浮动返回按钮。顶栏的后退与 Esc 已经能退回上一处，页头按普通上留白。
         let header_top = theme::GAP_XL;
 
         let header = div()
@@ -285,7 +285,7 @@ impl Render for SearchPage {
                     .child(summary),
             );
 
-        // 搜索结果也保留这层页头：与浏览页、详情页同一套顶部结构，往下一眼能看出还在搜索里。
+        // 搜索结果也保留这层页头。与浏览页、详情页同一套顶部结构，往下一眼能看出还在搜索里。
         let mut page = div()
             .id("search-page")
             .flex_none()
@@ -307,7 +307,7 @@ impl Render for SearchPage {
 }
 
 impl SearchPage {
-    /// 未输入时的探索网格：分类卡从专辑分组派生 —— 曲库没有流派元数据。
+    /// 未输入时的探索网格，分类卡从专辑分组派生。曲库没有流派元数据。
     fn browse_grid(&self, usable: f32, cx: &mut Context<Self>) -> AnyElement {
         let groups = App::update_entity(cx, &self.library, |library, _| library.albums());
         if groups.is_empty() {
@@ -317,7 +317,7 @@ impl SearchPage {
                 .pb(px(theme::GAP_XL))
                 .text_size(px(theme::FONT_BODY))
                 .text_color(theme::text_muted())
-                .child("曲库还是空的 —— 导入一些音乐后，这里会出现可浏览的分类。")
+                .child("曲库还是空的。导入一些音乐后，这里会出现可浏览的分类。")
                 .into_any_element();
         }
 
@@ -395,7 +395,7 @@ impl SearchPage {
                     );
                 }
             })
-            // 顶边一小段墨色页签 + 右下切角，和首页的浏览看板同一套形状
+            // 顶边一小段墨色页签 + 右下切角，和首页的浏览看板同一套形状。
             .child(
                 div()
                     .absolute()
@@ -468,7 +468,7 @@ impl SearchPage {
             return no_results(self.library.clone(), window, cx).into_any_element();
         }
 
-        // 只画命中的分组：空分组连同「没有匹配」不再占首屏高度。
+        // 只画命中的分组，空分组连同「没有匹配」不再占首屏高度。
         let mut blocks: Vec<AnyElement> = Vec::new();
         if artist_total > 0 {
             let rows = results.artists.iter().map(MiniRow::from_artist).collect();
@@ -529,7 +529,7 @@ impl SearchPage {
             .into_any_element()
     }
 
-    /// 歌单区块：只列命中的歌单，没有「查看全部」。调用方保证 `rows` 非空。
+    /// 歌单区块。只列命中的歌单，没有「查看全部」。调用方保证 `rows` 非空。
     fn list_column(&self, rows: Vec<(Scope, HeroInfo)>, cx: &mut Context<Self>) -> AnyElement {
         let mut col = div()
             .flex_1()
@@ -558,7 +558,7 @@ impl SearchPage {
         );
         let library = self.library.clone();
         let shell = self.shell.clone();
-        // 只有自建歌单才有可改的地方：收藏的成员由爱心决定，不能改名也不能删。
+        // 只有自建歌单才有可改的地方。收藏的成员由爱心决定，不能改名也不能删。
         let editable = match &scope {
             Scope::Collection(id) => Some(*id),
             _ => None,
@@ -626,7 +626,7 @@ impl SearchPage {
         }
     }
 
-    /// `fill`：并排时钉 `TOP_W`，换行独占时铺满整行，避免右侧留一大块空白。
+    /// `fill`。并排时钉 `TOP_W`，换行独占时铺满整行，避免右侧留一大块空白。
     fn top_column(&self, track: &Track, fill: bool, cx: &mut App) -> AnyElement {
         let mut col = div()
             .flex_none()
@@ -754,7 +754,7 @@ impl SearchPage {
         col.into_any_element()
     }
 
-    /// `AlbumGrid` 不读搜索词，「查看全部」切过去是全量网格 —— 这里只保证入口可达，不假装已过滤。
+    /// `AlbumGrid` 不读搜索词，「查看全部」切过去是全量网格。这里只保证入口可达，不假装已过滤。
     fn block_header(&self, title: &'static str, section: NavSection, total: usize) -> AnyElement {
         let mut row = div()
             .flex_none()
@@ -1080,7 +1080,7 @@ fn no_results(
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：`platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
+    // 不写 `use super::*`，`platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
     use super::{browse_columns, group_columns, results_side_by_side};
     use crate::entities::searching;
 

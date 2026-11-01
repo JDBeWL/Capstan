@@ -1,5 +1,5 @@
-//! 解码推送线程：把播放链路的输出灌进采样环。不是实时线程，可以按水位有节奏地取数。
-//! 只有「源真的读完了」才置 `done`：取消（切歌、停流、换设备）不算播完 ——
+//! 解码推送线程。将播放链路的输出写入采样环。非实时线程，可按水位节流取数。
+//! 只有「源真的读完了」才置 `done`。取消（切歌、停流、换设备）不算播完。
 //! 被取消的旧线程若报「整首放完」，界面会在新的一首刚开始时当场跳下一首。
 
 use std::sync::Arc;
@@ -23,7 +23,7 @@ pub struct PushThread {
 }
 
 impl PushThread {
-    /// 让推送线程收工并等它退出。等待有界：它最多睡一个 [`GATE_TICK`]。
+    /// 使推送线程结束并等待其退出。等待有界，最多阻塞一个 [`GATE_TICK`]。
     pub fn join(mut self) {
         self.stop();
     }
@@ -61,7 +61,7 @@ where
         .name("lyre-exclusive-push".to_owned())
         .spawn(move || {
             let per_second = sample_rate as usize * channels as usize;
-            // 水位不能顶到环的上限，否则门控刚好卡在「一点空间都不剩」上，写块永远塞不进去
+            // 水位不得取到环容量的上限，否则门控恰好落在「无剩余空间」处，写块将永远无法插入。
             let watermark = (per_second * WATERMARK_SECONDS)
                 .min(RING_SAMPLES.saturating_sub(CHUNK_SAMPLES * 2));
 
@@ -149,7 +149,7 @@ mod tests {
         while collected.len() < TOTAL {
             let got = reader.read(&mut buffer);
             if got == 0 {
-                // 推送结束且环已排空才算真的没了
+                // 推送结束且环已排空才算真的没了。
                 if done.load(Ordering::Acquire) == GENERATION && ring.backlog() == 0 {
                     break;
                 }
@@ -177,7 +177,7 @@ mod tests {
         let (_ring, writer, _reader) = SampleRing::new();
         let done = Arc::new(AtomicU64::new(0));
 
-        // 无穷源：水位一满就会停在门控上，只有取消能叫醒它
+        // 无穷源。水位一满就会停在门控上，只有取消能叫醒它。
         let push = spawn(
             std::iter::repeat_n(0.0f32, usize::MAX),
             writer,
@@ -212,7 +212,7 @@ mod tests {
         )
         .expect("推送线程应当起得来");
 
-        // 先等它自己跑完再 join：join 会先置取消标志，抢在它开跑之前就把完成标志掐掉了
+        // 必须等待其自然结束再 join。join 会先置取消标志，可能在它启动之前即清除完成标志。
         for _ in 0..200 {
             if done.load(Ordering::Acquire) == GENERATION {
                 break;
@@ -227,8 +227,8 @@ mod tests {
         assert!(out.iter().all(|sample| *sample == 0.5));
     }
 
-    /// 复刻切歌的真实时序：旧推送线程把环灌满 → 停掉它 → 作废世代 → 起新推送线程 →
-    /// 渲染线程这才第一次读。新曲目的样本必须一个不少地交出来。
+    /// 复刻切歌的真实时序，依次是旧推送线程写满采样环 → 停止该线程 → 作废世代 → 启动新推送线程 →
+    /// 渲染线程此时首次读取。新曲目的样本必须完整交出，不得丢失。
     #[test]
     fn a_track_swap_hands_the_new_buffer_over_intact() {
         const OLD: usize = 100_000;
@@ -246,7 +246,7 @@ mod tests {
         )
         .expect("推送线程应当起得来");
 
-        // 素材比水位短，它一口气写完就收工，不必等门控
+        // 素材短于水位，一次写入即结束，无需等待门控。
         for _ in 0..200 {
             if done_old.load(Ordering::Acquire) == GENERATION {
                 break;
@@ -268,8 +268,8 @@ mod tests {
         )
         .expect("推送线程应当起得来");
 
-        // 关键：新推送线程先把环灌起来，渲染线程**才**醒过来读。
-        // 换手时渲染线程不是在等设备事件、就是在空转打盹，先醒来的是推送线程 —— 这就是丢音的那条路。
+        // 新推送线程先写满采样环，渲染线程才开始读取。
+        // 换手时渲染线程不是在等设备事件、就是在空转打盹，先醒来的是推送线程。这就是丢音的那条路。
         for _ in 0..400 {
             if done_new.load(Ordering::Acquire) == GENERATION + 1 {
                 break;

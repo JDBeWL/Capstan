@@ -1,5 +1,5 @@
 //! 可持久化的界面偏好，落盘在用户数据目录的 `settings.json`。
-//! 读不到退回默认值，写不进只记日志 —— 不弹窗、不阻塞启动。
+//! 读不到退回默认值，写不进只记日志。不弹窗、不阻塞启动。
 
 use serde::{Deserialize, Serialize};
 
@@ -10,17 +10,17 @@ use crate::theme::Appearance;
 const FILE: &str = "settings.json";
 
 /// 可持久化的界面偏好。播放模式、进度这类会话内的状态不在这里。
-/// 音量是例外：每次启动都该是用户上次要的那个值，包括当时是不是静音。
-// `#[serde(default)]`：缺字段用默认值补齐，否则新增设置项会让老配置文件整体失效。
+/// 音量是例外。每次启动都该是用户上次要的那个值，包括当时是不是静音。
+// `#[serde(default)]`。缺字段用默认值补齐，否则新增设置项会让老配置文件整体失效。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// 浅色 / 深色。旧存档没有这个字段时按默认的浅色补齐。
+    /// 浅色与深色。旧存档没有这个字段时按默认的浅色补齐。
     pub appearance: Appearance,
     pub density: Density,
     pub default_view: NavSection,
     pub recursive_import: bool,
-    /// 启动时右面板停在哪一页，`None` 表示收起。窄一档一律收起：断点优先于偏好。
+    /// 启动时右面板停在哪一页，`None` 表示收起。窄一档一律收起，断点优先于偏好。
     pub default_panel: Option<PanelTab>,
     /// 启动时侧栏的形态，`None` 表示跟随窗口宽度。拖窗口仍会自动调整。
     pub default_sidebar: Option<SidebarState>,
@@ -34,9 +34,9 @@ pub struct Settings {
     /// 标识是机器绑定的，换机器或重装驱动后可能失效，那时静默回退默认设备。
     pub preferred_device: Option<String>,
     /// 换设备时让旧输出流淡出、新流淡入，把重建链路的空窗盖掉。
-    /// 默认关：两路短暂并存时可能有轻微的相位抵消，听感不合就还是硬切干净。
+    /// 默认关。两路短暂并存时可能有轻微的相位抵消，听感不合就还是硬切干净。
     pub smooth_device_switch: bool,
-    /// 用 WASAPI 独占输出。默认关：独占会占住设备，其它程序一起听不到声音。
+    /// 用 WASAPI 独占输出。默认关。独占会占住设备，其它程序一起听不到声音。
     pub exclusive_output: bool,
 }
 
@@ -85,24 +85,24 @@ mod tests {
         assert_eq!(settings.default_view, NavSection::Tracks);
         assert!(
             settings.recursive_import,
-            "递归导入是默认 —— 音乐目录几乎总是分层的"
+            "递归导入是默认，因为音乐目录几乎总是分层的"
         );
         assert_eq!(settings.default_panel, Some(PanelTab::NowPlaying));
         assert_eq!(settings.default_sidebar, None, "侧栏默认跟随窗口宽度");
         assert!(settings.resume_position, "接着上次播是大多数人想要的");
         assert_eq!(
             settings.volume, 1.0,
-            "默认满音量 —— 与加这个字段之前的行为一致"
+            "默认满音量，与加这个字段之前的行为一致"
         );
         assert!(!settings.muted);
         assert_eq!(settings.preferred_device, None, "默认跟随系统默认设备");
         assert!(
             !settings.smooth_device_switch,
-            "默认硬切 —— 与加这个字段之前的行为一致"
+            "默认硬切，与加这个字段之前的行为一致"
         );
         assert!(
             !settings.exclusive_output,
-            "默认共享输出 —— 独占会占住设备，不能默认打开"
+            "默认共享输出，因为独占会占住设备，不能默认打开"
         );
     }
 

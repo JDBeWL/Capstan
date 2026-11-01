@@ -1,4 +1,4 @@
-//! 极简文件日志：把 `log` 记录写到 `<数据目录>/logs/app.log`。
+//! 极简文件日志，把 `log` 记录写到 `<数据目录>/logs/app.log`。
 //! release 下 `windows_subsystem = "windows"` 让 stderr 无处可去；文件打不开时退回 stderr。
 
 use std::fs::{self, File, OpenOptions};
@@ -23,7 +23,7 @@ impl log::Log for FileLogger {
             record.args()
         );
         match &self.file {
-            // `impl Write for &File`：`&File` 本身就可写，所以 `&self` 已经够用。
+            // `impl Write for &File`。`&File` 本身就可写，所以 `&self` 已经够用。
             Some(file) => {
                 let mut handle = file;
                 let _ = handle.write_all(line.as_bytes());

@@ -1,4 +1,4 @@
-//! 页头工具条：大标题、扫描指示、排序、清空、多选开关。
+//! 页头工具条，含大标题、扫描指示、排序、清空与多选开关。
 
 use lyre_core::SortKey;
 
@@ -17,21 +17,21 @@ use super::{TrackList, TrackListEvent};
 pub(super) struct ToolbarState {
     /// 可见行数（过滤生效时小于 `total`）
     pub(super) count: usize,
-    /// 曲库总数
+    /// 曲库总数。
     pub(super) total: usize,
-    /// 用户真的输入了搜索词，而不是「有没有投影」：见 [`LibraryEntity::has_query`]
+    /// 用户真的输入了搜索词，而不是「有没有投影」，见 [`LibraryEntity::has_query`]。
     pub(super) filtering: bool,
     pub(super) sort_key: SortKey,
     pub(super) scanning: Option<ScanProgress>,
-    /// 是否处于专辑 / 艺术家详情里，决定要不要给浮动返回按钮让出左内边距
+    /// 是否处于专辑与艺术家详情里，决定要不要给浮动返回按钮让出左内边距。
     pub(super) scoped: bool,
-    /// 作用域种类，决定眉标写 `// ALBUM` 还是 `// ARTIST`
+    /// 作用域种类，决定眉标写 `// ALBUM` 还是 `// ARTIST`。
     pub(super) kind: ScopeKind,
-    /// 当前作用域是歌单 / 收藏（`ScopeKind::All` 分不出这两者）
+    /// 当前作用域是歌单与收藏（`ScopeKind::All` 分不出这两者）
     pub(super) from_list: bool,
-    /// 详情页的标题（专辑名 / 艺术家名）。`None` 表示没有收窄作用域
+    /// 详情页的标题（专辑名与艺术家名）。`None` 表示没有收窄作用域。
     pub(super) scope: Option<String>,
-    /// 上方已有页头（详情页头图 / 搜索页大标题）时不再画大标题；列头照常画
+    /// 上方已有页头（详情页头图与搜索页大标题）时不再画大标题；列头照常画。
     pub(super) headed_elsewhere: bool,
     pub(super) in_search: bool,
     pub(super) selecting: bool,
@@ -41,7 +41,7 @@ pub(super) fn can_reorder(in_collection: bool, has_query: bool, rows: usize) -> 
     in_collection && !has_query && rows > 1
 }
 
-/// 眉标：当前页是什么。搜索词优先。
+/// 眉标，当前页是什么。搜索词优先。
 fn header_eyebrow(filtering: bool, kind: ScopeKind, from_list: bool) -> &'static str {
     if filtering {
         return "Search";
@@ -65,7 +65,7 @@ fn header_title(filtering: bool, scope: Option<&str>) -> String {
     }
 }
 
-/// 标题下的一行真实字段：计数 / 命中比。
+/// 标题下的一行真实字段，计数与命中比。
 fn header_meta(filtering: bool, count: usize, total: usize) -> String {
     if filtering {
         format!("找到 {} / {} 首", thousands(count), thousands(total))
@@ -74,8 +74,8 @@ fn header_meta(filtering: bool, count: usize, total: usize) -> String {
     }
 }
 
-/// 「排序 / 清空」只在曲库列表页显示，详情页与搜索页都不画。
-/// 判据是「停在搜索页」而不是「有搜索词」：曲库页用顶栏过滤时按钮留在原地。
+/// 「排序」与「清空」只在曲库列表页显示，详情页与搜索页都不画。
+/// 判据是「停在搜索页」而不是「有搜索词」，曲库页用顶栏过滤时按钮留在原地。
 fn shows_actions(scoped: bool, in_search: bool) -> bool {
     !scoped && !in_search
 }
@@ -102,14 +102,14 @@ pub(super) fn toolbar(
         selecting,
     } = state;
 
-    // 进详情时让出左内边距，免得大标题被浮动返回按钮压住；与按钮位置同源于 `crate::root::HEADER_BACK_INSET`
+    // 进详情时让出左内边距，免得大标题被浮动返回按钮压住；与按钮位置同源于 `crate::root::HEADER_BACK_INSET`。
     let back_inset = if scoped {
         crate::root::HEADER_BACK_INSET
     } else {
         theme::GAP_XL
     };
 
-    // 详情里的上留白再叠一档返回按钮的高度，让大标题落在按钮下方
+    // 详情里的上留白再叠一档返回按钮的高度，让大标题落在按钮下方。
     let top_pad = if scoped {
         crate::root::HEADER_BACK_INSET + theme::GAP_XL
     } else {
@@ -137,7 +137,7 @@ pub(super) fn toolbar(
                 .flex_col()
                 .items_start()
                 .gap(px(6.))
-                // 扫描指示与页头归属无关，`headed_elsewhere` 时仍要画
+                // 扫描指示与页头归属无关，`headed_elsewhere` 时仍要画。
                 .when(!headed_elsewhere, |col| {
                     col.child(crate::common::section::eyebrow(eyebrow))
                         .child(crate::common::section::page_title(title).flex_shrink_1())
@@ -166,7 +166,7 @@ pub(super) fn toolbar(
         }
     }
 
-    // 多选开关只留在曲库页工具条里：详情页走头图的「更多操作」，搜索页不提供多选。
+    // 多选开关只留在曲库页工具条里。详情页走头图的「更多操作」，搜索页不提供多选。
     if !headed_elsewhere && count > 0 {
         bar = bar.child(selection_toggle(list, selecting, window, cx));
     }
@@ -197,7 +197,7 @@ pub(super) fn selection_toggle(
     )
 }
 
-/// 扫描进度指示：不确定进度（只报已找到数），因为扫描前不知道总文件数，百分比只能是假的。
+/// 扫描进度指示。不确定进度（只报已找到数），因为扫描前不知道总文件数，百分比只能是假的。
 /// 黄块 + 墨字 = 需要注意，不用红绿。
 fn scan_indicator(progress: ScanProgress) -> impl IntoElement {
     div()
@@ -220,7 +220,7 @@ fn scan_indicator(progress: ScanProgress) -> impl IntoElement {
         )))
 }
 
-/// 排序入口。不用 `context_menu`：它只在右键打开，左键点下去毫无反应。
+/// 排序入口。不用 `context_menu`。它只在右键打开，左键点下去毫无反应。
 fn sort_menu(
     library: Entity<LibraryEntity>,
     total: usize,
@@ -242,7 +242,7 @@ fn sort_menu(
     .child(icon_inherit(Glyph::Sort, 14.))
     .child(current.label());
 
-    // 菜单项在闭包里现造：`PopupMenuItem` 不是 `Clone`（内含 `Box<dyn Fn>`），而 builder 会被反复调用。
+    // 菜单项在闭包里现造。`PopupMenuItem` 不是 `Clone`（内含 `Box<dyn Fn>`），而 builder 会被反复调用。
     crate::common::menu::dropdown(trigger, Anchor::TopRight, move |menu, _window, _cx| {
         let library = library.clone();
         let mut menu = menu;

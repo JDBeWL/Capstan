@@ -1,4 +1,4 @@
-//! 行内各格：勾选框、标题与副标题、专辑、行尾操作区。
+//! 行内各格，含勾选框、标题与副标题、专辑，以及行尾操作区。
 
 use lyre_core::{Track, TrackId, UNKNOWN_ALBUM, UNKNOWN_ARTIST};
 
@@ -126,7 +126,7 @@ pub(super) fn title_cell(
                 .text_size(px(theme::FONT_TRACK))
                 .font_weight(state.title_weight())
                 .text_color(RowState::title_color())
-                // 只给标题文字挂提示：挂在整个标题格上会盖住下面的艺术家 / 专辑链接
+                // 只给标题文字挂提示，挂在整个标题格上会盖住下面的艺术家与专辑链接。
                 .tooltip(crate::common::tooltip::builder(track.title.clone()))
                 .child(track.title.clone()),
         );
@@ -142,8 +142,8 @@ pub(super) fn title_cell(
                 .children(segments),
         );
     } else {
-        // 紧凑密度只有一行：标题与艺术家挤在同一段宽度里，两边都必须能收缩，
-        // 否则长艺术家名会画到专辑列上。艺术家 shrink 更大，先让位
+        // 紧凑密度只有一行。标题与艺术家挤在同一段宽度里，两边都必须能收缩，
+        // 否则长艺术家名会画到专辑列上。艺术家 shrink 更大，先让位。
         if !artist.is_empty() && env.kind != ScopeKind::Artist {
             title_line = title_line.child(
                 div()
@@ -158,7 +158,7 @@ pub(super) fn title_cell(
         cell = cell.child(title_line);
     }
 
-    // 点击区只覆盖文字块，封面不可点
+    // 点击区只覆盖文字块，封面不可点。
     div()
         .flex()
         .items_center()
@@ -169,14 +169,14 @@ pub(super) fn title_cell(
         .child(cell)
 }
 
-/// 副标题只放艺术家：多艺术家按 core 的分组口径拆开，每位各自可点。
+/// 副标题只放艺术家。多艺术家按 core 的分组口径拆开，每位各自可点。
 fn artist_segments(
     index: usize,
     artist: Option<String>,
     library: &Entity<LibraryEntity>,
     list: &WeakEntity<TrackList>,
 ) -> Vec<AnyElement> {
-    // 「未知艺术家」不可点，点进去是空作用域
+    // 「未知艺术家」不可点，点进去是空作用域。
     let Some(name) = artist.filter(|a| lyre_core::artist_key_str(Some(a)) != UNKNOWN_ARTIST) else {
         return Vec::new();
     };
@@ -189,7 +189,7 @@ fn artist_segments(
         if position > 0 {
             out.push(artist_sep());
         }
-        // 元素 id 必须逐行、逐人唯一：重复的 id 会让 gpui 复用前一个元素的命中区域。
+        // 元素 id 必须逐行、逐人唯一，重复的 id 会让 gpui 复用前一个元素的命中区域。
         out.push(artist_link(
             format!("subtitle-artist-{index}-{position}"),
             part.to_owned(),
@@ -218,7 +218,7 @@ fn artist_link(
         .tooltip(crate::common::tooltip::builder(name.clone()))
         .on_click(move |_, _, cx| {
             cx.stop_propagation();
-            // 先记落点再收窄作用域，顺序不能反
+            // 先记落点再收窄作用域，顺序不能反。
             list.update(cx, |_, cx| cx.emit(TrackListEvent::RecordFromTrack))
                 .ok();
             library.update(cx, |library, cx| library.enter_artist(target.clone(), cx));
@@ -234,7 +234,7 @@ pub(super) fn album_cell(
     library: Entity<LibraryEntity>,
     list: WeakEntity<TrackList>,
 ) -> AnyElement {
-    // 空 / 「未知专辑」不可点，点进去是空作用域
+    // 空 / 「未知专辑」不可点，点进去是空作用域。
     let known = lyre_core::album_key_str(album) != UNKNOWN_ALBUM;
     let text = album.unwrap_or("—").to_owned();
 
@@ -302,7 +302,7 @@ pub(super) fn actions_cell(
             })
     };
 
-    // 已收藏时常驻显示（那是收藏唯一的记号）；未收藏时悬停才浮现
+    // 已收藏时常驻显示（那是收藏唯一的记号）；未收藏时悬停才浮现。
     let heart = round(
         ("track-like", index),
         liked || always_visible,
@@ -337,7 +337,7 @@ pub(super) fn actions_cell(
             .hover(|style| style.bg(theme::elevated()).text_color(theme::text()))
             .tooltip(crate::common::tooltip::builder("更多操作"))
             .child(icon_inherit(Glyph::More, 15.)),
-        // 行尾贴近面板右缘，菜单右对齐才不会探出窗口
+        // 行尾贴近面板右缘，菜单右对齐才不会探出窗口。
         Anchor::TopRight,
         menu,
     );

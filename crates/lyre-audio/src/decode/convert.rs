@@ -1,5 +1,5 @@
 //! 重采样之后的声道布局转换。
-//! 放在 `Source` 层而不是解码器里 —— LFE 低通的状态要跨帧，包边界重启滤波器会听出来。
+//! 放在 `Source` 层而非解码器里。LFE 低通的状态需跨帧保留，在包边界重启滤波器会被听出。
 
 use std::time::Duration;
 
@@ -41,7 +41,7 @@ impl<S: Source<Item = f32>> ChannelConvertSource<S> {
             config,
             lfe,
             frame: Vec::with_capacity(source_channels),
-            // 空着起手：`out_pos < out.len()` 因此为假，第一次 `next` 会去填一帧
+            // 空着起手。`out_pos < out.len()` 因此为假，第一次 `next` 会去填一帧。
             out: Vec::new(),
             out_pos: 0,
         }
@@ -59,7 +59,7 @@ impl<S: Source<Item = f32>> Iterator for ChannelConvertSource<S> {
             return Some(sample);
         }
 
-        // 源在一帧中途结束就丢掉这半帧：宁可少一帧，也不让后续声道错位
+        // 源在一帧中途结束即丢弃该半帧。宁可少一帧，也不使后续声道错位。
         self.frame.clear();
         for _ in 0..self.source_channels {
             self.frame.push(self.inner.next()?);

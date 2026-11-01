@@ -1,5 +1,5 @@
-//! 根视图只做布局与装配。gpui 的脏标记打到所有祖先：进度通知会连带重绘整棵树。
-//! 不 `observe` 播放实体只省掉根视图自己那份重算，高频组件各自订阅 `PlaybackEntity`。
+//! 根视图只做布局与装配。gpui 的脏标记打到所有祖先，进度通知会连带重绘整棵树。
+//! 不 `observe` 播放实体仅省去根视图自身那份重算，高频组件各自订阅 `PlaybackEntity`。
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -13,7 +13,7 @@ use crate::components::{
     VolumeControl,
 };
 use crate::cover::CoverCache;
-// `Scope` 必须显式导入：`platform::*` 里带着 `gpui::Scope<'_>`，靠 glob 引进来会撞名。
+// `Scope` 必须显式导入。`platform::*` 里带着 `gpui::Scope<'_>`，靠 glob 引进来会撞名。
 use crate::entities::{LibraryEntity, LibraryEvent, PlaybackEntity, PlaybackEvent, Scope};
 use crate::platform::*;
 use crate::settings::Settings;
@@ -40,7 +40,7 @@ pub struct RootView {
     track_list: Entity<TrackList>,
     album_grid: Entity<AlbumGrid>,
     home: Entity<HomeView>,
-    /// 歌词遮罩：自己 observe 播放实体，根视图只负责在打开时挂上去。
+    /// 歌词遮罩。自行 observe 播放实体，根视图仅负责在打开时挂载。
     lyrics: Entity<LyricsView>,
     /// 输入状态是 `search` 另建的一份，两者内容同步。
     search_page: Entity<SearchPage>,
@@ -52,12 +52,12 @@ pub struct RootView {
     settings: Entity<SettingsEntity>,
     toast: Entity<ToastEntity>,
     focus: FocusHandle,
-    /// 由 `render` 的拖拽回调读写 —— gpui 会把外部拖拽的 `Entered/Pending` 翻译成一次 `MouseMove`。
+    /// 由 `render` 的拖拽回调读写。gpui 会把外部拖拽的 `Entered/Pending` 翻译成一次 `MouseMove`。
     drop_active: bool,
     /// 刚收起、还在播退出动画的面板。外壳说 `None`，这里再留 240ms 把它画完。
     panel_closing: Option<PanelTab>,
     panel_closing_overlay: bool,
-    /// 外壳上一次的页签 / 遮罩状态，用来识别「刚关上」。
+    /// 外壳上一次的页签与遮罩状态，用来识别「刚关上」。
     last_panel: Option<PanelTab>,
     last_panel_overlay: bool,
     lyrics_closing: bool,
@@ -71,9 +71,9 @@ pub struct RootView {
 
 impl RootView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        // 先读盘：下面的实体按它初始化
+        // 先读盘，下面的实体按它初始化。
         let stored = Settings::load();
-        // 明暗要在建控件之前定下来，输入框、菜单等组件库控件会按当时的 ThemeMode 取色。
+        // 明暗必须在建控件之前确定。输入框、菜单等组件库控件会按创建时的 ThemeMode 取色。
         crate::platform::set_appearance(stored.appearance, cx);
 
         let playback = cx.new(|cx| PlaybackEntity::new(stored.preferred_device.clone(), cx));
@@ -82,26 +82,26 @@ impl RootView {
         let covers = cx.new(|_| CoverCache::default());
         let settings = cx.new(|cx| SettingsEntity::new(stored.clone(), cx));
 
-        // 偏好要在启动时显式应用进 shell / library，只存着不会生效
+        // 偏好要在启动时显式应用进 shell / library，只存着不会生效。
         shell.update(cx, |shell, cx| shell.apply_settings(&stored, cx));
         library.update(cx, |library, cx| {
             library.set_recursive(stored.recursive_import, cx);
         });
         // 静音退出时以 0 起播，但存档里留的是静音前的值（见 `VolumeControl::persist`）
         playback.update(cx, |playback, cx| {
-            // 输出模式先定：它决定后面第一次开流走哪条后端
+            // 输出模式先定，它决定后面第一次开流走哪条后端。
             playback.set_exclusive_output(stored.exclusive_output);
             playback.set_volume(if stored.muted { 0.0 } else { stored.volume }, cx);
             playback.set_smooth_switch(stored.smooth_device_switch);
         });
 
-        // 系统文件对话框属于另一个进程，截图脚本点不动；设了这个环境变量就从该目录直接导入。
+        // 系统文件对话框属另一个进程，自动化脚本无法操作；设置该环境变量时直接从该目录导入。
         if let Some(dir) = std::env::var_os("LYRE_DEBUG_IMPORT") {
             let dir = std::path::PathBuf::from(dir);
             if dir.is_dir() {
                 library.update(cx, |library, cx| library.import(vec![dir], cx));
             } else {
-                // `PathBuf` 自己不带 `Display`，用 `Path::display()` 得到人类可读路径
+                // `PathBuf` 本身未实现 `Display`，用 `Path::display()` 获取人类可读路径。
                 log::debug!(
                     "LYRE_DEBUG_IMPORT 指向的不是目录，已忽略：{}",
                     dir.display()
@@ -173,7 +173,7 @@ impl RootView {
                     let step = this.library.update(cx, |library, _| library.step_on_end());
                     this.apply_step(step, cx);
                 }
-                // `load` 是唯一的装载口，续播、点歌、队列跳转都会走到这里
+                // `load` 是唯一的装载口，续播、点歌、队列跳转都会走到这里。
                 PlaybackEvent::TrackChanged => {
                     let played = this.playback.read(cx).current().map(|track| track.id);
                     if let Some(id) = played {
@@ -186,7 +186,7 @@ impl RootView {
                     resume::save_resume(&this.playback, &this.settings, cx);
                 }
                 // `Restored` 只是把上次那首装回来，不算一次播放，也不能把还没生效的 0 秒写回存档；
-                // 输出模式与设备列表由设置面板、底栏各自订阅刷新
+                // 输出模式与设备列表由设置面板、底栏各自订阅刷新。
                 PlaybackEvent::Restored
                 | PlaybackEvent::VolumeChanged
                 | PlaybackEvent::DevicesChanged
@@ -202,11 +202,11 @@ impl RootView {
                 }
                 // 头图是 RootView 内联渲染的（不 observe 曲库），改关注时没有别的重绘来源。
                 LibraryEvent::FollowChanged => cx.notify(),
-                // 换作用域后遮罩会把新内容整个盖住
+                // 换作用域后遮罩会把新内容整个盖住。
                 LibraryEvent::ScopeChanged => {
                     this.shell.update(cx, ShellEntity::close_lyrics);
                 }
-                // FocusMoved 由 TrackList 自己处理（滚动跟随）
+                // FocusMoved 由 TrackList 自行处理（滚动跟随）
                 LibraryEvent::FocusMoved(_) => {}
                 LibraryEvent::Imported {
                     scanned,
@@ -214,14 +214,14 @@ impl RootView {
                     refreshed,
                     quiet,
                 } => {
-                    // 补扫没有新增就不打扰用户：开机时「一切照旧」不是新闻。
+                    // 补扫没有新增就不打扰用户，开机时「一切照旧」不是新闻。
                     // 放在最前面，空文件夹这类结果也别每次都报一遍。
                     if *quiet && *added == 0 {
                         return;
                     }
                     let message = match (scanned, added, refreshed) {
                         (0, _, _) => "这里没有找到音频文件".to_owned(),
-                        // 扫到了、也重读了标签，但没有一首是新的：这次是刷新标签。
+                        // 扫到了、也重读了标签，但没有一首是新的，这次是刷新标签。
                         (_, 0, read) if *read > 0 => format!("这 {read} 首已在曲库里，刷新了标签"),
                         (found, 0, _) => format!("扫到 {found} 首，都已在曲库里"),
                         (_, a, _) => format!("已导入 {a} 首"),
@@ -229,7 +229,7 @@ impl RootView {
                     this.toast
                         .update(cx, |toast, cx| toast.show_plain(message, cx));
                 }
-                // 用户主动点的「重读全部标签」跑完了
+                // 用户主动点的「重读全部标签」跑完了。
                 LibraryEvent::Refreshed { count } => {
                     let message = if *count == 0 {
                         "没有可刷新的曲目".to_owned()
@@ -239,14 +239,14 @@ impl RootView {
                     this.toast
                         .update(cx, |toast, cx| toast.show_plain(message, cx));
                 }
-                // 导入链路的失败：对话框开不了 / 扫描线程起不来
+                // 导入链路的失败，如对话框开不了、扫描线程起不来。
                 LibraryEvent::Failed(message) => {
                     let message = message.clone();
                     this.toast
                         .update(cx, |toast, cx| toast.show_plain(message, cx));
                 }
-                // 曲库是后台读完的：拿到曲目后再装回上次播放位置。
-                // 排到本次通知之后，让曲库自己的后续通知先落地。
+                // 曲库是后台读完的，拿到曲目后再装回上次播放位置。
+                // 排至本次通知之后，使曲库自身的后续通知先行落地。
                 LibraryEvent::Loaded => {
                     if this.settings.read(cx).settings().resume_position {
                         let playback = this.playback.clone();
@@ -285,7 +285,7 @@ impl RootView {
                 TrackListEvent::Cleared(tracks) => {
                     this.offer_clear_undo(tracks, cx);
                 }
-                // 必须在列表收窄作用域之前到达，所以列表是在 emit 之后才调 `enter_album`
+                // 必须在列表收窄作用域之前到达，所以列表是在 emit 之后才调 `enter_album`。
                 TrackListEvent::RecordFromTrack => {
                     this.record_return_point(cx);
                 }
@@ -300,7 +300,7 @@ impl RootView {
             }
         });
 
-        // 顺序有意义：历史必须在收窄作用域之前记，否则记下的是「已经进了这张专辑」
+        // 顺序有意义。历史必须在收窄作用域之前记，否则记下的是「已经进了这张专辑」
         let on_grid = cx.subscribe(&album_grid, |this, _, event: &GridEvent, cx| {
             let from = this.shell.read(cx).nav_section();
             this.shell
@@ -320,7 +320,7 @@ impl RootView {
                 .update(cx, |shell, cx| shell.set_nav(NavSection::Tracks, cx));
         });
 
-        // 查询词的提交与防抖在 `SearchBox` 里；这里只切到搜索页，作用域保持不变
+        // 查询词的提交与防抖在 `SearchBox` 里；这里只切到搜索页，作用域保持不变。
         let on_search = cx.subscribe(&search, |this, _, event: &SearchBoxEvent, cx| {
             if !matches!(event, SearchBoxEvent::Typing | SearchBoxEvent::Focused) {
                 return;
@@ -339,11 +339,11 @@ impl RootView {
         });
 
         let focus = cx.focus_handle();
-        // 根视图拿到焦点，绑在 "Lyre" 上下文上的快捷键才会触发
+        // 根视图拿到焦点，绑在 "Lyre" 上下文上的快捷键才会触发。
         focus.focus(window, cx);
 
-        // 兜底落盘：强杀与崩溃拿不到退出回调，播放中每 15 秒写一次，最多丢一格
-        // 暂停时不写：那时 `StateChanged` 已经写过同一秒
+        // 兜底落盘。强杀与崩溃拿不到退出回调，播放中每 15 秒写一次，最多丢一格
+        // 暂停时不写，那时 `StateChanged` 已经写过同一秒。
         let resume_executor = cx.background_executor().clone();
         let (watch_playback, watch_settings) = (playback.clone(), settings.clone());
         let resume_watcher = cx.spawn_in(window, async move |this, cx| {
@@ -357,13 +357,13 @@ impl RootView {
                     })
                     .is_err()
                 {
-                    // 实体已销毁，收工，否则任务泄漏
+                    // 实体已销毁，结束任务，否则造成任务泄漏。
                     break;
                 }
             }
         });
 
-        // 正常关窗走这一支：`Alt+F4` 是 WM_CLOSE，最后一个窗口关闭即 quit
+        // 正常关窗走这一支。`Alt+F4` 是 WM_CLOSE，最后一个窗口关闭即 quit。
         let quit_flushed = Rc::new(Cell::new(false));
         let on_quit = {
             let flushed = Rc::clone(&quit_flushed);
@@ -371,7 +371,7 @@ impl RootView {
                 if !flushed.replace(true) {
                     log::info!("正在退出，刷写持久化队列");
                     resume::save_resume(&watch_playback, &watch_settings, cx);
-                    // 后台写线程是异步的：关窗前同步等它把最后一格落盘。
+                    // 后台写线程是异步的，关窗前同步等它把最后一格落盘。
                     crate::persist::flush();
                     let (writes, bytes) = crate::persist::write_stats();
                     log::info!("本次运行持久化写入 {writes} 次，共 {bytes} 字节");
@@ -462,7 +462,7 @@ impl RootView {
         }
     }
 
-    /// 关面板 / 关歌词时外壳会立刻把状态置空，退出动画得由根视图把旧内容多留一会儿。
+    /// 关面板与关歌词时外壳会立刻把状态置空，退出动画得由根视图把旧内容多留一会儿。
     #[allow(clippy::used_underscore_binding)]
     fn sync_overlay_closing(
         &mut self,

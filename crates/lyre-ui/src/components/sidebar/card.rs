@@ -21,7 +21,7 @@ const CARD_PAD: f32 = 8.0;
 const LIB_MAX_ROWS: usize = 1000;
 
 impl Sidebar {
-    /// 顶部：字标 + 首页 / 曲库两项，定高不参与滚动。
+    /// 顶部。字标加首页、曲库两项，定高不参与滚动。
     pub(super) fn home_card(
         &self,
         state: SidebarState,
@@ -49,7 +49,7 @@ impl Sidebar {
             library: self.library.clone(),
         };
 
-        // 悬停曲库行时把 epoch 加一：计数换 id 重播一次乱码，移出不重播。
+        // 悬停曲库行时把 epoch 加一。计数换 id 重播一次乱码，移出不重播。
         let bump_epoch = {
             let sidebar = cx.entity().downgrade();
             move |_window: &mut Window, cx: &mut App| {
@@ -104,7 +104,7 @@ impl Sidebar {
         card.child(rail).into_any_element()
     }
 
-    /// 「你的音乐库」卡片：标题行 + Chip 筛选 + 专辑 / 艺术家列表。
+    /// 「你的音乐库」卡片，标题行 + Chip 筛选 + 专辑与艺术家列表。
     pub(super) fn library_card(
         &self,
         state: SidebarState,
@@ -143,11 +143,11 @@ impl Sidebar {
                 .into_any_element();
         }
 
-        // 防御性截断：`item_count` 过大时 `uniform_list` 的总高溢出成负数，列表一进来就滚到底。
+        // 防御性截断。`item_count` 过大时 `uniform_list` 的总高溢出成负数，列表一进来就滚到底。
         let rows: Rc<Vec<SideEntry>> = Rc::new(entries);
         let row_count = rows.len().min(LIB_MAX_ROWS);
 
-        // `min_h_0` 不能省：少了它 `uniform_list` 的最小高度会被内容撑到全高，卡片滚不动。
+        // `min_h_0` 不能省。少了它 `uniform_list` 的最小高度会被内容撑到全高，卡片滚不动。
         let list = uniform_list("side-library-list", row_count, {
             let rows = Rc::clone(&rows);
             let shell = self.shell.clone();
@@ -179,7 +179,7 @@ impl Sidebar {
             .into_any_element()
     }
 
-    /// 「你的音乐库」标题下的切角 Chip 行：手动切换下卡片列歌单、艺术家还是专辑。
+    /// 「你的音乐库」标题下的切角 Chip 行，用于手动切换下卡片列歌单、艺术家还是专辑。
     fn chips_row(
         effective: Listing,
         width: f32,
@@ -290,7 +290,7 @@ impl Sidebar {
             .bg(theme::window_base())
             .border_r_1()
             .border_color(theme::border())
-            // 图标态没有字标行兜底，上留白要和左右一致，首页按钮才不会贴住顶栏
+            // 图标态没有字标行兜底，上留白要和左右一致，首页按钮才不会贴住顶栏。
             .p(px(CARD_PAD));
 
         let deps = || NavDeps {
@@ -360,7 +360,7 @@ impl Sidebar {
 }
 
 /// 下卡片外壳。`fills` = true 吃掉剩余高度（展开态列表要滚），false 按内容定高（图标态）。
-/// 左右内边距与导航卡片相同：标题、Chip 与列表块共用一条边线。
+/// 左右内边距与导航卡片相同。标题、Chip 与列表块共用一条边线。
 fn card_shell(fills: bool) -> Div {
     let card = div()
         .flex()
@@ -397,7 +397,7 @@ fn brand_row() -> AnyElement {
         .into_any_element()
 }
 
-/// 下卡片标题行：`// LIBRARY` + 中文粗体 + 导入按钮，这一行本身不参与选中。
+/// 下卡片标题行。`// LIBRARY` + 中文粗体 + 导入按钮，这一行本身不参与选中。
 fn lib_header(labels: bool, library: &Entity<LibraryEntity>) -> AnyElement {
     let mut row = div()
         .flex_none()
@@ -458,7 +458,7 @@ fn header_action(
         .into_any_element()
 }
 
-/// 空曲库提示：一句说明 + 一个可点的导入入口。
+/// 空曲库提示，一句说明 + 一个可点的导入入口。
 fn empty_hint(library: Entity<LibraryEntity>) -> AnyElement {
     div()
         .id("side-lib-empty")

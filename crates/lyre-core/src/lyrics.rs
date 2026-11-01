@@ -1,5 +1,5 @@
-//! 歌词侧文件：`.lrc` 与 `.ass` / `.ssa` 的解析与同目录查找。不读音频、不依赖 UI，可单测。
-//! 双语是同一时间戳上的两行，第一条是原文。ASS 的角色靠 Style 名认：LDDC 把 `ts` 整块写在 `orig` 之前。
+//! 歌词侧文件，负责 `.lrc`、`.ass`、`.ssa` 的解析与同目录查找。不读音频、不依赖 UI，可单测。
+//! 双语是同一时间戳上的两行，第一条是原文。ASS 的角色靠 Style 名认，LDDC 把 `ts` 整块写在 `orig` 之前。
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -12,20 +12,20 @@ pub struct LyricWord {
     pub text: String,
 }
 
-/// 一行歌词。`end` 取下一行的开始（末行用文件里的结束时刻），只用来夹住逐字区间。
+/// 一行歌词。`end` 取下一行的开始，末行取文件里的结束时刻；该值只用于夹住逐字区间。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LyricLine {
     pub start: Duration,
     pub end: Duration,
     pub text: String,
-    /// 译文 / 罗马音。同刻多行时除第一条外都并进这里，用 `\n` 连接。
+    /// 译文与罗马音。同刻多行时除第一条外都并进这里，用 `\n` 连接。
     pub translation: Option<String>,
     /// 逐字时间戳。空表示这一行没有逐字信息，界面整行一起点亮。
     pub words: Vec<LyricWord>,
 }
 
 impl LyricLine {
-    /// 已唱到第几个字（含）。没有逐字信息时返回 `None`，界面据此退化成整行高亮。
+    /// 已唱到第几个字，含该字。无逐字信息时返回 `None`，界面据此退化为整行高亮。
     pub fn word_index(&self, position: Duration) -> Option<usize> {
         if self.words.is_empty() {
             return None;
@@ -54,7 +54,8 @@ impl Lyrics {
         self.lines.is_empty()
     }
 
-    /// 此刻该唱哪一行；首行之前返回 `None`。依赖 `lines` 按 `start` 严格升序（[`parse`] / [`parse_ass`] 保证）。
+    /// 此刻该唱哪一行；首行之前返回 `None`。
+    /// 依赖 `lines` 按 `start` 严格升序，该性质由 [`parse`] / [`parse_ass`] 保证。
     pub fn active_index(&self, position: Duration) -> Option<usize> {
         match self
             .lines
@@ -67,27 +68,27 @@ impl Lyrics {
     }
 }
 
-/// 一行在双语里的角色。声明顺序就是组内排序顺序：原文在前、译文在后。
+/// 一行在双语里的角色。声明顺序就是组内排序顺序，原文在前、译文在后。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Role {
     Original,
-    /// LRC 没有角色信息，按文件里的先后定
+    /// LRC 没有角色信息，按文件里的先后定。
     Unspecified,
     Translation,
 }
 
 struct Draft {
     start: Duration,
-    /// 文件自己给的结束时刻（ASS 有，LRC 没有）
+    /// 文件自身给出的结束时刻，仅 ASS 提供，LRC 没有。
     end_hint: Option<Duration>,
     role: Role,
     text: String,
-    /// 同一行内用 `\N` 分出来的第二段起就是译文
+    /// 同一行内用 `\N` 分出来的第二段起就是译文。
     inline_translation: Option<String>,
     words: Vec<LyricWord>,
 }
 
-/// 嗅探格式。认内容而不是只认扩展名：有人把 ASS 存成 `.lrc`。
+/// 嗅探格式。认内容而不是只认扩展名，有人把 ASS 存成 `.lrc`。
 pub fn parse_document(text: &str) -> Lyrics {
     let head = text.get(..4096).unwrap_or(text).to_ascii_lowercase();
     if head.contains("[script info]") || head.contains("[v4+ styles]") {
@@ -96,10 +97,10 @@ pub fn parse_document(text: &str) -> Lyrics {
     parse(text)
 }
 
-/// 解析 LRC。支持一行多个时间标签、`[offset:]` 平移（文件级）与 `[ti:]/[ar:]/[al:]` 元信息。
+/// 解析 LRC。支持一行多个时间标签、文件级 `[offset:]` 平移与 `[ti:]/[ar:]/[al:]` 元信息。
 pub fn parse(text: &str) -> Lyrics {
     let mut lyrics = Lyrics::default();
-    // 正数让歌词提前出现（社区通行约定：时间戳减去偏移量）
+    // 正数使歌词提前出现。按社区通行约定，时间戳减去偏移量。
     let mut offset_ms: i64 = 0;
     let mut drafts: Vec<Draft> = Vec::new();
 
@@ -141,7 +142,7 @@ pub fn parse(text: &str) -> Lyrics {
         }
     }
 
-    // `[offset:]` 对整篇生效，哪怕它写在某行歌词之后
+    // `[offset:]` 对整篇生效，哪怕它写在某行歌词之后。
     if offset_ms != 0 {
         for draft in &mut drafts {
             let shifted = i64::try_from(draft.start.as_millis())
@@ -179,7 +180,7 @@ pub fn parse_ass(text: &str) -> Lyrics {
             };
             continue;
         }
-        // 只在第一个冒号处切：正文里到处是冒号
+        // 只在第一个冒号处切，正文里到处是冒号。
         let Some((key, value)) = line.split_once(':') else {
             continue;
         };
@@ -198,7 +199,7 @@ pub fn parse_ass(text: &str) -> Lyrics {
             Section::Events if key.eq_ignore_ascii_case("dialogue") => {
                 drafts.extend(dialogue(&fields, value));
             }
-            // 其余一律不留：Style 表的角色是在 Dialogue 的 Style 名上认的，
+            // 其余一律不留。Style 表的角色是在 Dialogue 的 Style 名上认的，
             // ScriptInfo 的非 title 键与 Events 的非 format/dialogue 键同样丢弃。
             Section::ScriptInfo | Section::Styles | Section::Other | Section::Events => {}
         }
@@ -262,7 +263,7 @@ fn dialogue(fields: &[String], value: &str) -> Option<Draft> {
     })
 }
 
-/// Style 名 → 双语角色。短 ASCII 名只认全等（`contains` 会把 `Scripts` 误判成 `ts`），
+/// Style 名 → 双语角色。短 ASCII 名只认全等，因为 `contains` 会把 `Scripts` 误判成 `ts`；
 /// 中文键才用包含，因为常见写法是带前缀的名字。
 fn style_role(style: &str) -> Role {
     const ORIGINAL: &[&str] = &["orig", "original", "main", "source", "karaoke"];
@@ -290,13 +291,13 @@ fn style_role(style: &str) -> Role {
     Role::Unspecified
 }
 
-/// `h:mm:ss.cc`（也容忍 `h:mm:ss:cc` 与省掉厘秒）→ 时长。
+/// `h:mm:ss.cc` → 时长；也容忍 `h:mm:ss:cc` 与省略厘秒的写法。
 fn ass_time(value: &str) -> Option<Duration> {
     let mut parts = value.trim().split(':');
     let hours: u64 = parts.next()?.parse().ok()?;
     let minutes: u64 = parts.next()?.parse().ok()?;
     let seconds_field = parts.next()?;
-    // 规范用 `.` 接厘秒，也有文件再挂一个 `:`
+    // 规范用 `.` 接厘秒，也有文件再挂一个 `:`。
     let (seconds, centis) = match seconds_field.split_once('.') {
         Some((seconds, centis)) => (seconds.parse::<u64>().ok()?, centis.parse::<u64>().ok()?),
         None => match parts.next() {
@@ -318,8 +319,8 @@ fn ass_time(value: &str) -> Option<Duration> {
     ))
 }
 
-/// ASS 正文 →（原文, 译文, 逐字）。`\N` 之后的段落算译文；`{\k}` `{\kf}` `{\ko}`
-/// 的值是时长（厘秒），按出现顺序累加成字区间。
+/// 解析 ASS 正文，返回原文、译文与逐字区间。`\N` 之后的段落算译文；`{\k}` `{\kf}` `{\ko}`
+/// 的值为时长，单位为厘秒，按出现顺序累加成字区间。
 fn ass_text(text: &str, start: Duration) -> (String, Option<String>, Vec<LyricWord>) {
     let mut cursor = start;
     let mut segments = Vec::new();
@@ -348,7 +349,7 @@ fn ass_text(text: &str, start: Duration) -> (String, Option<String>, Vec<LyricWo
         .collect::<Vec<_>>()
         .join("\n");
 
-    // 逐字区间留给 `group` 统一夹取 —— 行尾要等下一行出现才知道
+    // 逐字区间留给 `group` 统一夹取。行尾要等下一行出现才知道。
     (
         body,
         (!translation.is_empty()).then_some(translation),
@@ -356,7 +357,7 @@ fn ass_text(text: &str, start: Duration) -> (String, Option<String>, Vec<LyricWo
     )
 }
 
-/// 按 ASS 的换行标记切段（`\N` 硬换行、`\n` 软换行）。大括号里的反斜杠不算。
+/// 按 ASS 的换行标记切段。`\N` 为硬换行，`\n` 为软换行。大括号内的反斜杠不计。
 fn split_line_breaks(text: &str) -> Vec<&str> {
     let bytes = text.as_bytes();
     let mut out = Vec::new();
@@ -380,7 +381,7 @@ fn split_line_breaks(text: &str) -> Vec<&str> {
     out
 }
 
-/// 一段文本 →（去掉覆写标签的纯文本, 逐字区间）。`cursor` 是行内时间游标，跨段延续。
+/// 解析一段文本，返回去掉覆写标签的纯文本与逐字区间。`cursor` 为行内时间游标，跨段延续。
 fn karaoke_words(segment: &str, cursor: &mut Duration) -> (String, Vec<LyricWord>) {
     let mut plain = String::new();
     let mut words: Vec<LyricWord> = Vec::new();
@@ -458,7 +459,7 @@ fn fit_words(words: Vec<LyricWord>, start: Duration, end: Duration) -> Vec<Lyric
         })
         .take_while(|word| word.start < end)
         .collect();
-    // 只有一格不算逐字 —— 逐字的意义就在于行内有先后
+    // 只有一格不算逐字，逐字的意义就在于行内有先后。
     if fitted.len() > 1 {
         fitted
     } else {
@@ -466,7 +467,7 @@ fn fit_words(words: Vec<LyricWord>, start: Duration, end: Duration) -> Vec<Lyric
     }
 }
 
-/// 把散行配成「原文 + 译文」：先按 (开始时刻, 角色) 排序，同一时刻的原文顶到第一位，
+/// 把散行配成「原文 + 译文」。先按 `(开始时刻, 角色)` 排序，同一时刻的原文顶到第一位，
 /// 其余并进译文。末行留 5 秒尾巴，其余行的行尾就是下一行的行首。
 fn group(mut drafts: Vec<Draft>) -> Vec<LyricLine> {
     drafts.sort_by_key(|draft| (draft.start, draft.role));
@@ -488,7 +489,7 @@ fn group(mut drafts: Vec<Draft>) -> Vec<LyricLine> {
             continue;
         }
 
-        // 上面那个分支已经保证 `rows` 非空：要么它刚 push 过一行，要么此前就非空。
+        // 上面那个分支已经保证 `rows` 非空。要么它刚 push 过一行，要么此前就非空。
         let Some(row) = rows.last_mut() else {
             continue;
         };
@@ -504,7 +505,7 @@ fn group(mut drafts: Vec<Draft>) -> Vec<LyricLine> {
         let hinted = rows[index].end.max(start);
         let end = match rows.get(index + 1) {
             Some(next) => next.start.max(start),
-            // 末行：文件给了 End 就以它为准（ASS 有），没给才留 5 秒尾巴（纯 LRC）
+            // 末行。文件给出 End 即以它为准，仅 ASS 提供；未给出则留 5 秒余量，属纯 LRC 情形。
             None if hinted > start => hinted,
             None => start + Duration::from_secs(5),
         };
@@ -530,7 +531,7 @@ fn push_translation(row: &mut LyricLine, part: &str) {
 }
 
 /// 时间戳 → 播放位置。`[mm:ss]`、`[mm:ss.x]`、`[mm:ss.xx]`、`[mm:ss.xxx]`；
-/// 小数分隔符允许 `.` `,` `:`（最后一种来自老 CD-G 文件的习惯）。
+/// 小数分隔符允许 `.` `,` `:`；最后一种来自老 CD-G 文件的习惯。
 fn parse_time(tag: &str) -> Option<Duration> {
     let (minutes, rest) = tag.split_once(':')?;
     let minutes: u64 = digits(minutes)?.parse().ok()?;
@@ -543,7 +544,7 @@ fn parse_time(tag: &str) -> Option<Duration> {
         return None;
     }
 
-    // 一位小数是十分之一秒、两位是百分之一秒、三位是毫秒；再多就截断
+    // 一位小数是十分之一秒、两位是百分之一秒、三位是毫秒；再多就截断。
     let fraction_ms: u64 = match fraction.len() {
         0 => 0,
         1 => digits(fraction)?.parse::<u64>().ok()? * 100,
@@ -578,7 +579,7 @@ struct Tag<'a> {
 
 fn leading_tag(line: &str) -> Option<Tag<'_>> {
     let offset = line.get(1..)?.find(']')?;
-    // 用 `get` 而不是切片：`[` 后紧跟多字节字符时字节索引不是字符边界，切片会 panic
+    // 用 `get` 而不是切片。`[` 后紧跟多字节字符时字节索引不是字符边界，切片会 panic。
     let content = line.get(1..offset + 1)?;
     Some(Tag {
         content,
@@ -586,16 +587,16 @@ fn leading_tag(line: &str) -> Option<Tag<'_>> {
     })
 }
 
-/// 只接受纯 ASCII 数字。非数字（`6a`、`--`）判为非法，而不是静默当成 0。
+/// 只接受纯 ASCII 数字。`6a`、`--` 这类非数字判为非法，而非静默取 0。
 fn digits(value: &str) -> Option<&str> {
     (!value.is_empty() && value.chars().all(|c| c.is_ascii_digit())).then_some(value)
 }
 
-/// 侧文件后缀，按优先级排：已有 `.lrc` 的人不该因为旁边多了份 ASS 就换了显示。
+/// 侧文件后缀，按优先级排，已有 `.lrc` 的人不该因为旁边多了份 ASS 就换了显示。
 const SIDECAR_SUFFIXES: &[&str] = &[".lrc", ".LRC", ".ass", ".ASS", ".ssa", ".SSA"];
 
-/// 候选名：`song.lrc` 与 `song.mp3.lrc`（两种命名都在用），每种后缀各再试一次大写扩展名
-/// （Windows 不区分大小写，其它平台区分）。
+/// 候选名。`song.lrc` 与 `song.mp3.lrc`，两种命名都在用；每种后缀各再试一次大写扩展名，
+/// 因 Windows 不区分大小写而其它平台区分。
 pub fn sidecar_candidates(audio: &Path) -> Vec<PathBuf> {
     let directory = audio.parent().unwrap_or(Path::new("."));
     let (stem, file_name) = match (audio.file_stem(), audio.file_name()) {
@@ -631,7 +632,7 @@ pub fn load_for_audio(audio: &Path) -> Option<Lyrics> {
 }
 
 /// 侧文件没有强制编码，中文发行里 GBK/GB18030 仍常见。UTF-8 解不动就整段退到 GB18030，
-/// 不逐行试 —— 逐行会让一首歌里混进两种编码。
+/// 不逐行试；逐行会让一首歌里混进两种编码。
 fn decode_text(bytes: &[u8]) -> String {
     if let Ok(text) = std::str::from_utf8(bytes) {
         return text.to_owned();
@@ -665,7 +666,7 @@ mod tests {
         lyrics.lines.iter().map(|line| line.text.as_str()).collect()
     }
 
-    /// LDDC 真实样本的形状：`ts` 整块写在 `orig` 之前，同一句的两个 Style 时刻相同，`orig` 带 `{\kf}` 逐字。
+    /// LDDC 真实样本的形状。`ts` 整块写在 `orig` 之前，同一句的两个 Style 时刻相同，`orig` 带 `{\kf}` 逐字。
     const ASS_SAMPLE: &str = "[Script Info]\n\
 Title: 示例曲\n\
 ScriptType: v4.00+\n\
@@ -692,7 +693,7 @@ Dialogue: 0,00:00:13.97,00:00:17.64,roma,,0,0,0,,romaji placeholder\n";
         assert_eq!(starts(&lyrics), [3_240, 6_690, 13_970]);
 
         let first = &lyrics.lines[0];
-        // 译文行写在前面，靠角色排序也必须让原文当 text
+        // 译文行写在前面，靠角色排序也必须让原文当 text。
         assert_eq!(first.text, "一二三四五六七八九十十一");
         assert_eq!(first.translation.as_deref(), Some("甲译文"));
     }
@@ -707,13 +708,13 @@ Dialogue: 0,00:00:13.97,00:00:17.64,roma,,0,0,0,,romaji placeholder\n";
         assert_eq!(words[0].end, ms(3_380), "\\kf14 = 140ms");
         assert_eq!(words[1].start, ms(3_380), "下一字接着上一字的末尾");
         assert_eq!(words[1].text, "二");
-        // 11 格累计 = 3.24s + 2.26s
+        // 11 格累计 = 3.24s + 2.26s。
         assert_eq!(words.last().unwrap().end, ms(5_500));
     }
 
     #[test]
     fn ass_逐字越过行尾时夹住() {
-        // 行只有 2 秒，两格各标 3 秒：第二格开始于 4s，已经在本行之外，只能丢掉。
+        // 行只有 2 秒，两格各标 3 秒。第二格开始于 4s，已经在本行之外，只能丢掉。
         // 剩下不足两格就不再有「逐字」的意义，退化成整行点亮。
         let text =
             "[Events]\nDialogue: 0,00:00:01.00,00:00:03.00,orig,,0,0,0,,{\\kf300}甲{\\kf300}乙\n";
@@ -727,7 +728,7 @@ Dialogue: 0,00:00:13.97,00:00:17.64,roma,,0,0,0,,romaji placeholder\n";
 
     #[test]
     fn ass_末格被夹到行尾但仍保留逐字() {
-        // 行 1s→5s，三格各 2 秒：第三格 [5s,7s] 整格越界被丢，前两格仍是有效的逐字
+        // 行 1s→5s，三格各 2 秒。第三格 [5s,7s] 整格越界被丢，前两格仍是有效的逐字。
         let text = "[Events]\nDialogue: 0,00:00:01.00,00:00:05.00,orig,,0,0,0,,{\\kf200}甲{\\kf200}乙{\\kf200}丙\n";
         let lyrics = parse_ass(text);
         let words = &lyrics.lines[0].words;
@@ -737,7 +738,7 @@ Dialogue: 0,00:00:13.97,00:00:17.64,roma,,0,0,0,,romaji placeholder\n";
         assert_eq!(lyrics.lines[0].text, "甲乙丙", "正文仍含被丢掉的字");
     }
 
-    /// 文件里的数字没有上界：小时位和 `{\kf}` 的厘秒都能写满 19 位，直接乘会溢出。
+    /// 文件里的数字没有上界。小时位和 `{\kf}` 的厘秒都能写满 19 位，直接乘会溢出。
     #[test]
     fn ass_溢出时间戳被丢弃而不是溢出() {
         let text = "[Events]\nDialogue: 0,9999999999999999999:00:00.00,00:00:05.00,orig,,0,0,0,,{\\kf99999999999999999999}甲\n";
@@ -757,16 +758,16 @@ Dialogue: 0,00:00:13.97,00:00:17.64,roma,,0,0,0,,romaji placeholder\n";
         assert_eq!(line.word_index(ms(3_379)), Some(0));
         assert_eq!(line.word_index(ms(3_380)), Some(1));
         assert_eq!(line.word_index(ms(6_600)), Some(10));
-        // 行首之前也要落在第一个字上，不能返回 None 让界面闪空
+        // 行首之前也要落在第一个字上，不能返回 None 让界面闪空。
         assert_eq!(line.word_index(ms(1_000)), Some(0));
-        // 没有逐字信息的行返回 None，界面退化成整行点亮
+        // 没有逐字信息的行返回 None，界面退化成整行点亮。
         assert_eq!(lyrics.lines[2].word_index(ms(14_000)), None);
     }
 
     #[test]
     fn ass_只取_events_且跳过注释与样式表() {
         let lyrics = parse_ass(ASS_SAMPLE);
-        // Style 行里的 `Arial` 之类不能被当成歌词，Script Info 的 URL 注释也不能
+        // Style 行里的 `Arial` 之类不能被当成歌词，Script Info 的 URL 注释也不能。
         assert!(lyrics.lines.iter().all(|line| !line.text.contains("Arial")));
         assert!(
             lyrics
@@ -934,7 +935,7 @@ Dialogue: 太短了\nComment: 0,00:00:05.00,00:00:06.00,orig,,0,0,0,,注释行\n
         );
     }
 
-    /// `[offset:]` 是文件级的：写在某行之后，也要平移它前面已经解析出来的行。
+    /// `[offset:]` 是文件级的。写在某行之后，也要平移它前面已经解析出来的行。
     #[test]
     fn offset_applies_to_the_whole_file_even_when_it_comes_late() {
         let lyrics = parse("[00:02.00]先来的那行\n[offset:+1000]\n[00:05.00]后来的那行");
@@ -1008,7 +1009,7 @@ Dialogue: 太短了\nComment: 0,00:00:05.00,00:00:06.00,orig,,0,0,0,,注释行\n
         assert_eq!(sidecar_path(&audio), Some(dir.join("song.ass")));
         assert_eq!(load_for_audio(&audio).unwrap().lines.len(), 3);
 
-        // 同时存在时 .lrc 优先：已有纯文本歌词的人不该被旁边的 ASS 换掉显示
+        // 同时存在时 .lrc 优先，已有纯文本歌词的人不该被旁边的 ASS 换掉显示。
         std::fs::write(dir.join("song.lrc"), "[00:01.00]纯文本歌词").unwrap();
         assert_eq!(sidecar_path(&audio), Some(dir.join("song.lrc")));
         assert_eq!(load_for_audio(&audio).unwrap().lines.len(), 1);
@@ -1025,7 +1026,7 @@ Dialogue: 太短了\nComment: 0,00:00:05.00,00:00:06.00,orig,,0,0,0,,注释行\n
         std::fs::write(dir.join("utf8.lrc"), "[00:01.00]城市漫游").unwrap();
         assert_eq!(load_for_audio(&utf8).unwrap().lines[0].text, "城市漫游");
 
-        // 「测试」的 GB18030 字节不是合法 UTF-8，必须整段换编码
+        // 「测试」的 GB18030 字节不是合法 UTF-8，必须整段换编码。
         let gbk = dir.join("gbk.mp3");
         std::fs::write(&gbk, b"x").unwrap();
         let mut gbk_bytes = b"[00:02.00]".to_vec();
@@ -1033,7 +1034,7 @@ Dialogue: 太短了\nComment: 0,00:00:05.00,00:00:06.00,orig,,0,0,0,,注释行\n
         std::fs::write(dir.join("gbk.lrc"), gbk_bytes).unwrap();
         assert_eq!(load_for_audio(&gbk).unwrap().lines[0].text, "测试");
 
-        // 有文件但一行歌词都没有：按「没有歌词」处理，别给界面一个空列表
+        // 有文件但一行歌词都没有。按「没有歌词」处理，别给界面一个空列表。
         let silent = dir.join("silent.mp3");
         std::fs::write(&silent, b"x").unwrap();
         std::fs::write(dir.join("silent.lrc"), "只有文字没有时刻").unwrap();
@@ -1043,7 +1044,7 @@ Dialogue: 太短了\nComment: 0,00:00:05.00,00:00:06.00,orig,,0,0,0,,注释行\n
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// 每个用例一个独立子目录，避免并行跑测试时互相踩到同名文件。
+    /// 每个用例使用独立子目录，避免并行执行时写入同名文件。
     fn temp_dir(tag: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

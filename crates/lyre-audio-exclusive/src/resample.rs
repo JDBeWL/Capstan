@@ -1,5 +1,5 @@
 //! 把解码链重采样到独占输出协商到的采样率。
-//! 只在两者不一致时用到：格式协商优先要声源自己的采样率，对上了就是位完美直出，这一步整个省掉。
+//! 仅在两者不一致时使用。格式协商优先采用声源本身的采样率，一致即为位完美直出，此步骤整体省略。
 
 use std::time::Duration;
 
@@ -21,7 +21,7 @@ const CUTOFF: f32 = 0.925;
 const OVERSAMPLING: usize = 128;
 
 /// 每次递交的输入块长度（帧），约 21ms @48k。
-/// 源耗尽之后多喂几块静音（块数由重采样器的延迟算出来，见 [`RubatoResampleSource::new`]）。
+/// 源耗尽后额外供给数块静音，块数由重采样器的延迟算出，见 [`RubatoResampleSource::new`]。
 const fn chunk_frames(sample_rate: u32) -> usize {
     match sample_rate {
         0..=32_000 => 512,
@@ -34,9 +34,9 @@ const fn chunk_frames(sample_rate: u32) -> usize {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Feed {
     Data,
-    /// 源已耗尽，还剩 n 块静音要喂
+    /// 源已耗尽，尚余 n 块静音待供给。
     Drain(usize),
-    /// 全部吐完
+    /// 已全部产出。
     Done,
 }
 
@@ -55,10 +55,10 @@ pub struct RubatoResampleSource<S> {
     produced: usize,
     /// 已经从源里读出来的真实帧数（不含补的静音）。
     fed_frames: usize,
-    /// 源读完之后按比例算出的目标总帧数。到这儿就收工 —— 补齐的静音不该算进时长。
+    /// 源读完后按比例算出的目标总帧数；达到即截止，补齐的静音不计入时长。
     total_frames: Option<usize>,
     out_frames: usize,
-    /// 源读完之后还要喂几块静音，由重采样器的延迟算出来。
+    /// 源读完后仍需供给的静音块数，由重采样器的延迟算出。
     flush_chunks: usize,
 }
 
@@ -86,8 +86,8 @@ impl<S: Source<Item = f32>> RubatoResampleSource<S> {
         .map_err(|err| ExclusiveError::Resampler(err.to_string()))?;
 
         let output_frames = resampler.output_frames_max();
-        // 重采样器有固定启动延迟：头几块只填缓冲、不吐输出帧。延迟按输出帧计，折回输入帧算块数。
-        // 少喂会把曲尾切掉；多喂的静音由 `total_frames` 截断，不会多交出去。
+        // 重采样器有固定启动延迟。头几块仅填充缓冲，不产出输出帧。延迟按输出帧计，折算回输入帧得到块数。
+        // 供给不足会截断曲尾；多供的静音由 `total_frames` 截断，不会多递交。
         let flush_chunks = {
             let latency_frames = (resampler.output_delay() as f64 / ratio).ceil() as usize;
             latency_frames.div_ceil(frames_per_chunk) + 1
@@ -118,7 +118,7 @@ impl<S: Iterator<Item = f32>> RubatoResampleSource<S> {
         self.frames_per_chunk * self.channels
     }
 
-    /// 喂一块进去，返回这一轮产出的样本数；`None` 表示源与滤波器都已吐完。
+    /// 写入一块，返回本轮产出的样本数；`None` 表示源与滤波器均已耗尽。
     fn pump(&mut self) -> Option<usize> {
         let want = self.samples_per_chunk();
         self.input.clear();
@@ -135,12 +135,12 @@ impl<S: Iterator<Item = f32>> RubatoResampleSource<S> {
                     self.input.push(sample);
                 }
 
-                // 这一块真正从源里读到的帧数。整块也要算进来 —— 只在读到 None 时才累加
+                // 这一块真正从源里读到的帧数。整块也要算进来，只在读到 None 时才累加
                 // 会把前面每一块都漏掉，总帧数算出来比已产出的还小，尾巴会被整段截掉。
                 self.fed_frames += self.input.len() / self.channels;
 
                 if short {
-                    // 源到头了：这一块补静音凑满，之后还要再喂几块把滤波器里的尾巴推出来
+                    // 源已读到末尾。该块以静音补齐，其后再供给数块以推出滤波器内的残余。
                     self.total_frames = Some((self.fed_frames as f64 * self.ratio).ceil() as usize);
                     self.input.resize(want, 0.0);
                     self.feed = Feed::Drain(self.flush_chunks);
@@ -167,7 +167,7 @@ impl<S: Iterator<Item = f32>> RubatoResampleSource<S> {
             .process_into_buffer(&input, &mut output, None)
             .ok()?;
 
-        // 源读完之后，剩下的尾巴只留到按比例应有的长度，补齐的静音不交出去
+        // 源读完之后，剩下的尾巴只留到按比例应有的长度，补齐的静音不交出去。
         let produced = match self.total_frames {
             Some(total) => {
                 let left = total.saturating_sub(self.out_frames).min(written);
@@ -198,7 +198,7 @@ impl<S: Iterator<Item = f32>> Iterator for RubatoResampleSource<S> {
 
             self.produced = self.pump()?;
             self.position = 0;
-            // 滤波器有启动延迟，头几轮可能就是吐不出东西；继续喂，喂到出为止
+            // 滤波器有启动延迟，头几轮可能无任何输出；持续供给直至产生输出。
         }
     }
 }
@@ -217,7 +217,7 @@ impl<S: Source<Item = f32>> Source for RubatoResampleSource<S> {
         self.target_rate
     }
 
-    /// 重采样之后精确时长不再可得（还有滤波器延迟与补齐的尾巴），宁可不报。
+    /// 重采样后精确时长不可得（存在滤波器延迟与补齐的残余），故不报告该值。
     fn total_duration(&self) -> Option<Duration> {
         None
     }
@@ -299,7 +299,7 @@ mod tests {
         assert_eq!(resampled.sample_rate().get(), 48_000);
 
         let out: Vec<f32> = resampled.collect();
-        // 长度必须严格等于「真实帧数 × 倍率」：补齐的静音与滤波器的尾巴都不该多交出去
+        // 长度必须严格等于「真实帧数 × 倍率」，补齐的静音与滤波器的尾巴都不该多交出去。
         let expected = FRAMES * 2 * 6;
         assert_eq!(out.len(), expected, "6 倍上采样的样本数不对");
 
@@ -322,7 +322,7 @@ mod tests {
         assert!((0.4..0.55).contains(&peak), "峰值 {peak} 偏离了原始的 0.5");
     }
 
-    /// 素材比一个数据块还短：不能卡住、不能 panic，也不能一个样本都不给。
+    /// 素材比一个数据块还短。不能卡住、不能 panic，也不能一个样本都不给。
     #[test]
     fn a_source_shorter_than_one_chunk_still_yields_samples() {
         let source = Tone::new(64, 1, 44_100, 1_000.0);
@@ -330,7 +330,7 @@ mod tests {
             RubatoResampleSource::new(source, rate(48_000)).expect("重采样器应当能建起来");
 
         let out: Vec<f32> = resampled.collect();
-        // 64 帧按 1.088 倍算出来是 70 帧，一块完整的输入都不够，仍然要给到这个数
+        // 64 帧按 1.088 倍算出来是 70 帧，一块完整的输入都不够，仍然要给到这个数。
         assert_eq!(out.len(), 70, "短素材的长度同样要按比例算");
         assert!(out.iter().all(|s| s.is_finite()), "不该出现 NaN / 无穷");
     }

@@ -1,4 +1,4 @@
-//! 解码链路集成测试：格式探测 → 解码 → 独立线程 → 有界通道 → EOF 判定，重点是结束判定。
+//! 解码链路集成测试。格式探测 → 解码 → 独立线程 → 有界通道 → EOF 判定，重点是结束判定。
 //! `allow-*-in-tests` 只覆盖 `#[cfg(test)]` 模块，`tests/` 下要在这里显式允许 unwrap/expect。
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -55,7 +55,7 @@ fn temp_wav(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     (dir, path)
 }
 
-/// 独占推送线程那条路（`WhenEmpty::Wait`）不许交出补出来的静音：素材是正弦，
+/// 独占推送线程那条路（`WhenEmpty::Wait`）不许交出补出来的静音。素材是正弦，
 /// 连续 ≥64 个恰好 0.0 只可能来自补白。
 #[test]
 fn the_head_of_a_track_never_gets_padded_with_invented_silence() {
@@ -102,7 +102,7 @@ fn the_head_of_a_track_never_gets_padded_with_invented_silence() {
         .unwrap_or(0);
     assert!(
         longest < 64,
-        "头一批样本里有 {longest} 个连着的 0.0 —— 那是通道空着时补出来的静音，不是素材"
+        "头一批样本里有 {longest} 个连着的 0.0；那是通道空着时补出来的静音，不是素材"
     );
 }
 
@@ -132,7 +132,7 @@ fn decodes_pcm_to_interleaved_stereo_f32() {
     let samples: Vec<f32> = decoder.collect();
 
     assert_eq!(samples.len(), 4410 * 2, "两个声道都要解出来");
-    // 16-bit 量化误差在 1/32767 量级
+    // 16-bit 量化误差在 1/32767 量级。
     assert!(
         samples.iter().all(|s| (s - 0.5).abs() < 1e-3),
         "应当是一个 0.5 的直流信号"
@@ -163,7 +163,7 @@ fn mono_survives_the_decoder_and_is_promoted_later_on_the_chain() {
 #[test]
 fn surround_keeps_its_layout_all_the_way_through_the_decoder() {
     let (_dir, path) = temp_wav("surround.wav");
-    // FL FR FC LFE SL SR
+    // FL FR FC LFE SL SR。
     write_wav(&path, 8_000, 6, 100, |_, channel| match channel {
         0 => 0.5,
         1 => 0.25, // FR
@@ -182,7 +182,7 @@ fn surround_keeps_its_layout_all_the_way_through_the_decoder() {
     let samples: Vec<f32> = decoder.take(12).collect();
     assert_eq!(samples.len(), 12, "两帧 6 声道");
 
-    // LFE 必须原样留着：2.1 折入与立体声下混都靠它，解码阶段丢掉就再也找不回来
+    // LFE 必须原样留着。2.1 折入与立体声下混都靠它，解码阶段丢掉就再也找不回来。
     assert!(
         (samples[3] - 0.4).abs() < 0.01,
         "LFE = {}，期望约 0.4",
@@ -195,7 +195,7 @@ fn surround_keeps_its_layout_all_the_way_through_the_decoder() {
     );
 }
 
-/// 从 ramp 波形（样本值 = 帧号 / 总帧数）反推帧号。
+/// 从 ramp 波形（样本值 = 帧号 ÷ 总帧数）反推帧号。
 fn frame_of(sample: f32, frames: usize) -> i64 {
     (f64::from(sample) * frames as f64).round() as i64
 }
@@ -242,7 +242,7 @@ fn seek_before_first_decode_is_deferred_not_an_error() {
         frame as f32 / FRAMES as f32
     });
 
-    // 解码器还没初始化就 seek，切歌后立刻点进度条就是这个顺序，不该报错
+    // 解码器还没初始化就 seek，切歌后立刻点进度条就是这个顺序，不该报错。
     let mut decoder = SymphoniaDecoder::new(&path).unwrap();
     decoder
         .seek(Duration::from_millis(500))
@@ -263,7 +263,7 @@ fn seeking_past_the_end_does_not_panic() {
 
     let mut decoder = SymphoniaDecoder::new(&path).unwrap();
     let _ = decoder.prefill();
-    // 目标超出文件长度：允许报错，但绝不能 panic
+    // 目标超出文件长度。允许报错，但绝不能 panic。
     let _ = decoder.seek(Duration::from_secs(60));
     let _ = decoder.next();
 }
@@ -271,7 +271,7 @@ fn seeking_past_the_end_does_not_panic() {
 #[test]
 fn short_file_still_prefills_successfully() {
     let (_dir, path) = temp_wav("short.wav");
-    // 0.1 秒的素材远小于 500ms 的缓冲容量：填不满是正常的，不该被判成坏文件
+    // 0.1 秒的素材远小于 500ms 的缓冲容量。填不满是正常的，不该被判成坏文件。
     write_wav(&path, 8_000, 2, 800, |_, _| 0.5);
 
     let mut decoder = SymphoniaDecoder::new(&path).unwrap();
@@ -304,8 +304,8 @@ fn unsupported_content_reports_an_error() {
     );
 }
 
-/// 畸形头：采样率写成 0。时长会算成 `frames / 0.0` = inf，`Duration::from_secs_f64` 对 inf 直接
-/// panic —— 它跑在解码线程上，panic 会带走整个进程。拒开或退成可用采样率都算对。
+/// 畸形头。采样率写成 0。时长会算成 `frames / 0.0` = inf，`Duration::from_secs_f64` 对 inf 直接
+/// panic。它跑在解码线程上，panic 会带走整个进程。拒开或退成可用采样率都算对。
 #[test]
 fn a_zero_sample_rate_header_never_panics() {
     let (_dir, path) = temp_wav("zero-rate.wav");
@@ -327,7 +327,7 @@ fn a_zero_sample_rate_header_never_panics() {
 }
 
 /// 每个真实样本至少且恰好交付一次，且最终能判定结束。
-/// 断言非零样本数而非总数 —— 欠载时源会吐 `0.0` 静音撑流，无节流的测试线程必然掺进静音。
+/// 断言非零样本数而非总数。欠载时源会吐 `0.0` 静音撑流，无节流的测试线程必然掺进静音。
 #[test]
 fn lockfree_source_delivers_every_sample_then_reports_end() {
     let (_dir, path) = temp_wav("tone.wav");
@@ -366,16 +366,16 @@ fn lockfree_source_forwards_track_metadata() {
 
     assert_eq!(source.channels().get(), 2);
     assert_eq!(source.sample_rate().get(), 22_050);
-    // 恒为 None 是刻意的：见 source.rs 里对「必须自己重采样」的说明
+    // 恒为 None 是有意为之，见 source.rs 中对「必须自行重采样」的说明。
     assert_eq!(source.current_span_len(), None);
 
     let duration = source.total_duration().expect("应当能报出时长");
     assert!((duration.as_secs_f64() - 0.1).abs() < 0.001);
 }
 
-/// 丢掉 `LockFreeSource` 之后，解码线程必须自己收工 —— `Drop` 里已经没有 `join` 兜底了。
-/// 素材要远大于有界通道（30 块 × 16384 样本 ≈ 49 万样本）且一帧都不消费，才真的停在阻塞 `send` 上。
-/// 判据是文件句柄：线程收工后 `File` 才 drop，Windows 上被占用的文件 `remove_file` 会失败。
+/// 释放 `LockFreeSource` 之后，解码线程必须自行结束，`Drop` 中已无 `join` 作为兜底。
+/// 素材需远大于有界通道（30 块 × 16384 样本 ≈ 49 万样本）且一帧都不消费，才会真正阻塞在 `send` 上。
+/// 判据是文件句柄。线程结束后 `File` 才 drop，而 Windows 上被占用的文件会使 `remove_file` 失败。
 #[test]
 fn dropping_the_source_releases_the_producer() {
     let (_dir, path) = temp_wav("oversized.wav");
@@ -385,7 +385,7 @@ fn dropping_the_source_releases_the_producer() {
 
     let decoder = TrackDecoder::open(&path).unwrap();
     let source = LockFreeSource::new(decoder, WhenEmpty::Wait).unwrap();
-    // 一帧都不读，这 50ms 是给通道填满用的
+    // 一帧都不读，这 50ms 是给通道填满用的。
     std::thread::sleep(Duration::from_millis(50));
     drop(source);
 
@@ -399,11 +399,11 @@ fn dropping_the_source_releases_the_producer() {
     }
     assert!(
         released,
-        "drop 之后解码线程应当立刻收工并释放文件句柄 —— 丢掉 receiver 是唯一能解开阻塞 send 的动作"
+        "drop 之后解码线程应当立刻收工并释放文件句柄，因为丢掉 receiver 是唯一能解开阻塞 send 的动作"
     );
 }
 
-/// 扩展名不可信：APE 改名成 `.wav` 会被 symphonia 的 MPEG 探测当成 MP3 帧同步，解出满刻度噪声。
+/// 扩展名不可信。APE 改名成 `.wav` 会被 symphonia 的 MPEG 探测当成 MP3 帧同步，解出满刻度噪声。
 /// 判据是错误由 `ApeSource` 报出（`Decode`），不是 `Probe`。
 #[test]
 fn a_renamed_ape_goes_to_the_ape_decoder_instead_of_the_mpeg_probe() {
@@ -421,8 +421,8 @@ fn a_renamed_ape_goes_to_the_ape_decoder_instead_of_the_mpeg_probe() {
     );
 }
 
-/// WavPack：symphonia 没有对应的格式读取器，打开只会说「认不出来」。
-/// 现在它按 `wvpk` 路由到 `oxideav-wavpack`，坏内容由那个解码器报 `Decode`。
+/// 伪装成 `.flac` 的 WavPack 必须按 `wvpk` 路由到 `oxideav-wavpack`，坏内容由它报 `Decode`。
+/// symphonia 没有 WavPack 的格式读取器，漏到它手里只会得到一句「认不出来」。
 #[test]
 fn a_renamed_wavpack_goes_to_the_wavpack_decoder() {
     let (_dir, path) = temp_wav("disguised.flac");
@@ -439,8 +439,8 @@ fn a_renamed_wavpack_goes_to_the_wavpack_decoder() {
     );
 }
 
-/// Ogg 容器 symphonia 认得，但里面装 Opus 它没有解码器，只会以 `unsupported audio codec` 失败。
-/// 现在按「`OggS` + 偏移 28 处的 `OpusHead`」路由到 `opus-pure`。
+/// 伪装成 `.flac` 的 Ogg Opus 必须按「`OggS` + 偏移 28 处的 `OpusHead`」路由到 `opus-pure`。
+/// symphonia 认得 Ogg 容器，但里面装 Opus 它就只剩 `unsupported audio codec`。
 #[test]
 fn a_renamed_ogg_opus_goes_to_the_opus_decoder() {
     let (_dir, path) = temp_wav("disguised.flac");
@@ -459,8 +459,8 @@ fn a_renamed_ogg_opus_goes_to_the_opus_decoder() {
     );
 }
 
-/// 通用引擎自己也要挡一道。绕过 `TrackDecoder` 直接建它时，认得出的魔数绝不能落到探测上 ——
-/// 那正是「APE 被当成 MP3、解出满刻度噪声」的入口。
+/// 通用引擎自身也必须拒绝可识别的魔数。绕过 `TrackDecoder` 直接构造时，此类输入不得进入格式探测。
+/// 否则 APE 会被探测识别为 MP3，并解出满刻度噪声。
 #[test]
 fn the_generic_engine_refuses_a_magic_it_recognises() {
     let (_dir, path) = temp_wav("disguised.wav");
@@ -477,7 +477,7 @@ fn the_generic_engine_refuses_a_magic_it_recognises() {
     );
 }
 
-/// 容器能打开、但一个样本都解不出来 —— 必须报错，不能当成「放完了」：
+/// 容器能打开、但一个样本都解不出来。必须报错，不能当成「放完了」：
 /// 这首一上来就「放完」，列表循环时看着像无声快进。
 #[test]
 fn a_container_without_any_audio_data_reports_an_error() {

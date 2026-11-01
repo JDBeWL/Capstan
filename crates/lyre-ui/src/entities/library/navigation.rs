@@ -1,5 +1,6 @@
-//! 键盘光标：`↑↓` 只移动光标，`Enter` 才播；默认跟着播放走（[`LibraryEntity::follow_playback`]）。
-//! 光标变动都走 [`LibraryEntity::set_focus`]，它是 [`super::LibraryEvent::FocusMoved`] 的唯一发出者。
+//! 键盘光标。`↑↓` 只移动光标，`Enter` 才播；默认跟着播放走（[`LibraryEntity::follow_playback`]）。
+//! 光标变动都走 [`LibraryEntity::set_focus`]，
+//! 它是 [`super::LibraryEvent::FocusMoved`] 的唯一发出者。
 
 use lyre_core::{Track, TrackId};
 
@@ -16,8 +17,8 @@ impl LibraryEntity {
         self.cursor_visible
     }
 
-    /// 移动光标（键盘路径）。发 `FocusMoved` 让列表滚过去 —— 事件带的是可见行号而非曲库
-    /// 下标，过滤状态下两者不同。换曲引起的光标移动走 `Self::follow_playback`：那条不发事件。
+    /// 移动光标（键盘路径）。发 `FocusMoved` 让列表滚过去。事件带的是可见行号而非曲库
+    /// 下标，过滤状态下两者不同。换曲引起的光标移动走 `Self::follow_playback`，那条不发事件。
     pub fn set_focus(&mut self, id: TrackId, cx: &mut Context<Self>) {
         let row = self.row_of(id);
         self.set_focus_at(id, row, cx);
@@ -25,7 +26,7 @@ impl LibraryEntity {
 
     /// 行号已经知道时直接落座，省掉一次 `row_of` 反查。
     fn set_focus_at(&mut self, id: TrackId, row: Option<usize>, cx: &mut Context<Self>) {
-        // 要放在早返回之前：首行再按 `↑` 落点没变，但用户在用键盘，底色该亮。
+        // 要放在早返回之前。首行再按 `↑` 落点没变，但用户在用键盘，底色该亮。
         self.cursor_visible = true;
         if self.focus == Some(id) {
             return;
@@ -37,10 +38,10 @@ impl LibraryEntity {
         cx.notify();
     }
 
-    /// 换曲时把光标挪到这一首，不发 `FocusMoved`：自动换曲不该把列表从用户手上拽走。
+    /// 换曲时把光标挪到这一首，不发 `FocusMoved`，自动换曲不该把列表从用户手上拽走。
     /// 那首不在可见列表里就清成 `None`，`↑↓` 与 `Enter` 都有兜底。
     pub(super) fn follow_playback(&mut self, id: TrackId, cx: &mut Context<Self>) {
-        // 这次是播放自己在走，不是用户在按键盘 —— 底色不该跟着冒出来。
+        // 本次由播放推进引起，而非用户按键操作，底色不应随之出现。
         self.cursor_visible = false;
         let target = if self.row_of(id).is_some() {
             Some(id)
@@ -72,7 +73,7 @@ impl LibraryEntity {
                 };
                 moved.min(rows - 1)
             }
-            // 没有光标时：向下从第一行开始，向上从最后一行开始
+            // 没有光标时。向下从第一行开始，向上从最后一行开始。
             None => {
                 if delta >= 0 {
                     0
@@ -125,12 +126,12 @@ impl LibraryEntity {
     /// 光标停在一首引擎播不了的曲目上时返回 `None`（并弹一条说明）。
     pub fn play_focused(&mut self, cx: &mut Context<Self>) -> Option<Track> {
         let id = self.focus?;
-        // 和点击列表行走同一条路：先把队列换成当前可见区，否则从别的分组切过来时会跳不进原队列。
+        // 和点击列表行走同一条路。先把队列换成当前可见区，否则从别的分组切过来时会跳不进原队列。
         self.activate_in_view(id, cx)
     }
 
     /// 从可见行里挑第一首引擎能播的并开始播放；一首都没有时只提示。
-    /// 空格在什么都没装载时走这条，而不是走光标那一首：光标可能停在一首播不了的曲目上。
+    /// 空格在什么都没装载时走这条，而不是走光标那一首，光标可能停在一首播不了的曲目上。
     pub fn play_first_playable(&mut self, cx: &mut Context<Self>) -> Option<Track> {
         let found = (0..self.visible_len()).find_map(|row| {
             self.track_at_row(row)
@@ -139,7 +140,7 @@ impl LibraryEntity {
         });
 
         if let Some(id) = found {
-            // 详情页的播放键同样要先换队列：从别处切进来时旧队列里没有这张专辑 / 艺术家的歌。
+            // 详情页的播放键同样要先换队列，从别处切进来时旧队列里没有这张专辑与艺术家的歌。
             return self.activate_in_view(id, cx);
         }
 

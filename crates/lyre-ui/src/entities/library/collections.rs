@@ -1,4 +1,4 @@
-//! 自建歌单：增删改、成员顺序、封面。成员是有序表，顺序由用户拖拽决定。
+//! 自建歌单。增删改、成员顺序、封面。成员是有序表，顺序由用户拖拽决定。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ use super::scope::Scope;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CollectionSummary {
-    /// 当前曲库里真的解析得出的成员数。不是 `Collection::len()` —— 后者会报幽灵行。
+    /// 当前曲库里真的解析得出的成员数。不是 `Collection::len()`，后者会报幽灵行。
     pub count: usize,
     /// 用户为这个歌单指定的封面（数据目录里的那份拷贝）。
     pub cover_file: Option<PathBuf>,
@@ -23,7 +23,7 @@ pub struct CollectionSummary {
 /// 认得的图片扩展名，只决定拷贝时保留哪个后缀；能否解码由图片库判定。
 const IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "webp", "gif", "bmp"];
 
-/// FNV-1a：只当文件名用，稳定即可。
+/// FNV-1a。只当文件名用，稳定即可。
 fn fnv1a(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in bytes {
@@ -48,7 +48,7 @@ impl LibraryEntity {
         &self.collections
     }
 
-    /// 「我的歌单」那一排的顺序：收藏在最前，其余按创建顺序。
+    /// 「我的歌单」那一排的顺序。收藏在最前，其余按创建顺序。
     pub fn list_scopes(&self) -> Vec<Scope> {
         let mut scopes = vec![Scope::Favorites];
         scopes.extend(
@@ -100,7 +100,7 @@ impl LibraryEntity {
         }
         self.persist_collections();
         self.touch_data();
-        // 正看着它时面包屑要立刻换名字
+        // 正看着它时面包屑要立刻换名字。
         cx.notify();
         true
     }
@@ -120,7 +120,7 @@ impl LibraryEntity {
         }
         self.persist_collections();
         self.touch_data();
-        // 正看着这个歌单时新加的那首要立刻出现
+        // 正看着这个歌单时新加的那首要立刻出现。
         if self.scope == Scope::Collection(id) {
             self.recompute_visible(cx);
         }
@@ -194,8 +194,8 @@ impl LibraryEntity {
         removed
     }
 
-    /// 拖拽排序：把可见行 `from` 插到第 `gap` 行之前（`gap` 可以是行数本身 = 末尾）。
-    /// 只在歌单作用域里成立 —— 专辑 / 艺术家 / 收藏的顺序由曲库决定，拖动它们改不了任何东西。
+    /// 拖拽排序，把可见行 `from` 插到第 `gap` 行之前（`gap` 可以是行数本身 = 末尾）。
+    /// 只在歌单作用域里成立。专辑、艺术家、收藏的顺序由曲库决定，拖动它们改不了任何东西。
     pub fn reorder_collection(&mut self, from: usize, gap: usize, cx: &mut Context<Self>) -> bool {
         let Scope::Collection(id) = self.scope else {
             return false;
@@ -332,7 +332,7 @@ impl LibraryEntity {
         if !self.collections.set_cover(id, Some(target)) {
             return;
         }
-        // 只有换成功才删旧的，且只删自己数据目录里的
+        // 仅在替换成功后才删除旧文件，且只删除位于自身数据目录内的文件。
         if let Some(old) = previous.filter(|old| old.starts_with(&target_dir)) {
             let _ = fs::remove_file(old);
         }
@@ -348,7 +348,7 @@ impl LibraryEntity {
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：`crate::platform::*` 带进来的 gpui `test` 宏会遮蔽内置 `#[test]`
+    // 不写 `use super::*`，`crate::platform::*` 带进来的 gpui `test` 宏会遮蔽内置 `#[test]`。
     use super::reorder_target;
 
     #[test]
@@ -368,7 +368,7 @@ mod tests {
             for row in rows {
                 list.add(TrackId(*row));
             }
-            // 这几行都能解析成曲目，所以可见行号与成员下标是同一个轴
+            // 这几行都能解析成曲目，所以可见行号与成员下标是同一个轴。
             list.move_item(from, reorder_target(from, boundary));
             list.tracks.iter().map(|track| track.0).collect()
         }

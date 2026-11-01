@@ -1,4 +1,4 @@
-//! `resume.json` 的读写策略：什么时候写、什么时候装回来。存盘形状在 [`crate::resume`]。
+//! `resume.json` 的读写策略，管什么时候写、什么时候装回来。存盘形状在 [`crate::resume`]。
 
 use std::time::Duration;
 
@@ -42,13 +42,13 @@ pub(super) fn restore_resume(
         .find(|track| track.path == resume.path)
         .cloned();
     let Some(track) = track else {
-        // 文件被移走或改名，这条记录留着也没用了
+        // 文件被移走或改名，这条记录留着也没用了。
         crate::resume::Resume::clear();
         return;
     };
     let id = track.id;
     let position = Duration::from_millis(resume.position_ms);
-    // 静默恢复：订阅此时已经建立，普通 `load` 会在播放实体被可变借用时触发根视图回调。
+    // 静默恢复。订阅此时已经建立，普通 `load` 会在播放实体被可变借用时触发根视图回调。
     playback.update(cx, |playback, cx| playback.restore(track, position, cx));
     // 列表里那一行要亮起来，否则「界面在放、列表一行都不亮」
     library.update(cx, |library, cx| library.set_now_playing(Some(id), cx));

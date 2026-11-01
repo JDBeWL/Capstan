@@ -1,4 +1,4 @@
-//! 用户自建歌单：一组有序的曲目引用。与播放队列 [`crate::Playlist`] 是两件事：后者回答
+//! 用户自建歌单，一组有序的曲目引用。与播放队列 [`crate::Playlist`] 是两件事，后者回答
 //! 「接下来按什么顺序播」，会随切歌、洗牌、排序重排；`Collection` 只回答「在不在、排第几」。
 
 use std::path::PathBuf;
@@ -36,7 +36,7 @@ impl Collection {
         self.tracks.contains(&id)
     }
 
-    /// 加入一首。已在册时返回 `false` 且不动位置 —— 重复加入不该把歌挪到末尾。
+    /// 加入一首。已在册时返回 `false` 且不动位置。重复加入不该把歌挪到末尾。
     pub fn add(&mut self, id: TrackId) -> bool {
         if self.contains(id) {
             return false;
@@ -72,7 +72,7 @@ impl Collection {
         true
     }
 
-    /// 曲目已不在曲库时成员 id 留着无害：视图按 id 解析，解析不出就不画那一行，也不主动清理。
+    /// 曲目已不在曲库时成员 id 留着无害。视图按 id 解析，解析不出就不画那一行，也不主动清理。
     pub fn len(&self) -> usize {
         self.tracks.len()
     }
@@ -101,7 +101,7 @@ impl Collections {
         }
     }
 
-    /// 名字只 trim 不查重：重名是允许的（按 id 定位，重名不会造成歧义），
+    /// 名字只 trim 不查重。重名是允许的（按 id 定位，重名不会造成歧义），
     /// 但空名会让侧栏出现一个没法点的条目，所以拒掉。
     pub fn create(&mut self, name: &str) -> Option<Collection> {
         let name = name.trim();
@@ -182,7 +182,7 @@ mod tests {
         assert_eq!(lists.len(), 1);
     }
 
-    /// id 必须单调：删掉一个之后新建的不能顶用同一个 id，
+    /// id 必须单调。删掉一个之后新建的不能顶用同一个 id，
     /// 否则导航历史里还没退出的旧条目会指向新歌单。
     #[test]
     fn ids_are_never_reused() {
@@ -194,7 +194,7 @@ mod tests {
         assert!(lists.get(first).is_none());
     }
 
-    /// 重名允许：定位靠 id，不靠名字。
+    /// 重名允许。定位靠 id，不靠名字。
     #[test]
     fn duplicate_names_are_allowed() {
         let mut lists = Collections::default();
@@ -234,7 +234,7 @@ mod tests {
         assert!(!lists.rename(CollectionId(999), "不存在"));
     }
 
-    /// 拖拽排序落到数据层就是这一条：`to` 是「挪完之后站在第几位」。
+    /// 拖拽排序落到数据层就是这一条，`to` 是「挪完之后站在第几位」。
     /// 界面上的「插到某行前面」要换算成这个下标，换算规则由 UI 层测试覆盖。
     #[test]
     fn move_item_puts_the_track_at_the_target_index() {
@@ -250,7 +250,7 @@ mod tests {
         assert!(list.move_item(3, 0));
         assert_eq!(ids(&list), vec![4, 2, 3, 1]);
 
-        // 往后挪到底：越界的 `to` 按末位算，而不是 panic
+        // 往后挪到底。越界的 `to` 按末位算，而不是 panic。
         assert!(list.move_item(0, 9));
         assert_eq!(ids(&list), vec![2, 3, 1, 4]);
 

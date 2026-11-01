@@ -1,4 +1,4 @@
-//! 撤销提示（toast）：破坏性操作立即生效、不弹确认框，用底部提示提供限时撤销窗口。
+//! 撤销提示（toast）。破坏性操作立即生效、不弹确认框，用底部提示提供限时撤销窗口。
 //! 同一时刻只显示一条，新的顶掉旧的；超时后撤销不可用。
 
 use std::time::Duration;
@@ -18,7 +18,7 @@ type UndoAction = Box<dyn FnOnce(&mut Window, &mut App) + 'static>;
 
 pub struct ToastEntity {
     pending: Option<Pending>,
-    /// 退出动画期间暂存的内容：等 160ms 播完才真正消失。
+    /// 退出动画期间暂存的内容，等 160ms 播完才真正消失。
     closing: Option<Pending>,
     /// 每次 show / 开始退场递增；定时器只在本代仍是当前代时才生效。
     generation: u64,
@@ -43,7 +43,7 @@ impl ToastEntity {
     }
 
     /// 显示一条带操作按钮的提示。
-    // `_expiry` 只写不读，作用是保活：drop 时取消上一个定时器。
+    // `_expiry` 只写不读，作用是保活，drop 时取消上一个定时器。
     #[allow(clippy::used_underscore_binding)]
     pub fn show(
         &mut self,
@@ -90,13 +90,13 @@ impl ToastEntity {
         self.show(message, "", |_, _| {}, cx);
     }
 
-    // 置 `None` 即取消定时器：`Task` 一 drop 就中止。
+    // 置 `None` 即取消定时器，`Task` 一 drop 就中止。
     #[allow(clippy::used_underscore_binding)]
     pub fn dismiss(&mut self, cx: &mut Context<Self>) {
         let Some(pending) = self.pending.take() else {
             return;
         };
-        // 定时器与撤销都结束：内容交给退出动画，播完再真正移除。
+        // 定时器与撤销都结束。内容交给退出动画，播完再真正移除。
         self._expiry = None;
         self.closing = Some(pending);
         self.generation = self.generation.wrapping_add(1);
@@ -120,7 +120,7 @@ impl ToastEntity {
 
 impl Render for ToastEntity {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 无内容时返回零尺寸占位；两条分支都要转 `AnyElement`，否则 `impl IntoElement` 的具体类型对不上
+        // 无内容时返回零尺寸占位；两条分支都要转 `AnyElement`，否则 `impl IntoElement` 的具体类型对不上。
         let leaving = self.pending.is_none();
         let generation = self.generation;
         let Some(pending) = self.pending.as_mut().or(self.closing.as_mut()) else {
@@ -158,7 +158,7 @@ impl Render for ToastEntity {
                             if let Some(pending) = toast.pending.as_mut()
                                 && let Some(action) = pending.action.take()
                             {
-                                // 先执行撤销，再关闭提示：撤销本身可能又要弹新提示
+                                // 先执行撤销，再关闭提示，撤销本身可能又要弹新提示。
                                 action(window, cx);
                             }
                             toast.dismiss(cx);
@@ -180,7 +180,7 @@ impl Render for ToastEntity {
             .bg(theme::control())
             .text_size(px(theme::FONT_CAPTION))
             .text_color(theme::text_on_control())
-            // 左边 6px 黄条：提示条唯一的强调
+            // 左边 6px 黄条，提示条唯一的强调。
             .child(
                 div()
                     .absolute()
@@ -194,7 +194,7 @@ impl Render for ToastEntity {
             .children(action_button);
 
         if leaving {
-            // 退出用 mech 的反向：慢慢松开，然后咔地关掉。
+            // 退出用 mech 的反向。慢慢松开，然后咔地关掉。
             let ease = theme::ease_mech();
             toast
                 .with_animation(

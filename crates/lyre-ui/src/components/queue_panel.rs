@@ -1,4 +1,4 @@
-//! 右侧面板的「队列」页签：显示真实播放顺序（`Playlist::order`），随机模式下与曲库顺序完全不同。
+//! 右侧面板的「队列」页签，显示真实播放顺序 `Playlist::order`，随机模式下与曲库顺序完全不同。
 //! 这里不参与搜索也不增删曲目，顺序只由播放模式决定。
 
 use std::rc::Rc;
@@ -15,7 +15,7 @@ use crate::theme;
 use super::panel_close_button;
 
 /// 已播只留 5 首作上下文，不属于队列本身。
-/// 这是显示上限，不是滚动锚点 —— 锚点是 `QueueRows::current_row`。
+/// 这是显示上限，不是滚动锚点。锚点是 `QueueRows::current_row`。
 const PLAYED_CONTEXT: usize = 5;
 
 /// 行高要容得下 14px 标题行 + 12px 副标题行，合计约 51。
@@ -35,9 +35,9 @@ pub struct QueuePanel {
     // `observe(library)` 在任何曲库变化时都会触发，所以记住上次定位的曲目，
     // 只在正在播放的那首真的换了时才滚动，否则用户翻看队列时会被拽回当前曲。
     last_anchored: Option<TrackId>,
-    /// 缓存的轻量行模型：只存 `TrackId`，曲目数据在可视区里现查。
+    /// 缓存的轻量行模型。只存 `TrackId`，曲目数据在可视区里现查。
     rows: QueueRows,
-    /// 行模型对应的队列代次 / 游标 / 当前曲；任一变化才重建。
+    /// 行模型对应的队列代次、游标、当前曲；任一变化才重建。
     rows_key: Option<QueueKey>,
 }
 
@@ -52,8 +52,8 @@ impl QueuePanel {
             this.anchor(&library, cx);
             cx.notify();
         });
-        // 浮层开关只改面板外观（关闭键显隐），但面板实体不是每次根视图重绘都会重渲染的部分，
-        // 必须自己订阅外壳。
+        // 浮层开关仅改变面板外观（关闭键显隐），但面板实体并非每次根视图重绘都会重渲染，
+        // 需自行订阅外壳。
         let shell_sub = cx.observe(&shell, |_, _, cx| cx.notify());
         Self {
             library,
@@ -120,7 +120,7 @@ impl QueuePanel {
     }
 
     /// 换曲后把正在播的那一行滚进可视区。
-    /// `Nearest` 而不是 `Center` / `Top`：已在可视区时什么都不做，不打断用户自己翻看。
+    /// `Nearest` 而非 `Center` 与 `Top`。已在可视区内时不做任何移动，不打断用户自行翻看。
     fn anchor(&mut self, library: &Entity<LibraryEntity>, cx: &mut Context<Self>) {
         let current = library.read(cx).now_playing();
         if current == self.last_anchored {
@@ -131,7 +131,7 @@ impl QueuePanel {
             return;
         }
 
-        // 锚点是正在播的那一行本身，不是 `PLAYED_CONTEXT`：已播那段可能比它短，
+        // 锚点是正在播的那一行本身，不是 `PLAYED_CONTEXT`，因为已播那段可能比它短，
         // 分段标签还要再占一行。行号只能由 `build_entries` 给出。
         self.sync_rows(cx);
         if let Some(row) = self.rows.current_row {
@@ -147,10 +147,10 @@ impl Render for QueuePanel {
         let playing = library.now_playing();
         let mode = library.mode();
         let overlay = self.shell.read(cx).right_panel_overlays();
-        // 待播段不截断：整条队列都要能滚到，列表本身是虚拟化的，多几行不增加渲染成本。
+        // 待播段不截断。整条队列都要能滚到，列表本身是虚拟化的，多几行不增加渲染成本。
         // 行模型已经缓存，这里只读一个数字。
         let ahead = self.rows.ahead;
-        // 「共 N 首」说的是队列，不是曲库 —— 有队列时两者不相等（列着 4 首却写 131 首）。
+        // 「共 N 首」说的是队列，不是曲库。有队列时两者不相等（列着 4 首却写 131 首）。
         let total = library.queue_len();
 
         let header = div()
@@ -241,7 +241,7 @@ impl Render for QueuePanel {
         div()
             .flex_none()
             .w(px(theme::RIGHT_PANEL_W))
-            // 只写 `w()` 压不住内容：flex 默认 `min-width: auto`，长歌名会把面板顶宽，
+            // 只写 `w()` 压不住内容。flex 默认 `min-width: auto`，长歌名会把面板顶宽，
             // 要 `min_w` + `max_w` 一起钉死。
             .min_w(px(theme::RIGHT_PANEL_W))
             .max_w(px(theme::RIGHT_PANEL_W))
@@ -269,7 +269,7 @@ impl Render for QueuePanel {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum QueueEntry {
-    /// 一行曲目。`number` 是显示序号，按曲目数而不是行数递增 —— 分段标签占一行但不占号。
+    /// 一行曲目。`number` 是显示序号，按曲目数而不是行数递增。分段标签占一行但不占号。
     Track {
         id: TrackId,
         kind: RowKind,
@@ -279,11 +279,12 @@ enum QueueEntry {
     Divider(&'static str),
 }
 
-/// 队列的行模型：行本身，加上正在播的那一行的下标。滚动锚点只能从这里拿。
-/// 「已播那段有几行」不等于 `PLAYED_CONTEXT`：刚开播时是空的、只往回取 5 首、没有当前曲时「待播放」标签还占一行。
+/// 队列的行模型，包含行本身与正在播的那一行的下标。滚动锚点只能从这里拿。
+/// 「已播那段有几行」不等于 `PLAYED_CONTEXT`。刚开播时是空的、只往回取 5 首，
+/// 没有当前曲时「播放历史」标签还占一行。
 #[derive(Default)]
 struct QueueRows {
-    /// 行模型只存 id：整条队列的 `Track` 每次重绘都 clone 一遍是真正的大头。
+    /// 行模型只存 id。整条队列的 `Track` 每次重绘都 clone 一遍，那才是真正的大头。
     entries: Rc<Vec<QueueEntry>>,
     /// 正在播的那一行的下标。没有正在播的曲目、或它不在待播区里时为 `None`。
     current_row: Option<usize>,
@@ -297,7 +298,7 @@ impl QueueRows {
     }
 }
 
-/// 行模型的缓存键：队列结构 / 游标 / 当前曲任一变化都要重建。
+/// 行模型的缓存键，队列结构、游标、当前曲任一变化都要重建。
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct QueueKey {
     revision: u64,
@@ -305,7 +306,7 @@ struct QueueKey {
     playing: Option<TrackId>,
 }
 
-/// 把「已播 / 待播」两段拼成一条连续队列：有当前曲时不再插「接下来」标签，
+/// 把「已播与待播」两段拼成一条连续队列。有当前曲时不再插「接下来」标签，
 /// 它直接接在已播记录后面；没有当前曲、两段都非空时才插「待播放」。序号按曲目连续、标签不占号。
 /// `upcoming` 第一首只有与 `now_playing` 相同才算 [`RowKind::Current`]。
 fn build_entries(
@@ -335,7 +336,7 @@ fn build_entries(
         } else {
             RowKind::Upcoming
         };
-        // 这里数出来的才是真行号：上面已播那段在开头可能是空的。
+        // 这里数出来的才是真行号。上面已播那段在开头可能是空的。
         if kind == RowKind::Current {
             current_row = Some(rows.len());
         }
@@ -414,7 +415,7 @@ fn empty_queue(total: usize) -> AnyElement {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RowKind {
     Played,
-    /// 正在播 / 按下播放会从这里开始。
+    /// 正在播与按下播放会从这里开始。
     Current,
     Upcoming,
 }
@@ -456,7 +457,7 @@ fn mode_badge(mode: PlayMode) -> impl IntoElement {
 }
 
 /// 队列的一行。`kind` 决定配色，点一下跳到这一首。
-/// `number` 兼作元素 id：id 跟着曲目而不是行数，换曲时标签增减才不会让滚动错位。
+/// `number` 兼作元素 id。id 跟着曲目而不是行数，换曲时标签增减才不会让滚动错位。
 fn queue_row(
     number: usize,
     track: &Track,
@@ -483,7 +484,7 @@ fn queue_row(
         RowKind::Current | RowKind::Upcoming => theme::text_muted(),
     };
 
-    // 每行独立的 group 名：共用一个的话鼠标进任意一行、所有行都会亮。
+    // 每行独立的 group 名。共用一个的话鼠标进任意一行、所有行都会亮。
     let group: SharedString = format!("queue-row-{number}").into();
 
     let mut row = div()
@@ -491,7 +492,7 @@ fn queue_row(
         .group(group.clone())
         .flex_none()
         .relative()
-        // `uniform_list` 的行默认按内容定宽：`w_full` 给时长列右对齐的参照系，
+        // `uniform_list` 的行默认按内容定宽。`w_full` 给时长列右对齐的参照系，
         // `min_w_0` 才允许标题列收缩。
         .w_full()
         .min_w_0()
@@ -534,7 +535,7 @@ fn queue_row(
     });
 
     row = row
-        // 竖条不用 `border`：那会把内容整体往右推，切换当前曲时整列文字横跳。
+        // 竖条不用 `border`，那会把内容整体往右推，切换当前曲时整列文字横跳。
         .child(
             div()
                 .flex_none()
@@ -555,7 +556,7 @@ fn queue_row(
         ))
         .child(title_cell(number, track, title_color, meta_color));
 
-    // 时长列固定宽度而不是 `flex_1`：后者的右边界取决于标题长度，会把这一列顶宽。
+    // 时长列固定宽度而不是 `flex_1`，后者的右边界取决于标题长度，会把这一列顶宽。
     let mut row = row.child(
         div()
             .flex_none()
@@ -579,7 +580,7 @@ fn queue_row(
             .tooltip(crate::common::tooltip::builder(reason));
     }
 
-    // 这里的「播放」只能跳播、不能重设队列 —— 重设会把随机顺序洗回曲库顺序。
+    // 这里的「播放」只能跳播、不能重设队列。重设会把随机顺序洗回曲库顺序。
     let hooks = crate::common::menu::TrackMenuHooks::none().play({
         let library = library.clone();
         move |id, cx| {
@@ -595,8 +596,8 @@ fn queue_row(
     ))
 }
 
-/// 序号位：平时是序号，悬停时换成 ▶，点一下跳到这一首。
-/// 两层重叠在同一格，靠 `group_hover` 切透明度：逐行记 `hovered` 的话，滑过每行都要 `notify`。
+/// 序号位，平时是序号，悬停时换成 ▶，点一下跳到这一首。
+/// 两层重叠在同一格，靠 `group_hover` 切透明度。若逐行记 `hovered`，滑过每行都要 `notify`。
 fn index_cell(
     number: usize,
     current: bool,
@@ -646,7 +647,7 @@ fn index_cell(
         .on_click({
             let library = library.clone();
             move |_, _, cx| {
-                // 必须阻断冒泡：整行上已经有一个 `activate` 回调，不阻断的话一次点击会重播两遍。
+                // 必须阻断冒泡。整行上已经有一个 `activate` 回调，不阻断的话一次点击会重播两遍。
                 cx.stop_propagation();
                 library.update(cx, |library, cx| {
                     library.activate(track_id, cx);
@@ -677,7 +678,7 @@ fn index_cell(
         .into_any_element()
 }
 
-/// 标题格：第一行歌名，第二行「艺术家 · 专辑」。
+/// 标题格。第一行歌名，第二行「艺术家 · 专辑」。
 fn title_cell(
     number: usize,
     track: &Track,
@@ -724,7 +725,7 @@ fn title_cell(
 
 #[cfg(test)]
 mod tests {
-    // 不用 glob 导入：`platform::*` 里的 gpui `test` 宏会遮蔽内置 `#[test]`，导致无限递归。
+    // 不用 glob 导入，`platform::*` 里的 gpui `test` 宏会遮蔽内置 `#[test]`，导致无限递归。
     use super::{PLAYED_CONTEXT, QueueEntry, QueueRows, RowKind, build_entries};
     use lyre_core::TrackId;
     use std::path::Path;
@@ -852,7 +853,7 @@ mod tests {
 
         let label = |rows: &QueueRows| match rows.entries().iter().find_map(|r| match r {
             QueueEntry::Divider(l) => Some(*l),
-            // 显式列出变体而不是 `_`：给 `QueueEntry` 加新变体时这里会编译失败。
+            // 显式列出变体而不是 `_`，给 `QueueEntry` 加新变体时这里才会编译失败。
             QueueEntry::Track { .. } => None,
         }) {
             Some(l) => l,
@@ -909,7 +910,7 @@ mod tests {
         }
     }
 
-    /// 刚开播：已播区是空的，当前就是第 0 行 —— 锚点不能取 `PLAYED_CONTEXT` 那个常数。
+    /// 刚开播时已播区是空的，当前就是第 0 行，锚点不能取 `PLAYED_CONTEXT` 那个常数。
     #[test]
     fn a_queue_that_just_started_anchors_on_row_zero() {
         let head = id("cur");

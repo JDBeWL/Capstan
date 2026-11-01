@@ -1,4 +1,4 @@
-//! 首页：最近播放快捷网格 + 横向滚动区块（你的歌单 / 为你推荐 / 热门专辑）+ 浏览入口。
+//! 首页由最近播放快捷网格、横向滚动区块与浏览入口组成。横向区块含你的歌单、为你推荐与热门专辑。
 //! 「最近播放」取自 [`crate::recents::Recents`]（跨重启），与队列面板的「已播放」不是同一份数据。
 
 use std::cell::RefCell;
@@ -10,7 +10,7 @@ use lyre_core::{AlbumGroup, TrackId};
 use crate::common::{anim, thousands};
 use crate::components::detail::{HeroInfo, hero_for};
 use crate::cover::{CoverCache, CoverCacheEvent};
-// `Scope` 必须显式导入：`platform::*` 里带着 `gpui::Scope<'_>`，靠 glob 引进来会撞名。
+// `Scope` 必须显式导入。`platform::*` 里带着 `gpui::Scope<'_>`，靠 glob 引进来会撞名。
 use crate::entities::{LibraryEntity, Scope};
 use crate::icon::Glyph;
 use crate::platform::*;
@@ -32,7 +32,7 @@ const PAD: f32 = theme::PAGE_PAD;
 const RECENT_MAX: usize = 8;
 const SECTION_MAX: usize = 12;
 
-/// 23 点后归入「夜深了」而不是「晚上好」；边界写错不会报错，只在某个时段说错话
+/// 23 点后归入「夜深了」而不是「晚上好」；边界写错不会报错，只在某个时段说错话。
 fn greeting(hour: u32) -> &'static str {
     match hour {
         5..=11 => "早上好",
@@ -53,7 +53,7 @@ fn greeting_hint(empty: bool, has_recents: bool) -> &'static str {
     } else if has_recents {
         "接着上次的继续，或者从下面挑一个"
     } else {
-        "曲库已经就绪 —— 从下面挑一个开始听"
+        "曲库已经就绪，从下面挑一个开始听"
     }
 }
 
@@ -62,7 +62,7 @@ pub struct HomeView {
     library: Entity<LibraryEntity>,
     covers: Entity<CoverCache>,
     /// 每个横向区块一条滚动状态。句柄必须活过这一帧，每帧新建的话偏移永远归零。
-    /// `RefCell` 而不是 `&mut self`：区块构造函数还要同时借 `self.library` 等字段。
+    /// `RefCell` 而不是 `&mut self`，区块构造函数还要同时借 `self.library` 等字段。
     rows: RefCell<HashMap<&'static str, ScrollHandle>>,
     /// 首页重型派生的缓存；只在曲库数据代次变化时重建。
     data: Option<HomeData>,
@@ -77,7 +77,7 @@ struct HomeData {
     recommended: Vec<RecentCard>,
     popular: Vec<RecentCard>,
     lists: Vec<(Scope, HeroInfo)>,
-    /// 当前页面显示会用到封面的曲目 / 图片文件 id；封面事件据此过滤。
+    /// 当前页面显示会用到封面的曲目与图片文件 id；封面事件据此过滤。
     cover_ids: HashSet<TrackId>,
 }
 
@@ -90,7 +90,7 @@ impl HomeView {
     ) -> Self {
         let observe_library = cx.observe(&library, |_, _, cx| cx.notify());
         let observe_shell = cx.observe(&shell, |_, _, cx| cx.notify());
-        // 不整体 observe 封面缓存：每张图解码完成都重绘整页会让分组与排序白跑。
+        // 不整体 observe 封面缓存，每张图解码完成都重绘整页会让分组与排序白跑。
         let on_cover = cx.subscribe(&covers, |this, _, event: &CoverCacheEvent, cx| {
             let relevant = match event {
                 CoverCacheEvent::Ready(key) => this
@@ -176,7 +176,7 @@ impl HomeView {
         App::update_entity(cx, &self.library, |library, _| library.albums())
     }
 
-    /// 「你的歌单」那一排，卡片数据复用详情页的 [`hero_for`]：两处口径必须是同一个函数。
+    /// 「你的歌单」那一排，卡片数据复用详情页的 [`hero_for`]，两处口径必须是同一个函数。
     /// 查不到的（歌单刚被删）整张卡不画。
     fn list_cards(&self, cx: &mut App) -> Vec<(Scope, HeroInfo)> {
         let scopes = App::update_entity(cx, &self.library, |library, _| library.list_scopes());
@@ -193,12 +193,12 @@ impl HomeView {
 
 impl Render for HomeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 横向区块的箭头要点完就重绘，所以拿的是本视图的句柄，不是 &mut self
+        // 横向区块的箭头要点完就重绘，所以拿的是本视图的句柄，不是 &mut self。
         let view = cx.entity();
         let loading = self.library.read(cx).loading();
         self.sync_data(cx);
         let Some(data) = self.data.as_ref() else {
-            // `sync_data` 刚刚填过；走到这里只可能是内部状态被破坏，宁可空白一帧也不 panic。
+            // `sync_data` 刚刚填充过；此处只可能是内部状态被破坏，宁可空白一帧也不 panic。
             return div().into_any_element();
         };
         let recents = data.recents.clone();
@@ -326,7 +326,7 @@ impl Render for HomeView {
         }
         page = page.child(hero);
 
-        // 区块编号按出现顺序从 01 起：最近播放为空时，下一个区块就是 01。
+        // 区块编号按出现顺序从 01 起。最近播放为空时，下一个区块就是 01。
         let mut section_no = 0usize;
 
         if !recents.is_empty() {
@@ -339,7 +339,7 @@ impl Render for HomeView {
                 section_title(section_no, "RECENT", "最近播放"),
             ));
             // gpui 0.3.8 没有 flex_wrap，手工分行；每行几张由可用宽度反推，
-            // 写死 4 会在刚进 Wide 断点时把第 4 张切掉
+            // 写死 4 会在刚进 Wide 断点时把第 4 张切掉。
             let grid_cols = grid_columns_in(self.shell.read(cx).center_width() - PAD * 2.0);
             let mut grid = div()
                 .flex_none()
@@ -496,8 +496,8 @@ impl Render for HomeView {
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：`crate::platform::*` 会把 gpui 的 `test` 过程宏
-    // 带进来遮蔽内置 `#[test]`，报递归上限
+    // 不写 `use super::*`，`crate::platform::*` 会把 gpui 的 `test` 过程宏
+    // 带进来遮蔽内置 `#[test]`，报递归上限。
     use super::sections::{RECENT_W, grid_columns_in};
     use super::{PAD, greeting, greeting_hint};
     use crate::shell::{ShellEntity, SidebarState};

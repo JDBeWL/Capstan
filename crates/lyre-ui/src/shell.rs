@@ -1,4 +1,4 @@
-//! 窗口外壳状态：主区区段、侧栏形态、右面板开合、网格列数。
+//! 窗口外壳状态，含主区区段、侧栏形态、右面板开合与网格列数。
 //! 窗口尺寸变化走 `Context::observe_window_bounds` 重算。
 
 mod layout;
@@ -36,12 +36,12 @@ pub struct ShellEntity {
     nav_history: Vec<(NavSection, Scope)>,
     /// 「后退」弹出的落点，供「前进」取用；任何新导航都会清空它。
     nav_forward: Vec<(NavSection, Scope)>,
-    /// 专辑网格每行几列，按可用宽度反推：卡宽由 `flex_1` 平分、封面高度恒定，钉死列数会拉扁卡片。
+    /// 专辑网格每行几列，按可用宽度反推。卡宽由 `flex_1` 平分、封面高度恒定，钉死列数会拉扁卡片。
     grid_columns: usize,
     /// 单卡宽度，与 `grid_columns` 同源算出（两者都出自 `grid_metrics`）。
     grid_card_width: f32,
     /// 窗口尺寸变化订阅。`observe_window_bounds` 不会立刻回调一次，
-    /// 所以初值仍必须由 `new()` 自己播种。
+    /// 因此初值仍需由 `new()` 自行播种。
     _bounds: Subscription,
 }
 
@@ -129,7 +129,7 @@ impl ShellEntity {
         }
     }
 
-    /// 启动时应用落盘偏好，只在这一次生效：运行中回读它，手动收起就变成「关不掉」。
+    /// 启动时应用落盘偏好，只在这一次生效。运行中回读它，手动收起就变成「关不掉」。
     /// 断点仍压过偏好，窄窗口不许硬撑展开。
     pub fn apply_settings(&mut self, settings: &crate::settings::Settings, cx: &mut Context<Self>) {
         self.set_density(settings.density, cx);

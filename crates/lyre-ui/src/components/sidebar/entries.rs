@@ -1,5 +1,5 @@
 //! 侧栏列表的条目模型与一行的渲染。
-//! 条目的身份 [`SideEntry::key`] 与标题分开：专辑、艺术家、歌单都允许重名。
+//! 条目的身份 [`SideEntry::key`] 与标题分开，因为专辑、艺术家、歌单都允许重名。
 
 use std::path::PathBuf;
 
@@ -7,7 +7,7 @@ use lyre_core::{AlbumGroup, ArtistGroup, TrackId};
 
 use crate::common::{thousands, tooltip};
 use crate::cover::CoverCache;
-// `Scope` 要显式导入：`platform::*` 带着 `gpui::Scope<'_>`，靠 glob 引进来会撞名。
+// `Scope` 要显式导入。`platform::*` 带着 `gpui::Scope<'_>`，靠 glob 引进来会撞名。
 use crate::entities::{CollectionSummary, LibraryEntity, Scope};
 use crate::icon::{Glyph, icon, icon_inherit};
 use crate::platform::*;
@@ -29,51 +29,51 @@ pub(super) enum Listing {
     Collections,
 }
 
-/// 主区在 `nav` 时侧栏该列什么：`Albums` 列专辑，其余区段（含 `Tracks`）都列艺术家。
+/// 主区在 `nav` 时侧栏该列什么。`Albums` 列专辑，其余区段（含 `Tracks`）都列艺术家。
 pub(super) fn listing_for(nav: NavSection) -> Listing {
     match nav {
         NavSection::Albums => Listing::Albums,
         NavSection::Home | NavSection::Tracks | NavSection::Artists | NavSection::Search => {
             Listing::Artists
         }
-        // 设置页不参与目录粒度
+        // 设置页不参与目录粒度。
         NavSection::Settings => Listing::Artists,
     }
 }
 
-/// 侧栏列表里的一行 —— 专辑、艺术家、歌单或收藏。
+/// 侧栏列表里的一行，即专辑、艺术家、歌单或收藏。
 #[derive(Clone)]
 pub(super) struct SideEntry {
-    /// 行的稳定标识，用作元素 id 与 group 名。不能用标题：专辑、艺术家、歌单都可能重名，
+    /// 行的稳定标识，用作元素 id 与 group 名。不能用标题。专辑、艺术家、歌单都可能重名，
     /// 撞了 id 的两行会共享悬停态。
     key: String,
     /// 用来「播这一行」的代表曲目。空歌单没有，此时不画播放键。
     pub(super) id: Option<lyre_core::TrackId>,
-    /// 歌单封面那一格的代表曲目：第一个带内嵌封面的成员，而不是第一首。
+    /// 歌单封面那一格的代表曲目。第一个带内嵌封面的成员，而不是第一首。
     pub(super) cover_id: Option<lyre_core::TrackId>,
     /// 用户为这个歌单指定的封面文件，优先级高于内嵌封面。
     pub(super) cover_file: Option<PathBuf>,
     pub(super) title: String,
-    /// 副标题：专辑给艺术家，艺术家给「N 张专辑」。
+    /// 副标题。专辑给艺术家，艺术家给「N 张专辑」。
     subtitle: String,
     /// 进入时用哪个作用域（专辑名或艺术家名）。主区显示什么不由它决定：
     /// [`crate::shell::enter_scope`] 一律切到曲库页，`AlbumGrid` 不读 `Scope`。
     pub(super) scope: SideScope,
 }
 
-/// 点一行之后收窄到哪种作用域。歌单带 id 而不是名字：名字可以重复也可以被改。
+/// 点一行之后收窄到哪种作用域。歌单带 id 而不是名字，名字可以重复也可以被改。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum SideScope {
     Album,
     Artist,
     Collection(lyre_core::CollectionId),
     Favorites,
-    /// 「+ 新建歌单」那一行，点了不收窄作用域，而是建一个再进去
+    /// 「+ 新建歌单」那一行，点了不收窄作用域，而是建一个再进去。
     NewCollection,
 }
 
 impl SideScope {
-    /// 这一行进的是哪个作用域。专辑 / 艺术家的名字从行标题来，歌单从 id 来。
+    /// 这一行进的是哪个作用域。专辑与艺术家的名字从行标题来，歌单从 id 来。
     pub(super) fn scope_of(self, title: &str) -> Option<Scope> {
         match self {
             Self::Album => Some(Scope::Album(title.to_owned())),
@@ -118,7 +118,7 @@ impl SideEntry {
 }
 
 impl SideEntry {
-    /// 「我喜欢的音乐」那一行。排在歌单列表最前，没有删除入口 —— 成员由爱心决定。
+    /// 「我喜欢的音乐」那一行。排在歌单列表最前，没有删除入口。成员由爱心决定。
     fn favorites(count: usize) -> Self {
         Self {
             key: "favorites".to_owned(),
@@ -168,7 +168,7 @@ impl Sidebar {
                 let groups = App::update_entity(cx, &self.library, |library, _| library.albums());
                 groups.iter().map(SideEntry::from_album).collect()
             }
-            // 数字与封面按当前曲库里真的还有哪几首算，不是歌单自己的成员表。
+            // 数字与封面按当前曲库中实际留存的曲目计算，而非歌单自身的成员表。
             Listing::Collections => {
                 let (liked, lists) = App::update_entity(cx, &self.library, |library, _| {
                     let liked = library.liked_count();
@@ -206,8 +206,8 @@ pub(super) fn lib_row(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    // 判据只有「作用域标签等于这一行标题，且种类对得上」—— 不掺 `nav_section`：
-    // 同名的专辑和艺术家不是同一个东西。喇叭另算：正在浏览不等于正在播放。
+    // 判据只有「作用域标签等于这一行标题，且种类对得上」，不掺 `nav_section`：
+    // 同名的专辑和艺术家不是同一个东西。喇叭另算，正在浏览不等于正在播放。
     let row_scope = entry.scope.scope_of(&entry.title);
     let (selected, playing) = App::update_entity(cx, &library, |library, _| {
         let scope = library.scope();
@@ -240,7 +240,7 @@ pub(super) fn lib_row(
         .relative()
         .flex_none()
         .h(px(LIB_ROW_H))
-        // `w_full` + `min_w_0` 缺一不可：`uniform_list` 的行默认按内容定宽，
+        // `w_full` + `min_w_0` 缺一不可。`uniform_list` 的行默认按内容定宽，
         // 长标题会把行顶宽、不截断，底色也铺不满整行。
         .w_full()
         .min_w_0()
@@ -279,7 +279,7 @@ pub(super) fn lib_row(
                 })
                 .opacity(hover),
         )
-        // 非选中行落一道 3px 墨条
+        // 非选中行落一道 3px 墨条。
         .when(!selected, |row| {
             row.child(
                 div()
@@ -300,7 +300,7 @@ pub(super) fn lib_row(
         .on_click({
             let entry = entry.clone();
             move |_, _, cx| {
-                // 「新建」那一行先建出来再进去，名字带序号 —— 否则连着点会出一排同名，侧栏分不清
+                // 「新建」那一行先建出来再进去，名字带序号；否则连着点会出一排同名，侧栏分不清。
                 let scope = entry.scope.scope_of(&entry.title).or_else(|| {
                     library.update(cx, |library, cx| {
                         let name = format!("新歌单 {}", library.collections().len() + 1);
@@ -373,7 +373,7 @@ pub(super) fn lib_row(
                 .child(icon_inherit(Glyph::VolumeHigh, 14.)),
         );
     } else if let Some(id) = entry.id {
-        // 选中只代表正在看这一组，播放键仍然要能起播
+        // 选中只代表正在看这一组，播放键仍然要能起播。
         row = row.child(row_play_button(
             group,
             id,
@@ -383,7 +383,7 @@ pub(super) fn lib_row(
         ));
     }
 
-    // 只有自建歌单有右键菜单：收藏不能改名也不能删（成员由爱心决定），
+    // 只有自建歌单有右键菜单。收藏不能改名也不能删（成员由爱心决定），
     // 「新建歌单」那一行更是没有可操作的对象。
     match row_scope {
         SideScope::Collection(id) => row
@@ -393,7 +393,7 @@ pub(super) fn lib_row(
     }
 }
 
-/// 行尾的悬浮播放键：常驻占位，靠 `group_hover` 改透明度显隐。
+/// 行尾的悬浮播放键。常驻占位，靠 `group_hover` 改透明度显隐。
 /// 它嵌在「点开分组」的整行里，必须阻断冒泡，否则一次点击同时播放并跳详情。
 fn row_play_button(
     group: SharedString,
@@ -402,7 +402,7 @@ fn row_play_button(
     title: &str,
     library: Entity<LibraryEntity>,
 ) -> AnyElement {
-    // 起播前把队列换成这一组：当前队列可能停在别的专辑 / 艺术家，直接 `activate` 会跳不进去。
+    // 起播前把队列换成这一组。当前队列可能停在别的专辑与艺术家，直接 `activate` 会跳不进去。
     let play_title = title.to_owned();
     div()
         .id(SharedString::from(format!("side-play-{}", id.0)))

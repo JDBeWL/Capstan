@@ -1,6 +1,6 @@
-//! 按**内容**（不是扩展名）挑解码器：`MAC ` → `ape-decoder`、`wvpk` → `oxideav-wavpack`、
+//! 按**内容**（不是扩展名）挑解码器，如 `MAC ` → `ape-decoder`、`wvpk` → `oxideav-wavpack`、
 //! `OggS` + `OpusHead` → `opus-pure`，ASF（WMA）拒绝，其余交给 symphonia。
-//! 判扩展名不够：改了名的 APE 会被 symphonia 的 MPEG 探测当成 MP3 帧同步，放出满刻度噪声。
+//! 判扩展名不够。改了名的 APE 会被 symphonia 的 MPEG 探测当成 MP3 帧同步，放出满刻度噪声。
 
 use std::fs::File;
 use std::io::Read;

@@ -1,4 +1,4 @@
-//! 生成带标签的测试音频看真实数据下的排版：极短真 WAV（100ms 静音）+ `ID3v2` 标签。
+//! 生成带标签的测试音频看真实数据下的排版，极短真 WAV（100ms 静音）+ `ID3v2` 标签。
 //! RIFF INFO 的 ASCII 限制会吞掉中文标题，所以用 `ID3v2`。一次性开发脚本，刻意允许 unwrap。
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -6,7 +6,7 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-/// 采样率，够小就行 —— 这些文件不会被真正播放。
+/// 采样率，够小就行。这些文件不会被真正播放。
 const SAMPLE_RATE: u32 = 8000;
 /// 时长（毫秒），只要短到让文件是个合法 WAV。
 const DURATION_MS: u32 = 100;
@@ -17,7 +17,7 @@ struct Album {
     tracks: &'static [&'static str],
 }
 
-/// 故意包含长名字、多艺术家专辑、同名专辑 —— 布局的边界情况全在这些地方。
+/// 故意包含长名字、多艺术家专辑、同名专辑。布局的边界情况全在这些地方。
 const LIBRARY: &[Album] = &[
     Album {
         title: "城市漫游",

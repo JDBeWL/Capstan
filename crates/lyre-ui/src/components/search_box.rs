@@ -7,13 +7,13 @@ use crate::entities::LibraryEntity;
 use crate::platform::*;
 use crate::theme;
 
-/// 攒 120ms 再提交：低于 80ms 等于没防抖，高于 200ms 列表明显迟钝。
+/// 攒 120ms 再提交。低于 80ms 等于没防抖，高于 200ms 列表明显迟钝。
 const DEBOUNCE: Duration = Duration::from_millis(120);
 
 #[derive(Clone, Copy, Debug)]
 pub enum SearchBoxEvent {
-    /// 用户开始打字：主区可能停在任意一页，靠这个事件把用户带到能看见结果的那页。
-    /// 不带载荷：查询词只存在 `LibraryEntity::query` 里。
+    /// 用户开始打字。主区可能停在任意一页，靠这个事件把用户带到能看见结果的那页。
+    /// 不带载荷，查询词只存在 `LibraryEntity::query` 里。
     Typing,
     /// 框获得焦点。点它就该切到搜索页，否则点了界面没反应。
     Focused,
@@ -59,7 +59,7 @@ impl SearchBox {
     }
 
     /// 别处把查询词清掉后框里要跟上，否则留着的是一个已经不存在的过滤。
-    /// 只镜像不是我们提交的那份：防抖的 120ms 里用户可能又打了字，旧值盖掉新值等于吃掉 keystroke。
+    /// 只镜像不是我们提交的那份。防抖的 120ms 里用户可能又打了字，旧值盖掉新值等于吃掉 keystroke。
     fn mirror_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let query = self.library.read(cx).query().to_string();
         if query == self.submitted {
@@ -130,7 +130,7 @@ fn on_input_event(
 ) {
     match event {
         InputEvent::Change => {
-            // 顺序有意义：切页要立刻发生，查询提交走 120ms 防抖；反过来切页会晚 120ms。
+            // 顺序有意义。切页要立刻发生，查询提交走 120ms 防抖；反过来切页会晚 120ms。
             cx.emit(SearchBoxEvent::Typing);
             this.schedule_submit(cx);
         }
@@ -168,7 +168,7 @@ impl Render for SearchBox {
         let mut root = div()
             .flex_none()
             .relative()
-            // 跟着顶栏的中组收缩，`SEARCH_W` 只是上限：定宽会在窄窗口里把窗口控件挤出边界。
+            // 跟着顶栏的中组收缩，`SEARCH_W` 只是上限，定宽会在窄窗口里把窗口控件挤出边界。
             .w_full()
             .max_w(px(theme::SEARCH_W))
             .h(px(theme::SEARCH_H))
@@ -187,7 +187,7 @@ impl Render for SearchBox {
                     input.update(cx, |input, cx| input.focus(window, cx));
                 }
             })
-            // `//` 前缀：字段语言的一部分，不额外占一个图标
+            // `//` 前缀。字段语言的一部分，不额外占一个图标。
             .child(
                 div()
                     .flex_none()
@@ -243,7 +243,7 @@ impl Render for SearchBox {
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：`platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
+    // 不写 `use super::*`，`platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
 
     /// 两套主题下，组件库 `Input` 的文字色都要读过搜索框底色。
     /// 文字色来自组件库全局态而不是 `crate::theme`，两边的明暗必须一起切。

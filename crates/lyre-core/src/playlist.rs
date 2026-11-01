@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::track::{Track, TrackId};
 
-/// 大小写不敏感比较，不分配（`to_lowercase()` 会让每次比较都新建 String）。
+/// 大小写不敏感比较，且不分配内存；`to_lowercase()` 会让每次比较都新建 String。
 fn cmp_ci(a: &str, b: &str) -> Ordering {
     a.chars()
         .flat_map(char::to_lowercase)
@@ -72,7 +72,7 @@ impl PlayMode {
     }
 }
 
-/// 曲库排序键。排序重排曲库本体而不是只改投影：用户期待「下一曲」按新键走。
+/// 曲库排序键。排序重排曲库本体而不是只改投影，用户期待「下一曲」按新键走。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SortKey {
     #[default]
@@ -103,14 +103,14 @@ impl SortKey {
     }
 }
 
-/// 队列推进的结论：只回答「该去哪」，不真的去播。
+/// 队列推进的结论。只回答「该去哪」，不真的去播。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Advance {
-    /// 前进到播放顺序中的第 n 个位置
+    /// 前进到播放顺序中的第 n 个位置。
     To(usize),
-    /// 回到当前曲目的开头
+    /// 回到当前曲目的开头。
     Restart,
-    /// 队列到头了，停下
+    /// 队列已到末尾，停止。
     Stop,
 }
 
@@ -121,20 +121,20 @@ pub struct Playlist {
     #[serde(skip)]
     index: HashMap<TrackId, usize>,
     order: Vec<TrackId>,
-    /// 在 `order` 中的位置
+    /// 在 `order` 中的位置。
     pos: usize,
     mode: PlayMode,
     /// 队列走到末尾要不要绕回开头。见 [`Self::set_wrap_at_end`]。
     #[serde(skip)]
     wrap_at_end: bool,
-    /// 原始导入顺序，用于切回 `SortKey::ImportOrder`
+    /// 原始导入顺序，用于切回 `SortKey::ImportOrder`。
     import_seq: Vec<TrackId>,
     sort: SortKey,
-    /// 播放队列：`None` = 整个曲库。有值时是「从某个列表开始播放」那批 id，按那个列表的显示顺序，
+    /// 播放队列。`None` = 整个曲库。有值时是「从某个列表开始播放」那批 id，按那个列表的显示顺序，
     /// 只决定 `order` 的成分，不动 `tracks`。
     #[serde(skip)]
     queue: Option<Vec<TrackId>>,
-    /// 队列结构或游标的代次：队列面板据此缓存行模型，避免每次重绘都全量取曲目。
+    /// 队列结构或游标的代次。队列面板据此缓存行模型，避免每次重绘都全量取曲目。
     #[serde(skip)]
     revision: u64,
 }
@@ -181,7 +181,7 @@ impl Playlist {
         self.index.get(&id).map(|i| &self.tracks[*i])
     }
 
-    /// 按导入顺序给出曲目，落盘用它而不是 `tracks()`：排序是视图状态，混着用会回不去导入顺序。
+    /// 按导入顺序给出曲目，落盘用它而不是 `tracks()`。排序是视图状态，混着用会回不去导入顺序。
     pub fn in_import_order(&self) -> impl Iterator<Item = &Track> {
         self.import_seq.iter().filter_map(|id| self.by_id(*id))
     }
@@ -190,7 +190,7 @@ impl Playlist {
         self.index.get(&id).copied()
     }
 
-    /// 当前曲目在曲库中的下标（不是 order 里的位置）。
+    /// 当前曲目在曲库中的下标，而非 `order` 里的位置。
     pub fn current_index(&self) -> Option<usize> {
         let id = self.order.get(self.pos)?;
         self.index.get(id).copied()
@@ -210,7 +210,7 @@ impl Playlist {
         self.order.get(n).and_then(|id| self.by_id(*id))
     }
 
-    /// 并入曲目，返回新增的数量。同 id（同路径）不重复入库，但会用刚读到的标签原地替换旧条目：
+    /// 并入曲目，返回新增的数量。同一 id 即同一路径不重复入库，但会用刚读到的标签原地替换旧条目：
     /// 曲库落盘之后，「重新导入这个文件夹」就是刷新标签的唯一入口。替换不动位置。
     ///
     /// 手改过的字段不参与替换，见 [`Track::keep_manual`]。
@@ -224,7 +224,7 @@ impl Playlist {
                 self.tracks[index] = track;
             } else {
                 self.index.insert(track.id, self.tracks.len());
-                // 队列已定时新导入的曲目不进队列：队列是「从某个列表开始播」时定下的那批
+                // 队列已定时新导入的曲目不进队列，队列是「从某个列表开始播」时定下的那批。
                 if self.queue.is_none() {
                     self.order.push(track.id);
                 }
@@ -237,7 +237,7 @@ impl Playlist {
             self.touch();
         }
         if self.sort != SortKey::ImportOrder {
-            // 否则新歌全堆在末尾、刷新过标签的旧歌还停在原位，列表看着就没排过序
+            // 否则新歌全堆在末尾、刷新过标签的旧歌还停在原位，列表看着就没排过序。
             self.apply_sort();
         }
         added
@@ -273,7 +273,7 @@ impl Playlist {
         self.apply_sort();
     }
 
-    /// 随机模式不重洗（保留现存 id 的相对序，新 id 追加末尾）；`pos` 跟着曲目 id 而非下标走。
+    /// 随机模式不重洗，保留现存 id 的相对序，新 id 追加末尾；`pos` 跟随曲目 id 而非下标。
     fn apply_sort(&mut self) {
         if self.sort == SortKey::ImportOrder {
             // 临时表把 position 查找从 O(n²) 压到 O(n)
@@ -293,7 +293,7 @@ impl Playlist {
         self.reindex();
         let current = self.current_id();
 
-        // 队列已定时排序只影响 `tracks`，队列的成分与相对序不动 —— 之后改排序不该重排正在听的东西。
+        // 队列已定时排序只影响 `tracks`，队列的成分与相对序不动。之后改排序不该重排正在听的东西。
         let wanted = self.queue_ids();
         self.order = if self.mode.is_shuffle() {
             let allowed: HashSet<TrackId> = wanted.iter().copied().collect();
@@ -332,7 +332,7 @@ impl Playlist {
         }
     }
 
-    /// 直接跳到某一首（按 id）。返回是否找到。
+    /// 直接跳到某一首，按 id 查找。返回是否找到。
     pub fn jump_to(&mut self, id: TrackId) -> bool {
         match self.order.iter().position(|x| *x == id) {
             Some(n) => {
@@ -373,7 +373,7 @@ impl Playlist {
         true
     }
 
-    /// 撤销移除。同时插入 `tracks` 与 `order`（顺序模式的不变量是两者同序），
+    /// 撤销移除。同时插入 `tracks` 与 `order`；顺序模式的不变量是两者同序，
     /// 已存在同 id 返回 `false`。随机模式下只能大致还原到列表原处。
     pub fn insert_at(&mut self, track: Track, index: usize) -> bool {
         if self.index.contains_key(&track.id) {
@@ -387,14 +387,14 @@ impl Playlist {
         self.reindex();
 
         let id = self.tracks[track_index].id;
-        // 否则「撤销移除 → 切回导入顺序」会把它排到最后
+        // 否则「撤销移除 → 切回导入顺序」会把它排到最后。
         self.import_seq
             .insert(track_index.min(self.import_seq.len()), id);
-        // 队列已定时不进 `order`：队列是「从某个列表开始播」时定下的那批，回插一首不该
-        // 插进正在听的队列（曲库视图里队列是 `None`，撤销移除照旧回到播放顺序里）。
+        // 队列已定时不进 `order`。队列是「从某个列表开始播」时定下的那批，回插一首不该
+        // 插入正在播放的队列。曲库视图里队列为 `None`，撤销移除仍回到播放顺序。
         if self.queue.is_none() {
             self.order.insert(order_index, id);
-            // 插在光标前要把光标顶后一格，否则它指向另一首
+            // 插在光标前要把光标顶后一格，否则它指向另一首。
             if order_index < self.pos {
                 self.pos += 1;
             }
@@ -406,7 +406,7 @@ impl Playlist {
         true
     }
 
-    /// 整批回插，撤销「清空」用。追加语义：撤销时曲库本来就是空的；重复 id 跳过并保持原位。
+    /// 整批回插，撤销「清空」用。追加语义。撤销时曲库本来就是空的；重复 id 跳过并保持原位。
     pub fn restore_all(&mut self, incoming: Vec<Track>) -> usize {
         let mut restored = 0usize;
         for track in incoming {
@@ -431,7 +431,7 @@ impl Playlist {
         restored
     }
 
-    /// 列表循环这条轴单独传：四态枚举装不下「随机 + 列表循环」，折成 `Shuffle` 后走到末尾只会停。
+    /// 列表循环这条轴单独传。四态枚举装不下「随机 + 列表循环」，折成 `Shuffle` 后走到末尾只会停。
     pub fn set_wrap_at_end(&mut self, wrap: bool) {
         self.wrap_at_end = wrap;
     }
@@ -444,8 +444,8 @@ impl Playlist {
         self.rebuild_order(seed);
     }
 
-    /// 把播放队列定为这批曲目（按给定顺序）；`None` 恢复成整个曲库。
-    /// 不存在的 id 丢掉，重复的只留第一次 —— 队列可以由界面直接把可见行喂进来。
+    /// 把播放队列定为这批曲目，按给定顺序；`None` 恢复为整个曲库。
+    /// 不存在的 id 丢弃，重复的仅保留第一次；队列可由界面直接以可见行填充。
     pub fn set_queue(&mut self, ids: Option<Vec<TrackId>>, seed: u64) {
         self.queue = ids.map(|ids| {
             let mut already_seen = HashSet::with_capacity(ids.len());
@@ -461,7 +461,7 @@ impl Playlist {
         self.queue.as_deref()
     }
 
-    /// `order` 由哪些曲目组成：有队列用队列，否则整库。队列里的 id 仍要按 `index` 再过滤一次。
+    /// `order` 由哪些曲目组成。有队列用队列，否则整库。队列里的 id 仍要按 `index` 再过滤一次。
     fn queue_ids(&self) -> Vec<TrackId> {
         match &self.queue {
             Some(ids) => ids
@@ -488,7 +488,7 @@ impl Playlist {
             }
             self.pos = 0;
         } else {
-            // 光标跟着当前曲目走，切模式不打断正在播的歌
+            // 光标跟着当前曲目走，切模式不打断正在播的歌。
             self.pos = current
                 .and_then(|id| self.order.iter().position(|x| *x == id))
                 .unwrap_or(0);
@@ -496,7 +496,7 @@ impl Playlist {
         self.touch();
     }
 
-    /// 用户点了「下一曲」。播不出来的曲目照常留在曲库与列表里（界面置灰），队列不在其上停留 ——
+    /// 用户点了「下一曲」。播不出来的曲目照常留在曲库与列表中，界面置灰；队列不在其上停留，
     /// 否则「下一曲」只会换来一次「格式不支持」的报错。整队都播不了时按走到头处理。
     #[allow(clippy::should_implement_trait)] // 不是迭代器：它会按循环档位绕回开头，也会在末尾停下
     pub fn next(&mut self) -> Advance {
@@ -506,7 +506,7 @@ impl Playlist {
         let wrap = self.mode == PlayMode::RepeatAll || self.wrap_at_end;
         let mut n = self.pos;
 
-        // 最多走一圈：走满还没碰到能播的，就是整队都播不了
+        // 最多走一圈。走满还没碰到能播的，就是整队都播不了。
         for _ in 0..self.order.len() {
             if n + 1 < self.order.len() {
                 n += 1;
@@ -558,13 +558,13 @@ impl Playlist {
         Advance::Restart
     }
 
-    /// 播放顺序第 `n` 位能不能播。位置越界（理论上不该发生）当作能播 ——
-    /// 一个悬空下标不该把整条队列卡死。
+    /// 播放顺序第 `n` 位能否播放。位置越界理论上不该发生，此时按可播放处理：
+    /// 悬空下标不应卡死整条队列。
     fn playable_at(&self, n: usize) -> bool {
         self.track_at_order(n).is_none_or(Track::is_playable)
     }
 
-    /// 一首歌自然播完：与 [`Playlist::next`] 的区别是单曲循环只在此时回头重播。
+    /// 一首歌自然播完，与 [`Playlist::next`] 的区别是单曲循环只在此时回头重播。
     pub fn on_track_ended(&mut self) -> Advance {
         if self.mode == PlayMode::RepeatOne && !self.order.is_empty() {
             Advance::Restart
@@ -575,7 +575,7 @@ impl Playlist {
 }
 
 fn shuffle(ids: &mut [TrackId], seed: u64) {
-    // xorshift64：不要密码学强度，但同 seed 必须同结果
+    // xorshift64。不要密码学强度，但同 seed 必须同结果。
     let mut state = seed | 1; // 状态不能为 0
     for i in (1..ids.len()).rev() {
         state ^= state << 13;
@@ -602,7 +602,7 @@ mod tests {
         track_ext(n, "flac")
     }
 
-    /// 引擎放不出来的一首：`.wma` 没有解码实现。
+    /// 引擎放不出来的一首，`.wma` 没有解码实现。
     fn unplayable(n: usize) -> Track {
         track_ext(n, "wma")
     }
@@ -635,7 +635,7 @@ mod tests {
         assert_eq!(p.track_at_order(2).unwrap().title, "charlie");
     }
 
-    /// 重导只刷新标签（`added == 0`）时也要重排，否则改过名的歌还停在旧位置。
+    /// 重导只刷新标签时，即 `added == 0`，也要重排，否则改过名的曲目仍停在旧位置。
     #[test]
     fn reimport_that_only_refreshes_tags_still_resorts() {
         let mut p = Playlist::new();
@@ -701,7 +701,7 @@ mod tests {
 
         p.sort_by(SortKey::Title);
 
-        // 比的是相对次序而非绝对位置：曲库次序变了，新出现的 id 会追加到末尾
+        // 比的是相对次序而非绝对位置。曲库次序变了，新出现的 id 会追加到末尾。
         let after: Vec<TrackId> = p.order().to_vec();
         let relative = |ids: &[TrackId]| {
             let mut v: Vec<TrackId> = ids.to_vec();
@@ -817,7 +817,7 @@ mod tests {
         assert_eq!(p.current().unwrap().id, track(4).id);
     }
 
-    /// 整队都播不了不能原地打转，也不能假装播得了 —— 一律当成走到头。
+    /// 整队都播不了不能原地打转，也不能假装播得了。一律当成走到头。
     #[test]
     fn an_entirely_unplayable_queue_stops_instead_of_spinning() {
         let mut p = Playlist::new();
@@ -826,14 +826,14 @@ mod tests {
         assert_eq!(p.next(), Advance::Stop, "顺序模式");
         assert_eq!(p.prev(), Advance::Restart, "往回走按既有约定重播当前");
 
-        // 循环档位也不能让它绕圈：绕一圈还是全播不了
+        // 循环档位也不能让它绕圈，绕一圈还是全播不了。
         p.set_mode(PlayMode::RepeatAll, 1);
         assert_eq!(p.next(), Advance::Stop, "列表循环下同样应当停下");
         p.set_mode(PlayMode::RepeatOne, 1);
         assert_eq!(p.next(), Advance::Stop, "单曲循环下手动切歌同样应当停下");
     }
 
-    /// 循环模式下绕一圈能回到当前这首时，就该继续播它 —— 它是队列里唯一能播的。
+    /// 循环模式下绕一圈能回到当前这首时，就该继续播它。它是队列里唯一能播的。
     #[test]
     fn wrapping_back_to_the_only_playable_track_keeps_playing() {
         let mut p = Playlist::new();
@@ -853,7 +853,7 @@ mod tests {
         assert_eq!(p.on_track_ended(), Advance::To(2));
         assert_eq!(p.current().unwrap().id, track(2).id);
 
-        // 单曲循环只在「播完的是能播的那首」时才原地重播
+        // 单曲循环只在「播完的是能播的那首」时才原地重播。
         p.set_mode(PlayMode::RepeatOne, 1);
         assert_eq!(p.on_track_ended(), Advance::Restart);
     }
@@ -862,7 +862,7 @@ mod tests {
     #[test]
     fn skipping_never_escapes_a_pinned_queue() {
         let mut p = Playlist::new();
-        // `set_queue` 会丢掉库里没有的 id，队列成员必须先真的在曲库里
+        // `set_queue` 会丢掉库里没有的 id，队列成员必须先真的在曲库里。
         p.push([track(0), unplayable(1), track(2)]);
         p.set_queue(Some(vec![track(0).id, unplayable(1).id]), 7);
         assert_eq!(p.order().len(), 2, "先确认队列真的有两首");
@@ -874,7 +874,7 @@ mod tests {
         );
     }
 
-    /// 光标落在播不了的曲目上时（比如刚导入、`pos` 还在 0），下一曲仍要一路找到能播的那首。
+    /// 光标落在播不了的曲目上时，如刚导入且 `pos` 仍为 0，下一曲仍需一路找到能播放的那首。
     #[test]
     fn a_cursor_sitting_on_an_unplayable_track_can_still_move_on() {
         let mut p = Playlist::new();
@@ -1023,7 +1023,7 @@ mod tests {
         assert_eq!(p.len(), 3);
     }
 
-    /// 重读标签会原地替换条目，但手改过的那几项不能被抹掉 ——
+    /// 重读标签会原地替换条目，但手改过的那几项不能被抹掉。
     /// 否则每跑一次重扫，用户改的名字就被磁盘上的旧标签顶回去一次。
     #[test]
     fn 手改过的字段逃得过重读标签() {
@@ -1041,7 +1041,7 @@ mod tests {
         let mut p = Playlist::new();
         p.push([manual]);
 
-        // 磁盘上读回来的这一版：三个字段都来自标签，且都和手改的不一样
+        // 磁盘上读回来的这一版。三个字段都来自标签，且都和手改的不一样。
         let mut fresh = track(1);
         fresh.title = "文件里的标题".to_owned();
         fresh.artist = Some("文件里的歌手".to_owned());
@@ -1058,7 +1058,7 @@ mod tests {
         assert_eq!(kept.title, "我改过的标题", "手改的标题被覆盖了");
         assert_eq!(kept.artist.as_deref(), Some("我改过的歌手"));
         assert_eq!(kept.sources.title, FieldSource::Manual);
-        // 没手改过的那一项照常跟着文件走
+        // 没手改过的那一项照常跟着文件走。
         assert_eq!(kept.album.as_deref(), Some("文件里的专辑"));
         assert_eq!(kept.sources.album, FieldSource::Tag);
     }
@@ -1209,11 +1209,11 @@ mod tests {
         assert_eq!(
             p.current_id(),
             Some(track(0).id),
-            "队列光标在导入完成时就非空 —— 这正是它不能当「正在播放」用的原因"
+            "队列光标在导入完成时就非空。这正是它不能当「正在播放」用的原因"
         );
     }
 
-    /// 队列面板按代次缓存行模型：只有结构 / 游标变化才前进，刷新标签不该让它白重建。
+    /// 队列面板按代次缓存行模型。只有结构与游标变化才前进，刷新标签不该让它白重建。
     #[test]
     fn revision_advances_on_queue_mutations_not_on_label_refresh() {
         let mut p = playlist(3);
@@ -1258,7 +1258,7 @@ mod tests {
         );
     }
 
-    /// `None` 把队列还原成整库 —— 在曲库视图（无作用域、无搜索词）里点歌走的就是这条。
+    /// `None` 把队列还原为整库。在曲库视图中点歌走的就是这条，此时无作用域、无搜索词。
     #[test]
     fn clearing_the_queue_brings_the_whole_library_back() {
         let mut p = playlist(5);
@@ -1273,7 +1273,7 @@ mod tests {
         );
     }
 
-    /// 界面直接把可见行喂进来，不该为「这批 id 一定干净」负责：不存在的丢掉，重复的只留第一次。
+    /// 界面直接以可见行填充，不应对「这批 id 必然有效」负责。不存在的丢弃，重复的仅保留第一次。
     #[test]
     fn a_queue_silently_drops_unknown_and_duplicate_ids() {
         let mut p = playlist(3);

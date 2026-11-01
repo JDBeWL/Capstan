@@ -1,5 +1,5 @@
-//! 底部控制栏：三列网格 —— 左曲目身份 / 中运输 + 进度 / 右模式 · 音量 · 队列。
-//! 左右两栏是显式宽度：左 16→240 随窗口连续变化，右固定 320。
+//! 底部控制栏分三列，左列曲目身份，中列运输与进度，右列模式、音量与队列。
+//! 左右两栏是显式宽度。左 16→240 随窗口连续变化，右固定 320。
 //! 窄于 `STACKED_BOTTOM_MIN`（640px）时改两行，进度条独占一行。
 
 use crate::components::mini_now_playing::MiniNowPlaying;
@@ -40,7 +40,7 @@ impl BottomBar {
         // 模式按钮的图标跟着模式变，所以要 observe 曲库（低频，可接受）
         let library_sub = cx.observe(&library, |_, _, cx| cx.notify());
         let shell_sub = cx.observe(&shell, |_, _, cx| cx.notify());
-        // 设备列表只在插拔或切换时变；subscribe 而不是 observe，免得被 10Hz 的进度通知带着重绘
+        // 设备列表只在插拔或切换时变；subscribe 而不是 observe，免得被 10Hz 的进度通知带着重绘。
         let device_sub = cx.subscribe(&playback, |_, _, event: &PlaybackEvent, cx| {
             if matches!(event, PlaybackEvent::DevicesChanged) {
                 cx.notify();
@@ -69,7 +69,7 @@ fn mark_if(selected: bool, text: &str) -> String {
     }
 }
 
-/// 设备菜单。列表在展开这一刻才读：插拔随时会改它，预造一份只会显示过期数据。
+/// 设备菜单。列表在展开这一刻才读。插拔随时会改它，预造一份只会显示过期数据。
 fn device_menu(
     mut menu: PopupMenu,
     playback: &Entity<PlaybackEntity>,
@@ -97,7 +97,7 @@ fn device_menu(
     }
 
     for device in devices {
-        // 跟随默认时那一台就是当前生效的设备；显式选定过则只勾选中的那台
+        // 跟随默认时那一台就是当前生效的设备；显式选定过则只勾选中的那台。
         let selected = match &current {
             Some(id) => *id == device.id,
             None => device.is_default,
@@ -146,10 +146,10 @@ impl Render for BottomBar {
             .border_t_1()
             .border_color(theme::border());
 
-        // 曲库为空时三个控件仍常驻、只降级为禁用态：整栏消失会让布局跳动。
+        // 曲库为空时三个控件仍常驻、只降级为禁用态，整栏消失会让布局跳动。
         let enabled = count > 0;
 
-        // 随机 / 循环按钮由 `mode_group` 现场构造：`AnyElement` 不是 `Clone`，两种布局各用一次。
+        // 随机与循环按钮由 `mode_group` 现场构造。`AnyElement` 不是 `Clone`，两种布局各用一次。
 
         let panel = self.shell.read(cx).right_panel();
         let now_playing_open = panel == Some(PanelTab::NowPlaying);
@@ -327,7 +327,7 @@ impl Render for BottomBar {
     }
 }
 
-/// 传输区两侧的「随机 / 循环」按钮 + 中间的传输控件，合成一条操作带统一间距与基线。
+/// 传输区两侧的「随机」与「循环」按钮加中间的传输控件，合成一条操作带统一间距与基线。
 fn mode_group(
     transport: Entity<Transport>,
     library: &Entity<LibraryEntity>,

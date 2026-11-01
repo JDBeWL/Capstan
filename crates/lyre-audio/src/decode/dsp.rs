@@ -1,5 +1,5 @@
 //! 声道布局与下混。系数取 ITU-R BS.775-1。
-//! LFE 默认不并入立体声；例外是 2.1：那一路没有别的去处，折入并按录音时被抬高的 10 dB 折算回来。
+//! LFE 默认不并入立体声；例外是 2.1。那一路没有别的去处，折入并按录音时被抬高的 10 dB 折算回来。
 
 /// 声道在布局里的角色。`Unknown` 只出现在已知布局之外的尾部。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -53,11 +53,11 @@ impl ChannelLayout {
         }
     }
 
-    /// 是否有一条独立的低频通道 —— LFE 低通只对它成立。
+    /// 是否存在独立的低频通道。LFE 低通仅对它成立。
     pub(crate) const fn has_lfe(self) -> bool {
         match self {
             Self::Surround21 | Self::Surround51 | Self::Surround71 => true,
-            // 未知布局只有前四路能按 2.1 之后的常见次序读出来
+            // 未知布局只有前四路能按 2.1 之后的常见次序读出来。
             Self::Other(channels) => channels > 3,
             Self::Mono | Self::Stereo => false,
         }
@@ -99,7 +99,7 @@ impl Default for LfeConfig {
     }
 }
 
-/// 一阶低通。状态必须跨帧保留 —— 放进解码器会让每个解码包边界都重启滤波器，听得出来。
+/// 一阶低通。状态必须跨帧保留；放进解码器会使每个解码包边界都重启滤波器，可以听出。
 pub(crate) struct LfeLowPass {
     alpha: f32,
     state: f32,
@@ -158,8 +158,8 @@ pub(crate) fn convert_frame(
         return;
     }
 
-    // 目标也是多声道：按角色对位，源里缺的角色留静音。
-    // 不能按序数照抄 —— 序数 2 在 2.1 是 LFE、在 5.1 是 FC，照抄会把低频塞进中置。
+    // 目标也是多声道。按角色对位，源里缺的角色留静音。
+    // 不可按序数直接对应。序数 2 在 2.1 为 LFE、在 5.1 为 FC，直接对应会把低频写入中置声道。
     let source = ChannelLayout::from_count(src.len());
     let target = ChannelLayout::from_count(dst.len());
     for (index, sample) in dst.iter_mut().enumerate() {
@@ -177,7 +177,7 @@ pub(crate) fn convert_frame(
 fn downmix_to_stereo(src: &[f32], lfe: Option<&mut LfeLowPass>, config: LfeConfig) -> (f32, f32) {
     match ChannelLayout::from_count(src.len()) {
         ChannelLayout::Stereo => (src[0], src[1]),
-        // 2.1 的 LFE 没有别的去处，必折
+        // 2.1 的 LFE 没有别的去处，必折。
         ChannelLayout::Surround21 => {
             let sub = fold_lfe(src[2], lfe, config);
             (src[0] + sub, src[1] + sub)
@@ -219,7 +219,7 @@ fn surround_to_stereo(
         _ => {}
     }
 
-    // 声道越多叠加后越容易过载，按布局给一个归一化系数
+    // 声道越多叠加后越容易过载，按布局给一个归一化系数。
     let normalize = match layout {
         ChannelLayout::Surround51 => 0.707,
         ChannelLayout::Surround71 => 0.667,
@@ -232,11 +232,11 @@ fn surround_to_stereo(
         right += sub;
     }
 
-    // 不在这里 clamp：末级的软削波会处理过载，提前硬切会把那一步的优势抵消掉
+    // 不在这里 clamp。末级的软削波会处理过载，提前硬切会把那一步的优势抵消掉。
     (left * normalize, right * normalize)
 }
 
-/// LFE 折进全频段声道前的处理：先低通，再按 −10 dB 折算。
+/// 把 LFE 采样折进全频段声道。有低通状态时先滤波，再统一按 `config.gain` 折算。
 fn fold_lfe(sample: f32, lfe: Option<&mut LfeLowPass>, config: LfeConfig) -> f32 {
     let filtered = match lfe {
         Some(filter) => filter.process(sample),
@@ -246,7 +246,7 @@ fn fold_lfe(sample: f32, lfe: Option<&mut LfeLowPass>, config: LfeConfig) -> f32
 }
 
 /// 软削波。|x| ≤ 0.95 位精确直通（绝大多数采样走这条），超出的按 tanh 压进 ±1。
-/// 放在链路末级：下混、音量、淡出叠加之后才是真正的输出电平。
+/// 放在链路末级，因为下混、音量、淡出叠加之后才是真正的输出电平。
 #[inline]
 pub(crate) fn soft_clip(x: f32) -> f32 {
     const THRESHOLD: f32 = 0.95;
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn mono_is_duplicated_to_both_channels() {
         assert_eq!(convert(&[0.25], 2), vec![0.25, 0.25]);
-        // 单声道设备才一一对应
+        // 单声道设备才一一对应。
         assert_eq!(convert(&[0.25], 1), vec![0.25]);
     }
 
@@ -289,7 +289,7 @@ mod tests {
         assert_eq!(convert(&[0.5, 0.25], 1), vec![0.375]);
     }
 
-    /// 声道数取自容器头，坏文件可以写 0 —— 它不能变成除数。
+    /// 声道数取自容器头，坏文件可能写 0，故不得作为除数。
     #[test]
     fn an_empty_frame_does_not_panic() {
         assert!(convert(&[], 2).iter().all(|sample| *sample == 0.0));
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn downmix_5_1_uses_itu_coefficients_and_drops_lfe() {
-        // FL FR FC LFE SL SR —— LFE 那一路(0.9)默认不应出现在结果里
+        // 顺序为 FL FR FC LFE SL SR，其中 LFE 那一路的系数 0.9 默认不应出现在结果里。
         let frame = [0.5_f32, -0.4, 0.2, 0.9, 0.1, 0.2];
         let out = convert(&frame, 2);
 
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn downmix_7_1_uses_itu_coefficients() {
-        // FL FR FC LFE BL BR SL SR
+        // FL FR FC LFE BL BR SL SR。
         let frame = [0.5_f32, -0.4, 0.2, 0.9, 0.1, -0.1, 0.3, 0.2];
         let out = convert(&frame, 2);
 
@@ -324,7 +324,7 @@ mod tests {
         let frame = [0.5_f32, -0.4, 0.2, 0.9, 0.1, 0.2];
         let config = LfeConfig {
             include_lfe: true,
-            // 直通用例：把增益设成 1，低通关掉，只看折不折进来
+            // 直通用例。把增益设成 1，低通关掉，只看折不折进来。
             gain: 1.0,
             cutoff_hz: 0.0,
         };
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn surround_21_folds_lfe_into_stereo_at_minus_ten_db() {
-        // FL FR LFE
+        // FL FR LFE。
         let frame = [0.4_f32, -0.3, 0.8];
         let mut dst = vec![0.0; 2];
         convert_frame(&frame, &mut dst, None, LfeConfig::default());
@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn surround_21_lands_lfe_in_the_lfe_slot_not_the_centre() {
-        // 2.1 → 5.1：序数 2 是 LFE，绝不能照抄进 FC
+        // 2.1 → 5.1。序数 2 是 LFE，绝不能照抄进 FC。
         let frame = [0.4_f32, -0.3, 0.8];
         assert_eq!(convert(&frame, 6), vec![0.4, -0.3, 0.0, 0.8, 0.0, 0.0]);
     }
@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn stereo_to_surround_only_fills_the_front_pair() {
-        // 声源里没有低频，不臆造一路出来
+        // 声源里没有低频，不臆造一路出来。
         assert_eq!(
             convert(&[0.5, -0.4], 6),
             vec![0.5, -0.4, 0.0, 0.0, 0.0, 0.0]
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn seven_one_to_five_one_keeps_the_side_pair_and_drops_the_back_pair() {
-        // FL FR FC LFE BL BR SL SR → FL FR FC LFE SL SR：侧环绕有位可去，后环绕没有
+        // FL FR FC LFE BL BR SL SR → FL FR FC LFE SL SR。侧环绕有位可去，后环绕没有。
         let frame = [0.5_f32, -0.4, 0.2, 0.9, 0.1, -0.1, 0.3, 0.2];
         assert_eq!(convert(&frame, 6), vec![0.5, -0.4, 0.2, 0.9, 0.3, 0.2]);
     }
@@ -401,7 +401,7 @@ mod tests {
             previous = y;
         }
 
-        // 再往上 f32 的 tanh 已经饱和，输出停在 ±1，绝不越过
+        // 再往上 f32 的 tanh 已经饱和，输出停在 ±1，绝不越过。
         for x in [1.5_f32, 2.0, 10.0, 100.0] {
             let y = soft_clip(x);
             assert!(y >= previous, "饱和段也不该回落：{previous} -> {y}");

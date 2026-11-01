@@ -31,7 +31,7 @@ pub trait AudioBackend: 'static {
 
     fn position(&self) -> Duration;
 
-    /// 当前队列是否已经放空 —— 用来判定「一首歌自然播完了」。
+    /// 当前队列是否已放空，用于判定「曲目自然播放完毕」。
     fn is_finished(&self) -> bool;
 
     /// 切换输出设备，`None` 表示跟随系统默认。正在播放的曲目要在新设备上接着放。
@@ -58,8 +58,8 @@ pub trait AudioBackend: 'static {
         None
     }
 
-    /// 后端对自己输出口径的描述，供界面展示。独占返回协商到的采样率/声道/位深，
-    /// 共享模式返回空串 —— 那边口径由系统混音器决定，报出来也没意义。
+    /// 后端对自身输出口径的描述，供界面展示。独占模式返回协商得到的采样率、声道数、位深；
+    /// 共享模式返回空串，因其口径由系统混音器决定，报出无意义。
     fn describe_output(&self) -> String {
         String::new()
     }

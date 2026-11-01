@@ -1,4 +1,4 @@
-//! 按钮：图标按钮 [`IconButton`]、文字按钮 [`text_button`]、胶囊 chip 与四种规格 [`ButtonKind`]。
+//! 按钮一族，含图标按钮 [`IconButton`]、文字按钮 [`text_button`]、胶囊 chip 与四种规格 [`ButtonKind`]。
 
 use crate::icon::{Glyph, icon_inherit};
 use crate::platform::*;
@@ -16,7 +16,7 @@ pub struct IconButton {
     hover_bg: Rgba,
     enabled: bool,
     label: Option<&'static str>,
-    /// 悬停擦入进度；`None` 表示这个按钮不参与动效（调用方没给 window）。
+    /// 悬停擦入进度；`None` 表示该按钮不参与动效，即调用方未提供 window。
     hover: Option<f32>,
     on_click: Option<ClickHandler>,
 }
@@ -58,13 +58,13 @@ impl IconButton {
         self
     }
 
-    /// 禁用态：降级颜色且不绑事件。
+    /// 禁用态，降级颜色且不绑事件。
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
 
-    /// 悬停提示。同时写进无障碍名称（`aria_label`）：图标按钮除了图标没有别的名字。
+    /// 悬停提示。同时写入无障碍名称 `aria_label`，图标按钮除图标外没有其它名字。
     pub fn label(mut self, label: &'static str) -> Self {
         self.label = Some(label);
         self
@@ -76,7 +76,7 @@ impl IconButton {
         self
     }
 
-    /// 选中态：整块黄底墨字。只靠白 / 灰两档认不出开关是开是关。
+    /// 选中态，整块黄底墨字。只靠白与灰两档认不出开关是开是关。
     pub fn active(mut self, active: bool) -> Self {
         if active {
             self.base_bg = theme::accent();
@@ -95,7 +95,7 @@ impl IconButton {
         self
     }
 
-    /// 返回带 id 的元素，可直接当下拉菜单的触发器（见 [`crate::common::menu::dropdown`]）。
+    /// 返回带 id 的元素，可直接作为下拉菜单的触发器，见 [`crate::common::menu::dropdown`]。
     pub fn render(self) -> Stateful<Div> {
         let IconButton {
             id,
@@ -144,10 +144,10 @@ impl IconButton {
                 .cursor_pointer()
                 .on_hover(crate::common::hover::bind(hover_id))
                 .hover(move |style| style.text_color(hover_color))
-                // 按下就下沉一像素：100ms 级的回应，不做过渡。
+                // 按下就下沉一像素。100ms 级的回应，不做过渡。
                 .active(|style| style.top(px(1.)).opacity(0.92))
-                // 进 Tab 序列。gpui 没有默认的 Tab 绑定（`lyre-app::keymap` 自己绑），
-                // 但聚焦后按 Enter / Space 触发 `on_click` 是内建的，不用自己接。
+                // 进入 Tab 序列。gpui 不提供默认的 Tab 绑定，需由 `lyre-app::keymap` 自行绑定；
+                // 但聚焦后按 Enter / Space 触发 `on_click` 属内建行为，无需自行接管。
                 .tab_index(TAB_STOP)
                 .focus_visible(theme::focus_ring)
                 .role(Role::Button);
@@ -156,7 +156,7 @@ impl IconButton {
             }
         } else {
             // 禁用态不进 Tab 序列。
-            // 光标要显式设成默认箭头 —— 否则沿用指针形状，看着仍像可点。
+            // 光标要显式设成默认箭头；否则沿用指针形状，看着仍像可点。
             element = element.cursor_default();
         }
 
@@ -174,23 +174,23 @@ impl IconButton {
     }
 }
 
-/// Tab 序列里的位置。所有控件都用 0（按文档顺序走）。
+/// Tab 序列里的位置。所有控件均用 0，即按文档顺序前进。
 pub const TAB_STOP: isize = 0;
 
-/// 按钮的几何规格：尺寸与字级只有这一个来源。
+/// 按钮的几何规格，尺寸与字级只有这一个来源。
 pub const BTN_PX: f32 = theme::GAP_LG;
 pub const BTN_PY: f32 = theme::GAP_SM;
 pub const BTN_FONT: f32 = theme::FONT_BODY;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ButtonKind {
-    /// 实心强调色，一屏最多一个（主行动）
+    /// 实心强调色，一屏最多一个，用作主行动。
     Primary,
-    /// 常驻灰底，次要但常驻的操作
+    /// 常驻灰底，次要但常驻的操作。
     Secondary,
-    /// 透明底，悬停才出现底色
+    /// 透明底，悬停才出现底色。
     Ghost,
-    /// 透明底 + 描边，下拉触发器用
+    /// 透明底 + 描边，下拉触发器用。
     Outline,
 }
 
@@ -204,13 +204,13 @@ impl ButtonKind {
         }
     }
 
-    /// 外框高度（不含文字行高，只算 padding 与边框）。
+    /// 外框高度，不含文字行高，只计 padding 与边框。
     pub fn frame_height(self) -> f32 {
         let border = if self == Self::Outline { 2.0 } else { 0.0 };
         self.pad_y() * 2.0 + border
     }
 
-    /// 常态底色 / 常态文字色 / 悬停底色 / 悬停文字色。
+    /// 常态底色、常态文字色、悬停底色与悬停文字色。
     fn colors(self) -> (Rgba, Rgba, Rgba, Rgba) {
         match self {
             Self::Primary => (
@@ -225,7 +225,7 @@ impl ButtonKind {
                 theme::accent(),
                 theme::text_on_accent(),
             ),
-            // Ghost 与 Outline 的差别只在描边（由 `pad_y` / `frame_height` 处理），颜色完全一致。
+            // Ghost 与 Outline 仅在描边上有别，由 `pad_y` / `frame_height` 处理；颜色完全一致。
             Self::Ghost | Self::Outline => (
                 theme::transparent(),
                 theme::text_muted(),
@@ -236,8 +236,8 @@ impl ButtonKind {
     }
 }
 
-/// 按钮外壳：直角、右下切角、内边距、字级、悬停反馈；内容用 `.child`、行为用 `.on_click` 补。
-/// 切角里不压字：右侧内边距 = 常态内边距 + 切角宽度。
+/// 按钮外壳。直角、右下切角、内边距、字级、悬停反馈；内容用 `.child`、行为用 `.on_click` 补。
+/// 切角里不压字，右侧内边距 = 常态内边距 + 切角宽度。
 pub fn button_shell(id: impl Into<ElementId>, kind: ButtonKind) -> Stateful<Div> {
     button_shell_with_hover(id, kind, None)
 }
@@ -283,7 +283,7 @@ fn button_shell_with_hover(
 
     shell = match hover {
         Some(progress) => shell
-            // 黄块从左擦入，盖在常态底色上、切角和文字之下
+            // 黄块从左擦入，盖在常态底色上、切角和文字之下。
             .on_hover(crate::common::hover::bind(id))
             .hover(move |style| style.text_color(hover_color))
             .child(
@@ -298,7 +298,7 @@ fn button_shell_with_hover(
         None => shell.hover(move |style| style.bg(hover_bg).text_color(hover_color)),
     };
 
-    // 切角画在背景之后、内容之前；右侧留白保证内容不进入切角
+    // 切角画在背景之后、内容之前；右侧留白保证内容不进入切角。
     shell = shell
         .active(|style| style.top(px(1.)).opacity(0.92))
         .child(crate::common::ornament::cut_br(theme::CUT, theme::bg()));
@@ -318,7 +318,7 @@ pub fn chip_colors(active: bool) -> (Rgba, Rgba) {
     }
 }
 
-/// 「开关」小块：图标 + 文字，选中态走 [`chip_colors`]。右下切角、计数是真实数字。
+/// 「开关」小块。图标 + 文字，选中态走 [`chip_colors`]。右下切角、计数是真实数字。
 pub fn toggle_chip(
     id: impl Into<ElementId>,
     glyph: Glyph,
@@ -331,7 +331,7 @@ pub fn toggle_chip(
     div()
         .id(id)
         .relative()
-        // 可收缩而不是 `flex_none`：详情页头图那一排在 560px 窗口下放不下四件东西，
+        // 可收缩而不是 `flex_none`。详情页头图那一排在 560px 窗口下放不下四件东西，
         // 不肯收缩就会被主区卡片裁掉最右的「更多」。文字由下面的 `truncate` 兜住。
         .min_w_0()
         .flex()
@@ -358,7 +358,7 @@ pub fn toggle_chip(
         .text_size(px(theme::FONT_CAPTION))
         .font_weight(theme::WEIGHT_BUTTON)
         .child(crate::common::ornament::cut_br(theme::CUT, theme::bg()))
-        // 图标跟随父级 `text_color`（[`icon_inherit`]）。
+        // 图标跟随父级 `text_color`，见 [`icon_inherit`]。
         .child(icon_inherit(glyph, 14.))
         .child(div().min_w_0().truncate().child(label))
 }
@@ -369,7 +369,7 @@ pub fn text_button(
     kind: ButtonKind,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    // `IntoElement` 只对具体类型实现，泛型 `impl Into<SharedString>` 要先落成 `SharedString`
+    // `IntoElement` 只对具体类型实现，泛型 `impl Into<SharedString>` 要先落成 `SharedString`。
     let label: SharedString = label.into();
     button_shell(id, kind).on_click(on_click).child(label)
 }
@@ -414,7 +414,7 @@ mod tests {
             assert_eq!(
                 kind.frame_height(),
                 expected,
-                "{kind:?} 的外框高度和别的规格不一致 —— 并排时会一高一矮"
+                "{kind:?} 的外框高度和别的规格不一致，并排时会一高一矮"
             );
         }
     }

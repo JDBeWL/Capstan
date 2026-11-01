@@ -1,4 +1,4 @@
-//! 喜欢与关注：喜欢按 [`TrackId`] 键控，关注按艺术家名，都不随重新导入失效。
+//! 喜欢与关注。喜欢按 [`TrackId`] 键控，关注按艺术家名，都不随重新导入失效。
 //! 各自独立落盘（`likes.json` / `follows.json`），`toggle_*` 返回切换后的值并立即写盘。
 
 use lyre_core::TrackId;
@@ -56,7 +56,7 @@ impl LibraryEntity {
         added
     }
 
-    /// 收藏的曲目，按曲库当前顺序。收藏没有自己的顺序 —— 它是个集合而不是列表。
+    /// 收藏的曲目，按曲库当前顺序。收藏本身无顺序，它是集合而非列表。
     pub fn liked_tracks(&self) -> Vec<TrackId> {
         self.playlist
             .tracks()

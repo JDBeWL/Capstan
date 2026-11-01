@@ -3,13 +3,13 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-/// 曲目的稳定标识：对路径求 FNV-1a。不用 `DefaultHasher` —— 跨 Rust 版本不保证一致，落盘会换 id。
+/// 曲目的稳定标识。对路径求 FNV-1a。不用 `DefaultHasher`。跨 Rust 版本不保证一致，落盘会换 id。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub struct TrackId(pub u64);
 
 impl TrackId {
     pub fn from_path(path: &Path) -> Self {
-        // FNV-1a 64 位
+        // FNV-1a 64 位。
         let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
         for byte in path.to_string_lossy().as_bytes() {
             hash ^= u64::from(*byte);
@@ -25,8 +25,8 @@ impl std::fmt::Display for TrackId {
     }
 }
 
-/// 解码前的音频规格，来自容器 / 流头而不是标签。
-/// 三项全可选：读不到就留 `None`，不拿 0 或 44.1kHz 占位。
+/// 解码前的音频规格，来自容器与流头而不是标签。
+/// 三项全可选。读不到就留 `None`，不拿 0 或 44.1kHz 占位。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AudioInfo {
     /// 采样率，单位 Hz（44100 / 48000 / 96000…）。
@@ -40,19 +40,19 @@ pub struct AudioInfo {
 /// 底栏音质徽章的档位。判据见 [`Track::quality`]。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Quality {
-    /// 有损编码：不亮徽章
+    /// 有损编码不亮徽章。
     Lossy,
-    /// 无损，但采样规格没超过 CD
+    /// 无损，但采样规格没超过 CD。
     Lossless,
-    /// 无损且高于 CD
+    /// 无损且高于 CD。
     HiRes,
 }
 
-/// 无损编码集合。判据是容器 / 编码而不是采样规格：
+/// 无损编码集合。判据是容器与编码而不是采样规格：
 /// 16bit/44.1kHz 的 FLAC 仍是无损，24bit 的 mp3 仍是有损。
 const LOSSLESS_FORMATS: [&str; 5] = ["flac", "wav", "ape", "alac", "aiff"];
 
-/// 高于 CD 的门槛：≥ 24bit 且 ≥ 96kHz，两个条件都要 —— 只抬采样率而仍是 16bit，量化噪声没变。
+/// 高于 CD 的门槛。≥ 24bit 且 ≥ 96kHz，两个条件都要。只抬采样率而仍是 16bit，量化噪声没变。
 const HIRES_BITS: u8 = 24;
 const HIRES_RATE: u32 = 96_000;
 
@@ -70,7 +70,7 @@ pub enum FieldSource {
     Manual,
 }
 
-/// 三个文本字段各自的来源。老 `library.json` 里没有这一段，缺省按 [`FieldSource::Tag`] 读 ——
+/// 三个文本字段各自的来源。老 `library.json` 里没有这一段，缺省按 [`FieldSource::Tag`] 读。
 /// 那些条目的标题确实来自标签，只有读标签失败的那几条会被说成来自标签，无伤大雅。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldSources {
@@ -82,7 +82,7 @@ pub struct FieldSources {
 /// 文件的时间戳与大小，用来判断「重扫时这一首还要不要重读标签」。
 ///
 /// 两项都可能是 `None`（读不到、或旧版本落盘的条目里根本没有这一段）。
-/// 任一边拿不准就一律当「变了」—— 多读一次标签只是慢，漏读会让旧标签永远留在库里。
+/// 任一边拿不准就一律当「变了」。多读一次标签只是慢，漏读会让旧标签永远留在库里。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileStamp {
     /// 修改时间，Unix 毫秒。
@@ -107,9 +107,9 @@ impl FileStamp {
         }
     }
 
-    /// 是不是同一份文件。自己这一边没读到时间戳时恒为 `false`。
+    /// 是否为同一份文件。本方未读到时间戳时恒为 `false`。
     ///
-    /// 只看修改时间不够：某些文件系统的时间精度是两秒，同一秒内覆盖的文件会漏判；
+    /// 只看修改时间不够。某些文件系统的时间精度是两秒，同一秒内覆盖的文件会漏判；
     /// 加上大小能把这一类挡住大半。
     pub fn matches(&self, other: &Self) -> bool {
         self.modified.is_some() && self.modified == other.modified && self.size == other.size
@@ -136,7 +136,7 @@ pub struct Track {
 }
 
 impl Track {
-    /// 什么都读不到时的兜底：文件名当标题，其余留空 —— 不因一个坏 ID3 标签丢掉整个文件。
+    /// 什么都读不到时的兜底。文件名当标题，其余留空。不因一个坏 ID3 标签丢掉整个文件。
     /// 这一版不做任何推断（它就是「什么都不知道」的构造器），带目录上下文的推断走
     /// [`crate::metadata::read_track`]。
     pub fn fallback(path: &Path) -> Self {
@@ -165,7 +165,7 @@ impl Track {
 
     /// 把上一版里手改过的字段搬回来。
     ///
-    /// 重读标签会用磁盘上的值原地替换条目，但用户手改过的那几项必须留着 ——
+    /// 重读标签会用磁盘上的值原地替换条目，但用户手改过的那几项必须留着。
     /// 重扫是自动的、重读全部标签是用户主动点的，哪一种都不该把人的修正抹掉。
     /// 目前还没有编辑标签的界面，这条护栏是给那一天先留好的座位。
     pub fn keep_manual(&mut self, previous: &Self) {
@@ -187,7 +187,7 @@ impl Track {
         self.title.is_empty()
     }
 
-    /// 列表副标题：优先「艺术家 · 专辑」，缺失时退化到父目录名。
+    /// 列表副标题。优先「艺术家 · 专辑」，缺失时退化到父目录名。
     pub fn subtitle(&self) -> String {
         match (self.artist.as_deref(), self.album.as_deref()) {
             (Some(a), Some(b)) => format!("{a} · {b}"),
@@ -236,7 +236,7 @@ impl Track {
         })
     }
 
-    /// 底栏徽章该写哪一档。读不到位深 / 采样率时最多只报 [`Quality::Lossless`]，不许猜 Hi-Res。
+    /// 底栏徽章该写哪一档。读不到位深或采样率时最多只报 [`Quality::Lossless`]，不许猜 Hi-Res。
     pub fn quality(&self) -> Quality {
         if !self.is_lossless() {
             return Quality::Lossy;
@@ -249,12 +249,12 @@ impl Track {
 }
 
 impl AudioInfo {
-    /// 三项里有没有任何一项 —— 决定徽章点开有没有东西可看。
+    /// 三项里有没有任何一项，决定徽章点开有没有东西可看。
     pub fn is_empty(&self) -> bool {
         self.sample_rate.is_none() && self.bit_depth.is_none() && self.bitrate.is_none()
     }
 
-    /// 详情浮层里的「标签 / 值」行，只收有值的项。
+    /// 详情浮层里的「标签与值」行，只收有值的项。
     pub fn details(&self) -> Vec<(&'static str, String)> {
         let mut rows = Vec::new();
         if let Some(rate) = self.sample_rate {
@@ -270,7 +270,7 @@ impl AudioInfo {
     }
 }
 
-/// Hz → kHz 的显示值：44100 要读成 44.1 而不是 44.10，96000 要读成 96 而不是 96.00。
+/// Hz → kHz 的显示值。44100 要读成 44.1 而不是 44.10，96000 要读成 96 而不是 96.00。
 fn kilo(hz: u32) -> String {
     format!("{:.2}", hz as f32 / 1000.0)
         .trim_end_matches('0')
@@ -382,10 +382,10 @@ mod tests {
 
     #[test]
     fn 可播性看编码有没有解码实现而不是无损与否() {
-        // 有损且引擎解不了：标签、时长都读得到，就是放不出声
+        // 有损且引擎解不了。标签、时长都读得到，就是放不出声。
         assert!(!Track::fallback(Path::new("/m/x.wma")).is_playable());
         assert!(!Track::fallback(Path::new("/m/x.wma")).is_lossless());
-        // 无损且能播
+        // 无损且能播。
         assert!(Track::fallback(Path::new("/m/x.ape")).is_playable());
         assert!(Track::fallback(Path::new("/m/x.ape")).is_lossless());
 
@@ -434,7 +434,7 @@ mod tests {
         );
         let hires = with_audio("a.flac", Some(96000), Some(24), Some(2834));
         assert_eq!(hires.quality(), Quality::HiRes);
-        // 两个条件缺一不可：只抬采样率、位深仍是 16bit
+        // 只抬采样率而位深仍是 16bit 时不算 HiRes，两个条件缺一不可。
         assert_eq!(
             with_audio("a.flac", Some(192_000), Some(16), None).quality(),
             Quality::Lossless
@@ -443,12 +443,12 @@ mod tests {
             with_audio("a.flac", Some(44100), Some(32), None).quality(),
             Quality::Lossless
         );
-        // 有损编码哪怕标着 24bit/96kHz 也不该亮徽章
+        // 有损编码哪怕标着 24bit/96kHz 也不该亮徽章。
         assert_eq!(
             with_audio("a.mp3", Some(96000), Some(24), Some(320)).quality(),
             Quality::Lossy
         );
-        // 读不到规格时无损仍是无损，只是不敢报 Hi-Res
+        // 读不到规格时无损仍是无损，只是不敢报 Hi-Res。
         assert_eq!(
             with_audio("a.wav", None, None, None).quality(),
             Quality::Lossless
@@ -480,7 +480,7 @@ mod tests {
             ]
         );
 
-        // 有损编码没有位深，那一行就不该出现
+        // 有损编码没有位深，那一行就不该出现。
         let lossy = AudioInfo {
             sample_rate: Some(44100),
             bit_depth: None,
@@ -498,7 +498,7 @@ mod tests {
         assert!(AudioInfo::default().details().is_empty());
     }
 
-    /// 指纹只回答一个问题：这两次读到的还是同一份文件吗。
+    /// 指纹只回答一个问题，这两次读到的还是同一份文件吗。
     #[test]
     fn 指纹只认同一次读取() {
         let dir = std::env::temp_dir().join(format!("mp-stamp-{}", std::process::id()));
@@ -520,7 +520,7 @@ mod tests {
             "大小变了必须认出来：只比时间戳会被同秒覆写骗过去"
         );
 
-        // 没读到的一律当「变了」：宁可多读一遍标签，也不能让旧标签永远留在库里
+        // 未读到时一律视为「已变更」。宁可多读一遍标签，也不让旧标签长期留在库中。
         assert!(!first.matches(&FileStamp::default()));
         assert!(!FileStamp::default().matches(&first));
         assert!(!FileStamp::default().matches(&FileStamp::default()));

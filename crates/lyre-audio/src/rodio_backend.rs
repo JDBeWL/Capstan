@@ -22,7 +22,7 @@ const FADE: Duration = Duration::from_millis(60);
 /// 淡出结束后再多留一会儿才丢旧输出流，确保增益真的走到了 0。
 const FADE_MARGIN: Duration = Duration::from_millis(20);
 
-/// 一次构建的产物：音源、时长、以及用于淡出的增益手柄。
+/// 一次构建的产物，含音源、时长与用于淡出的增益手柄。
 type BuiltSource = (
     Box<dyn rodio::Source<Item = f32> + Send>,
     Duration,
@@ -56,7 +56,7 @@ struct Loaded {
     /// 当前音源的起点。rodio 的 `get_pos()` 在每次 `append` 后从 0 重新计数，
     /// 重建式 seek 之后要把它加回去，否则进度条每次都跳回开头。
     base: Duration,
-    /// 重建时需要保持原来的播放/暂停状态
+    /// 重建时需要保持原来的播放/暂停状态。
     playing: bool,
 }
 
@@ -78,7 +78,7 @@ struct Pending {
 }
 
 impl Pending {
-    /// 挂起期间对外报的位置：交接落地之后才真的在那里。
+    /// 挂起期间对外报的位置，交接落地之后才真的在那里。
     fn position(&self) -> Duration {
         match &self.action {
             Handoff::Stop => Duration::ZERO,
@@ -87,7 +87,7 @@ impl Pending {
     }
 }
 
-/// 淡出中的上一条输出流。两个句柄都要持有到点：丢掉 `Player` 会立刻停掉它的音源，
+/// 淡出中的上一条输出流。两个句柄都要持有到点。丢掉 `Player` 会立刻停掉它的音源，
 /// 丢掉 `MixerDeviceSink` 会关掉整条流。
 struct Previous {
     _player: Player,
@@ -110,18 +110,18 @@ fn open_sink(device_id: Option<&str>) -> Result<(MixerDeviceSink, Option<String>
     };
 
     let builder = builder.map_err(|err| AudioError::DeviceOpen(err.to_string()))?;
-    // `open_sink_or_fallback` 失败时会在同一台设备上试其它可用配置，不换设备
+    // `open_sink_or_fallback` 失败时会在同一台设备上试其它可用配置，不换设备。
     let mut sink = builder
         .open_sink_or_fallback()
         .map_err(|err| AudioError::DeviceOpen(err.to_string()))?;
-    // 流的生命周期由我们按淡出时机管理，不需要 rodio 每次 drop 都往 stderr 报一句
+    // 流的生命周期由我们按淡出时机管理，不需要 rodio 每次 drop 都往 stderr 报一句。
     sink.log_on_drop(false);
 
     Ok((sink, resolved_id.map(str::to_owned)))
 }
 
-/// 组装一条完整的链路：解码 → 无锁线程隔离 → 重采样到设备采样率 → 声道布局转换 →
-/// 增益包络 → 软削波。目标采样率与声道数由输出流决定：换设备时要按新流重建。
+/// 组装一条完整的链路，解码 → 无锁线程隔离 → 重采样到设备采样率 → 声道布局转换 →
+/// 增益包络 → 软削波。目标采样率与声道数由输出流决定，换设备时要按新流重建。
 fn build_source(sink: &MixerDeviceSink, path: &Path, start: Duration) -> Result<BuiltSource> {
     let config = sink.config();
     build_source_for(config.sample_rate(), config.channel_count(), path, start)
@@ -145,13 +145,13 @@ fn build_source_for(
 
     let source = LockFreeSource::new(decoder, WhenEmpty::PadWithSilence)?;
 
-    // 这一步只对齐采样率、保持声道：LFE 低通要按声源的采样率算，必须排在下混之前。
+    // 这一步只对齐采样率、保持声道。LFE 低通要按声源的采样率算，必须排在下混之前。
     // `LockFreeSource` 恒返回 `current_span_len() == None`，rodio 的内部重采样
     // 不会按跨度分块，所以必须在交给 mixer 之前显式对齐。
     let resampled = UniformSourceIterator::new(source, source_channels, sample_rate);
     let converted = ChannelConvertSource::new(resampled, target_channels, LfeConfig::default());
 
-    // 增益按设备采样率折算，必须放在重采样之后
+    // 增益按设备采样率折算，必须放在重采样之后。
     let control = Arc::new(GainControl::new());
     let ramped = GainRamp::new(
         converted,
@@ -175,7 +175,7 @@ impl RodioBackend {
         let (sink, device_id) = open_sink(device_id)?;
 
         let player = Player::connect_new(sink.mixer());
-        // 新建的 Player 默认就是播放中，先压回暂停，避免 load 之后立刻出声
+        // 新建的 Player 默认就是播放中，先压回暂停，避免 load 之后立刻出声。
         player.pause();
 
         Ok(Self {
@@ -204,7 +204,7 @@ impl RodioBackend {
         }
     }
 
-    /// 收尾：落地到点的挂起交接，丢弃到点的旧输出流。
+    /// 收尾。落地到点的挂起交接，丢弃到点的旧输出流。
     fn sweep(&mut self) {
         let now = Instant::now();
 
@@ -249,7 +249,7 @@ impl RodioBackend {
 
     /// 交付下一段音频。链路正在出声就先淡出再换；已经静着就直接换。
     fn hand_off(&mut self, action: Handoff) {
-        // 已经在淡出：换成新动作照旧等到点交接，旧链路的增益早就推向 0 了
+        // 已经在淡出。换成新动作照旧等到点交接，旧链路的增益早就推向 0 了。
         if let Some(pending) = self.pending.as_mut() {
             pending.action = action;
             return;
@@ -273,7 +273,7 @@ impl RodioBackend {
         });
     }
 
-    /// 挂起的交接要跟随最新的播放意图 —— 淡出那几十毫秒里用户可能又按了一次。
+    /// 挂起的交接要跟随最新的播放意图。淡出那几十毫秒里用户可能又按了一次。
     fn aim_pending_at(&mut self, autoplay: bool) {
         if let Some(pending) = self.pending.as_mut()
             && let Handoff::Swap {
@@ -286,7 +286,7 @@ impl RodioBackend {
 
     /// 按当前曲目重建一条音源链路并接上；没装载过时是无操作。
     fn rebuild_current(&mut self) -> Result<()> {
-        // 旧音源整条要被换掉，挂起的交接跟着作废
+        // 旧音源整条要被换掉，挂起的交接跟着作废。
         self.pending = None;
 
         let Some(current) = self.current.as_ref() else {
@@ -300,7 +300,7 @@ impl RodioBackend {
         Ok(())
     }
 
-    /// 换到另一条输出流上。先把新流建好、曲目接上，成功之后才替换旧流 ——
+    /// 换到另一条输出流上。先把新流建好、曲目接上，成功之后才替换旧流。
     /// 中途失败时旧流原封不动，声音不会断。
     fn apply_device(&mut self, device_id: Option<&str>) -> Result<()> {
         let (sink, resolved_id) = open_sink(device_id)?;
@@ -309,7 +309,7 @@ impl RodioBackend {
         player.set_volume(self.volume);
         player.pause();
 
-        // 从「此刻播到的位置」续上，不能用 `current.base`：base 只在 load / seek 时更新，
+        // 从「此刻播到的位置」续上，不能用 `current.base`。base 只在 load / seek 时更新，
         // 拿它重建会把上次手动跳转之后播过的那一段全丢掉，进度直接退回去。
         let resume_at = self.current.is_some().then(|| self.position());
 
@@ -327,7 +327,7 @@ impl RodioBackend {
         let old_device = std::mem::replace(&mut self.device, sink);
         self.pending = None;
 
-        // 平滑切换：旧流继续出声、增益推向 0，几十毫秒后才断开 —— 盖住新流预建的那段空窗。
+        // 平滑切换。旧流继续出声、增益推向 0，几十毫秒后才断开。盖住新流预建的那段空窗。
         // 不平滑则当场断开。
         if self.smooth_switch && self.gain.is_some() {
             if let Some(control) = self.gain.take() {
@@ -344,7 +344,7 @@ impl RodioBackend {
         self.device_id = resolved_id;
         self.stopped = false;
 
-        // 新流以 start 为基准，base 必须跟着走，否则 `position()` 会重复计入
+        // 新流以 start 为基准，base 必须跟着走，否则 `position()` 会重复计入。
         if let (Some(current), Some(start)) = (self.current.as_mut(), resume_at) {
             current.base = start;
         }
@@ -402,9 +402,9 @@ impl AudioBackend for RodioBackend {
 
     fn stop(&mut self) {
         self.sweep();
-        // 先决定淡不淡，再改状态：判据要看此刻是不是真的在出声
+        // 先决定淡不淡，再改状态，判据要看此刻是不是真的在出声。
         self.hand_off(Handoff::Stop);
-        // 保留 current：stop 之后按「上一曲」重播当前曲还要用；起点归零
+        // 保留 current。stop 之后按「上一曲」重播当前曲还要用；起点归零。
         if let Some(current) = self.current.as_mut() {
             current.base = Duration::ZERO;
             current.playing = false;
@@ -412,7 +412,7 @@ impl AudioBackend for RodioBackend {
         self.stopped = true;
     }
 
-    /// 重建式 seek，不用 `player.try_seek()`：有界通道里已缓存几秒采样，原地跳转既复杂又不精确。
+    /// 重建式 seek，不用 `player.try_seek()`。有界通道里已缓存几秒采样，原地跳转既复杂又不精确。
     fn seek(&mut self, position: Duration) -> Result<()> {
         self.sweep();
 
@@ -454,7 +454,7 @@ impl AudioBackend for RodioBackend {
     }
 
     fn position(&self) -> Duration {
-        // 挂起期间报的是交接目标：此刻出声的还是上一段，报它会让进度条来回跳
+        // 挂起期间报的是交接目标。此刻出声的还是上一段，报它会让进度条来回跳。
         if let Some(pending) = &self.pending {
             return pending.position();
         }
@@ -531,7 +531,7 @@ mod tests {
         bytes.extend_from_slice(b"data");
         bytes.extend_from_slice(&data_len.to_le_bytes());
 
-        // 每路一个常数：6 声道按 FL FR FC LFE SL SR 的次序取不同值
+        // 每路一个常数，6 声道按 FL FR FC LFE SL SR 的次序取不同值。
         let level = |channel: usize| [0.5_f32, 0.25, 0.2, 0.9, 0.1, 0.2][channel % 6];
         for _ in 0..frames {
             for channel in 0..channels as usize {
@@ -546,7 +546,7 @@ mod tests {
         path
     }
 
-    /// 先让解码线程把素材搬进通道再读：欠载时 `LockFreeSource` 会吐 0.0 撑流，
+    /// 先让解码线程把素材搬进通道再读。欠载时 `LockFreeSource` 会吐 0.0 撑流，
     /// 样本数与声道相位都会对不上。
     fn drain(source: Box<dyn rodio::Source<Item = f32> + Send>) -> Vec<f32> {
         std::thread::sleep(Duration::from_millis(100));
@@ -587,7 +587,7 @@ mod tests {
         let samples = drain(source);
         assert_eq!(samples.len(), 4_000, "6 声道应当被压成 2 声道");
 
-        // FL FR FC LFE SL SR，LFE 默认不参与，归一化系数 0.707
+        // 顺序为 FL FR FC LFE SL SR，LFE 默认不参与，归一化系数 0.707。
         let expected_left = (0.5 + 0.2 * 0.707 + 0.1 * 0.707) * 0.707;
         let expected_right = (0.25 + 0.2 * 0.707 + 0.2 * 0.707) * 0.707;
         let mut checked = 0;
@@ -626,7 +626,7 @@ mod tests {
             samples.len()
         );
 
-        // 淡入窗按输出采样率折算
+        // 淡入窗按输出采样率折算。
         let fade_samples = 48_000 / 1000 * 60 * 2;
         for (index, sample) in samples.iter().enumerate().skip(fade_samples) {
             let wanted = if index % 2 == 0 { 0.5 } else { 0.25 };

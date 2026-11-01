@@ -1,25 +1,25 @@
-//! 窗口几何：断点档位、侧栏宽度、行密度、专辑网格的列数与卡宽。
+//! 窗口几何，含断点档位、侧栏宽度、行密度，以及专辑网格的列数与卡宽。
 //! 都是「给定宽度算出布局参数」的纯计算，入口是 [`ShellEntity::apply_viewport`]。
 
 use crate::platform::*;
 
 use super::{PanelTab, ShellEntity};
 
-/// 布局断点，宽 / 中 / 窄三档。
+/// 布局断点，宽、中、窄三档。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Breakpoint {
-    /// ≥ 1180px：三栏齐全
+    /// 宽度 ≥ 1180px 时三栏齐全。
     Wide,
-    /// 860–1179px：右面板收起为图标条
+    /// 宽度 860–1179px 时右面板收起为图标条。
     Medium,
-    /// < 860px：侧栏收起为图标条、列表隐藏专辑列
+    /// < 860px 时侧栏收起为图标条、列表隐藏专辑列。
     Narrow,
 }
 
 /// 网格卡片的宽度区间，列数由它反推。
 pub const CARD_MIN_W: f32 = 132.0;
 pub const CARD_MAX_W: f32 = 200.0;
-/// 列数硬上限，避免超宽屏（4K+）出现十几列。
+/// 列数硬上限，避免 4K 以上的超宽屏出现十几列。
 pub const MAX_GRID_COLUMNS: usize = 8;
 /// 网格四周外边距，必须与 `album_grid` 的 `PAD` 一致。
 const GRID_PAD: f32 = crate::theme::GAP_LG;
@@ -28,9 +28,9 @@ const GRID_GAP: f32 = crate::theme::GAP_MD;
 
 pub const WIDE_MIN: f32 = 1180.0;
 pub const MEDIUM_MIN: f32 = 860.0;
-/// 底栏改为两行（传输区独占一行）的阈值。
+/// 底栏改为两行的阈值，此时传输区独占一行。
 pub const STACKED_BOTTOM_MIN: f32 = 640.0;
-/// 必须低于 `MEDIUM_MIN`：否则「是否堆叠底栏」按档位和按宽度会算出两种结果。
+/// 必须低于 `MEDIUM_MIN`，否则「是否堆叠底栏」按档位和按宽度会算出两种结果。
 const _: () = assert!(STACKED_BOTTOM_MIN < MEDIUM_MIN);
 
 impl Breakpoint {
@@ -51,7 +51,7 @@ impl Breakpoint {
         }
     }
 
-    /// 右侧面板默认是否展开。非宽档默认收起，点击后：中档仍占一列，窄档改为浮层。
+    /// 右侧面板默认是否展开。非宽档默认收起，点击后中档仍占一列，窄档改为浮层。
     pub fn right_panel_expanded(self) -> bool {
         matches!(self, Self::Wide)
     }
@@ -67,18 +67,18 @@ impl Breakpoint {
     }
 
     pub fn stacks_bottom_bar(self) -> bool {
-        // 按档位只是近似，真实阈值看实际宽度（见 `ShellEntity::stacks_bottom_bar`）。
+        // 按档位只是近似，真实阈值看实际宽度，见 `ShellEntity::stacks_bottom_bar`。
         matches!(self, Self::Narrow)
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum SidebarState {
-    /// 图标 + 文字
+    /// 图标 + 文字。
     Expanded,
-    /// 只有图标
+    /// 只有图标。
     Icons,
-    /// 完全隐藏
+    /// 完全隐藏。
     Hidden,
 }
 
@@ -95,7 +95,7 @@ impl SidebarState {
         matches!(self, Self::Expanded)
     }
 
-    /// 展开程度：`Expanded`(2) > `Icons`(1) > `Hidden`(0)。生效形态取手动值与断点默认里数值小的那个。
+    /// 展开程度，`Expanded`(2) > `Icons`(1) > `Hidden`(0)。生效形态取手动值与断点默认里数值小的那个。
     fn openness(self) -> u8 {
         match self {
             Self::Expanded => 2,
@@ -107,9 +107,9 @@ impl SidebarState {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Density {
-    /// 40px 行高，默认
+    /// 40px 行高，默认。
     Compact,
-    /// 52px 行高
+    /// 52px 行高。
     Comfortable,
 }
 
@@ -138,7 +138,7 @@ impl ShellEntity {
         self.breakpoint
     }
 
-    /// 打开着的右面板是否以浮层盖在主区上（窄档）。
+    /// 打开着的右面板是否以浮层盖在主区上，仅窄档如此。
     pub fn right_panel_overlays(&self) -> bool {
         self.right_panel.is_some() && self.breakpoint.right_panel_overlays()
     }
@@ -148,7 +148,7 @@ impl ShellEntity {
         self.right_panel.is_some() && !self.breakpoint.right_panel_overlays()
     }
 
-    /// 生效形态 = 手动值（`sidebar_override`）与断点默认里更收起的那个：手动收起后拉宽不弹开，
+    /// 生效形态取手动值 `sidebar_override` 与断点默认中更收起的一个。手动收起后拉宽不弹开，
     /// 窄窗口也不硬撑展开。`toggle_sidebar` 从这里起循环。
     pub fn sidebar(&self) -> SidebarState {
         let by_breakpoint = self.breakpoint.sidebar();
@@ -158,7 +158,7 @@ impl ShellEntity {
         }
     }
 
-    /// 中间卡片的宽度（不含自身内边距），须与 `root/render.rs::main_content` 的排布一致。
+    /// 中间卡片的宽度，不含自身内边距；必须与 `root/render.rs::main_content` 的排布一致。
     pub fn center_width(&self) -> f32 {
         Self::center_width_for(self.width, self.sidebar(), self.right_panel.is_some())
     }
@@ -171,7 +171,7 @@ impl ShellEntity {
         if sidebar != SidebarState::Hidden {
             taken += sidebar.width() + gutter;
         }
-        // 浮层不占布局宽度：窄档面板盖在主区上，主区仍按整宽排。
+        // 浮层不占布局宽度。窄档面板盖在主区上，主区仍按整宽排。
         if has_right_panel && !Breakpoint::for_width(width).right_panel_overlays() {
             taken += crate::theme::RIGHT_PANEL_W + gutter;
         }
@@ -187,8 +187,9 @@ impl ShellEntity {
         self.grid_columns.max(1)
     }
 
-    /// 专辑网格单张卡片的预测宽度，`album_grid` 用它决定封面高度：`uniform_list` 要求行等高，封面不能自适应。
-    /// 返回 0.0 表示宽度还不可用（窗口极窄），调用方应退回到 `COVER_H_MIN`。
+    /// 专辑网格单张卡片的预测宽度，`album_grid` 用它决定封面高度。
+    /// `uniform_list` 要求行等高，封面不能自适应。
+    /// 返回 0.0 表示宽度尚不可用，即窗口极窄，调用方应退回 `COVER_H_MIN`。
     pub fn grid_card_width(&self) -> f32 {
         self.grid_card_width
     }
@@ -197,18 +198,18 @@ impl ShellEntity {
         self.density.row_height()
     }
 
-    /// 底栏是否改成两行：按实际宽度而非档位，640px 的阈值落在 `Narrow` 档内部。
+    /// 底栏是否改成两行，按实际宽度而非档位；640px 的阈值落在 `Narrow` 档内部。
     pub fn stacks_bottom_bar(&self) -> bool {
         self.width < STACKED_BOTTOM_MIN
     }
 
-    /// 专辑网格每行几列：按该宽度下的默认布局（三栏 / 两栏 / 侧栏收成图标条）推导，供测试与首次开窗使用。
+    /// 专辑网格每行几列。按该宽度下的默认布局推导，即三栏、两栏或侧栏收成图标条；供测试与首次开窗使用。
     /// 运行期真实列数走 `ShellEntity::recompute_grid_columns`，它按实际的侧栏形态和右面板开合来算。
     pub fn grid_columns_for(width: f32) -> usize {
         Self::grid_metrics_for(width).0
     }
 
-    /// 公开版的 `grid_metrics`：按宽度的默认布局返回 `(列数, 单卡宽度)`。
+    /// 公开版的 `grid_metrics`，按宽度的默认布局返回 `(列数, 单卡宽度)`。
     pub fn grid_metrics_for(width: f32) -> (usize, f32) {
         let breakpoint = Breakpoint::for_width(width);
         let panel = if breakpoint.right_panel_expanded() {
@@ -226,14 +227,14 @@ impl ShellEntity {
     }
 
     /// 由可用宽度算出 `(列数, 单卡宽度)`，两者必须同源算。
-    /// 卡宽是预测值：一行 N 个等宽 `flex_1` 子项加 N-1 个固定间距，taffy 算出来就是这个值。
+    /// 卡宽是预测值，算法是一行 N 个等宽 `flex_1` 子项加 N-1 个固定间距，taffy 算出来就是这个值。
     pub(super) fn grid_metrics(available: f32) -> (usize, f32) {
         let usable = (available - GRID_PAD * 2.0).max(0.0);
         if usable <= 0.0 {
             return (1, 0.0);
         }
 
-        // 分母含 GAP、实际只占 (n-1) 个 GAP：最后一张卡后面没有间距。
+        // 分母含 GAP、实际只占 (n-1) 个 GAP，因为最后一张卡后面没有间距。
         let columns = ((usable + GRID_GAP) / (CARD_MIN_W + GRID_GAP))
             .floor()
             .max(1.0) as usize;
@@ -243,20 +244,22 @@ impl ShellEntity {
         ((columns), ((usable - gaps) / columns as f32).max(0.0))
     }
 
-    /// 底栏左侧的迷你曲目信息是否显示，只管内容不管几何（宽度见 [`Self::bottom_left_width`]）。
+    /// 底栏左侧的迷你曲目信息是否显示，只管内容不管几何；宽度见 [`Self::bottom_left_width`]。
     pub fn shows_mini_now_playing(&self) -> bool {
         self.width >= MEDIUM_MIN
     }
 
-    /// 底栏左栏宽度：随窗口连续收缩而不是两态，否则中间列会整组横向瞬移。
-    /// 两端是 [`STACKED_BOTTOM_MIN`] 处 16px 占位、[`MEDIUM_MIN`] 处满宽 [`crate::theme::BOTTOM_LEFT_W`]。
+    /// 底栏左栏宽度随窗口连续收缩而不是两态，否则中间列会整组横向瞬移。
+    /// 两端分别是 [`STACKED_BOTTOM_MIN`] 处的 16px 占位，
+    /// 与 [`MEDIUM_MIN`] 处的满宽 [`crate::theme::BOTTOM_LEFT_W`]。
     pub fn bottom_left_width(&self) -> f32 {
         let span = MEDIUM_MIN - STACKED_BOTTOM_MIN;
         let t = ((self.width - STACKED_BOTTOM_MIN) / span).clamp(0.0, 1.0);
         crate::theme::GAP_LG + (crate::theme::BOTTOM_LEFT_W - crate::theme::GAP_LG) * t
     }
 
-    /// 重算列数与单卡宽度。返回 `true` 时调用方必须 notify：数据按列数切行、封面高度按卡宽算。
+    /// 重算列数与单卡宽度。返回 `true` 时调用方必须 notify：
+    /// 数据按列数切行、封面高度按卡宽算。
     pub(super) fn recompute_grid_columns(&mut self) -> bool {
         let panel = if self.panel_docks() {
             crate::theme::RIGHT_PANEL_W
@@ -265,7 +268,8 @@ impl ShellEntity {
         };
         let (columns, card_width) = Self::grid_metrics(self.width - self.sidebar().width() - panel);
 
-        // 卡宽按 0.5px 量化再比较：浮点尾数抖动会伪装成「宽度变了」，每 200ms 重绘一次整个网格。
+        // 卡宽按 0.5px 量化再比较。不量化的话，浮点尾数抖动会伪装成「宽度变了」，
+        // 整个网格每 200ms 重绘一次。
         let changed =
             columns != self.grid_columns || (card_width - self.grid_card_width).abs() >= 0.5;
 
@@ -274,8 +278,8 @@ impl ShellEntity {
         changed
     }
 
-    /// 重算宽度 / 断点 / 网格列数，返回是否需要重绘（跨断点或列数变化）。
-    /// 不碰 `sidebar_override`：改写它会把手动收起的侧栏弹开。
+    /// 重算宽度、断点与网格列数，返回是否需要重绘，即是否跨断点或列数变化。
+    /// 不碰 `sidebar_override`，改写它会把手动收起的侧栏弹开。
     fn resize_to(&mut self, width: f32) -> bool {
         if (width - self.width).abs() < f32::EPSILON {
             return false;
@@ -293,14 +297,14 @@ impl ShellEntity {
             self.right_panel = None;
         }
 
-        // 小幅缩放不重绘：flex 自适应，元素树不必重建。
-        // 列数要单独判 —— 数据按列数切行交给 `uniform_list`，列数变了就得重建行。
-        // 跨断点时列数也要重算（侧栏宽度与面板是否占宽都变了），不能短路跳过。
+        // 小幅缩放不重绘。flex 自适应，元素树不必重建。
+        // 列数需单独判定。数据按列数切行后交给 `uniform_list`，列数变化即需重建行。
+        // 跨断点时列数也需重算，因侧栏宽度与面板是否占宽均已改变，不可短路跳过。
         let columns_changed = self.recompute_grid_columns();
         crossed || columns_changed
     }
 
-    /// `new()` 注册的窗口尺寸订阅：`resize_to` 返回 true 才 `notify`。
+    /// `new()` 注册的窗口尺寸订阅，`resize_to` 返回 true 才 `notify`。
     pub(super) fn apply_viewport(&mut self, width: f32, cx: &mut Context<Self>) {
         if self.resize_to(width) {
             cx.notify();
@@ -336,7 +340,7 @@ mod tests {
         }
     }
 
-    /// 一次窗口 resize，走生产路径 `resize_to`（即 `apply_viewport` 的计算部分）。
+    /// 模拟一次窗口 resize，走生产路径 `resize_to`，即 `apply_viewport` 的计算部分。
     fn resize(shell: &mut ShellEntity, width: f32) {
         shell.resize_to(width);
     }
@@ -382,7 +386,7 @@ mod tests {
         assert_eq!(
             shell.sidebar(),
             SidebarState::Icons,
-            "拉宽回来不该自己弹开 —— 用户没再动过它"
+            "拉宽回来不该自己弹开，用户没再动过它"
         );
     }
 
@@ -394,7 +398,7 @@ mod tests {
             assert_eq!(
                 shell.sidebar_override,
                 Some(SidebarState::Icons),
-                "resize 到 {width}px 时把手动值改掉了 —— 侧栏会自己弹开"
+                "resize 到 {width}px 时把手动值改掉了，侧栏会自己弹开"
             );
         }
         assert_eq!(shell.sidebar(), SidebarState::Icons, "到头来仍是收起的样子");
@@ -433,7 +437,7 @@ mod tests {
         let narrow = shell_at(800.0, None);
         assert_eq!(narrow.sidebar(), SidebarState::Icons, "窄档默认是图标态");
 
-        // 窄档点了「展开」：手动值更展开，被断点默认压回 `Icons`
+        // 窄档点了「展开」。手动值更展开，被断点默认压回 `Icons`。
         let after = shell_at(800.0, Some(SidebarState::Expanded));
         assert_eq!(after.sidebar(), SidebarState::Icons);
     }
@@ -528,8 +532,8 @@ mod tests {
 
     #[test]
     fn crossing_into_wide_costs_the_grid_a_column() {
-        // 已知非单调点：跨过 WIDE_MIN 时右面板自动展开、主区少 320px，列数下降。
-        // 这不是 bug，卡宽仍须在下限之上，由下一个断言兜住。
+        // 已知非单调点。跨过 WIDE_MIN 时右面板自动展开、主区少 320px，列数下降。
+        // 这不是 bug，卡宽仍保持在下限之上，由下一个断言兜住。
         let before = ShellEntity::grid_columns_for(WIDE_MIN - 1.0);
         let after = ShellEntity::grid_columns_for(WIDE_MIN);
         assert!(
@@ -547,7 +551,7 @@ mod tests {
 
     #[test]
     fn center_width_matches_the_main_area_it_describes() {
-        // 1180px 是 Wide 下限：主区左右各 8、侧栏 232、右面板 320、中间两条缝各 8，剩下 596。
+        // 1180px 是 Wide 下限。主区左右各 8、侧栏 232、右面板 320、中间两条缝各 8，剩下 596。
         assert_eq!(
             ShellEntity::center_width_for(1180.0, SidebarState::Expanded, true),
             596.0
@@ -560,7 +564,7 @@ mod tests {
 
     #[test]
     fn a_floating_panel_does_not_squeeze_the_center() {
-        // 窄档（<860）面板是浮层：主区宽度与没开面板时完全一样。
+        // 窄档低于 860 时面板为浮层，主区宽度与未开面板时完全一致。
         let without = ShellEntity::center_width_for(800.0, SidebarState::Icons, false);
         let with_panel = ShellEntity::center_width_for(800.0, SidebarState::Icons, true);
         assert_eq!(with_panel, without);
@@ -613,7 +617,8 @@ mod tests {
         assert_eq!(shell.right_panel, None);
     }
 
-    /// 底栏左栏宽度必须连续，不许在 `MEDIUM_MIN` 处跳变：中间列靠 `justify_center` 居中，跳变会让它整组瞬移。
+    /// 底栏左栏宽度必须连续，不许在 `MEDIUM_MIN` 处跳变。
+    /// 中间列靠 `justify_center` 居中，跳变会让它整组瞬移。
     #[test]
     fn bottom_left_width_never_jumps_across_the_medium_threshold() {
         let mut previous = shell_at(STACKED_BOTTOM_MIN, None).bottom_left_width();
@@ -623,11 +628,11 @@ mod tests {
             let delta = current - previous;
             assert!(
                 delta >= -f32::EPSILON,
-                "左栏宽度在 {width}px 处反而缩小了 {delta:.1}px —— 应当单调不减"
+                "左栏宽度在 {width}px 处反而缩小了 {delta:.1}px，应当单调不减"
             );
             assert!(
                 delta <= 12.0,
-                "左栏宽度在 {width}px 处跳了 {delta:.1}px —— 中间列会跟着瞬移一半的距离"
+                "左栏宽度在 {width}px 处跳了 {delta:.1}px，中间列会跟着瞬移一半的距离"
             );
             previous = current;
             width += 8.0;
@@ -648,14 +653,14 @@ mod tests {
             "中档处应当是满宽 {}px，实际 {full:.1}px",
             theme::BOTTOM_LEFT_W
         );
-        // 区间之外继续夹紧：更窄不缩成负数，更宽不无限长。
+        // 区间之外继续夹紧，更窄不缩成负数，更宽不无限长。
         assert!((shell_at(400.0, None).bottom_left_width() - bottom).abs() < 0.01);
         assert!((shell_at(3840.0, None).bottom_left_width() - full).abs() < 0.01);
     }
 
     #[test]
     fn hiding_the_sidebar_adds_room_for_another_column() {
-        // 隐藏侧栏腾出的宽度必须真的换来多一列
+        // 隐藏侧栏腾出的宽度必须真的换来多一列。
         let width = WIDE_MIN;
         let with_sidebar = ShellEntity::columns_in(width - theme::SIDEBAR_W);
         let without = ShellEntity::columns_in(width);
@@ -668,7 +673,7 @@ mod tests {
 
     #[test]
     fn grid_column_changes_are_coarse_enough_to_notify_sparingly() {
-        // 1px 抖动就改列数会作废「断点内不 notify」的约定
+        // 1px 抖动就改列数会作废「断点内不 notify」的约定。
         let base = ShellEntity::grid_columns_for(1600.0);
         for delta in [-1.0, 0.0, 1.0] {
             assert_eq!(

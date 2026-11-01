@@ -1,4 +1,4 @@
-//! 专辑 / 艺术家 / 歌单详情页的头图。
+//! 专辑、艺术家、歌单详情页的头图。
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -14,7 +14,7 @@ use crate::platform::*;
 use crate::shell::{PanelTab, ShellEntity};
 use crate::theme;
 
-/// 头图封面的边长：再大会在小窗口里把曲目列表整个挤出视野。
+/// 头图封面的边长，再大会在小窗口里把曲目列表整个挤出视野。
 const COVER: f32 = 180.0;
 
 const PLAY_BTN: f32 = 52.0;
@@ -30,19 +30,19 @@ pub enum HeroKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HeroInfo {
     pub kind: HeroKind,
-    /// 大标题：专辑名 / 艺术家名。
+    /// 大标题，专辑名与艺术家名。
     pub title: String,
-    /// 分类标签：「专辑」/「艺术家」/「歌单」。
+    /// 分类标签，「专辑」/「艺术家」/「歌单」。
     pub tag: &'static str,
-    /// 副标题：专辑给艺术家名，艺术家给「N 张专辑」。
+    /// 副标题。专辑给艺术家名，艺术家给「N 张专辑」。
     pub subtitle: String,
-    /// 说明行：「12 首 │ 42:15」。时长未知时只有曲目数。
+    /// 说明行，「12 首 │ 42:15」。时长未知时只有曲目数。
     pub meta: String,
     /// 取封面的代表曲目。空歌单没有曲目可代表，`None` 时画派生色块。
     pub cover_id: Option<TrackId>,
     /// 用户给歌单指定的封面（数据目录里的拷贝）。有它就优先于内嵌封面。
     pub cover_file: Option<PathBuf>,
-    /// 只有歌单头图需要：「更换封面」得知道改哪一个。
+    /// 只有歌单头图需要，「更换封面」得知道改哪一个。
     pub collection_id: Option<CollectionId>,
 }
 
@@ -85,7 +85,7 @@ impl HeroInfo {
     }
 
     /// 「关注」的对象名。艺术家页取标题；专辑页取唯一艺术家名。
-    /// 群星 / 无艺术家（`subtitle` 为空或 [`lyre_core::VARIOUS_ARTISTS`]）返回 `None`。
+    /// 群星或无艺术家（`subtitle` 为空或 [`lyre_core::VARIOUS_ARTISTS`]）返回 `None`。
     pub fn follow_target(&self) -> Option<&str> {
         match self.kind {
             HeroKind::Artist => Some(self.title.as_str()),
@@ -133,7 +133,7 @@ pub fn hero_for(library: &mut LibraryEntity, scope: &Scope) -> Option<HeroInfo> 
     }
 }
 
-/// 拼一个歌单类头图。计数只算当前曲库里解析得出的成员 —— 幽灵行进计数的话「12 首」点进去只有 9 行。
+/// 拼一个歌单类头图。计数只算当前曲库里解析得出的成员。幽灵行进计数的话「12 首」点进去只有 9 行。
 /// 封面取第一个有内嵌封面的成员，一个都没有时用派生色块。
 fn list_hero(
     library: &LibraryEntity,
@@ -187,7 +187,7 @@ pub struct MultiSelectAction {
     pub on_toggle: Rc<dyn Fn(&mut App) + 'static>,
 }
 
-/// 渲染详情页头图：`kind` 只影响封面形状（专辑方形 / 艺术家圆形）。
+/// 渲染详情页头图，`kind` 只影响封面形状（专辑方形与艺术家圆形）。
 pub fn hero(
     info: &HeroInfo,
     library: Entity<LibraryEntity>,
@@ -244,7 +244,7 @@ pub fn hero(
                         .flex_col()
                         .items_start()
                         .gap(px(theme::GAP_SM))
-                        // 父级 `items_end` 只让文字块整体贴底，这里要 `justify_end` 把自己推到底。
+                        // 父级 `items_end` 仅使文字块整体贴底，此处需 `justify_end` 将自身推至底部。
                         .justify_end()
                         .pb(px(6.0))
                         .child(crate::common::section::page_title(info.title.clone()))
@@ -269,7 +269,7 @@ pub fn hero(
         .into_any_element()
 }
 
-/// 头图外框：切角封面 + 错开的斜线纹硬影子，不用投影。
+/// 头图外框。切角封面 + 错开的斜线纹硬影子，不用投影。
 fn framed_cover(cover: AnyElement) -> AnyElement {
     div()
         .flex_none()
@@ -308,7 +308,7 @@ fn action_row(
     cx: &mut App,
 ) -> AnyElement {
     // gpui 0.3.8 没有 `flex_wrap`，一行放不下只能让 chips 收缩，不能换行。
-    // 收缩顺序由 `min_w_0` 决定：两颗 chip 的文字截断，「播放」与「更多」保住完整尺寸。
+    // 收缩顺序由 `min_w_0` 决定。两颗 chip 的文字截断，「播放」与「更多」保住完整尺寸。
     let mut row = div()
         .flex()
         .items_center()
@@ -331,7 +331,7 @@ fn action_row(
         .into_any_element()
 }
 
-/// 关注 / 已关注。名字是键，切换后由 `library` 的事件推 [`crate::root::RootView`] 重绘。
+/// 关注与已关注。名字是键，切换后由 `library` 的事件推 [`crate::root::RootView`] 重绘。
 fn follow_button(name: String, following: bool, library: Entity<LibraryEntity>) -> AnyElement {
     let tip = if following {
         format!("取消关注 {name}")
@@ -358,7 +358,7 @@ fn follow_button(name: String, following: bool, library: Entity<LibraryEntity>) 
     .into_any_element()
 }
 
-/// 随机播放：先打开随机轴，再从可见区第一行开始播。
+/// 随机播放。先打开随机轴，再从可见区第一行开始播。
 fn shuffle_button(info: &HeroInfo, library: Entity<LibraryEntity>) -> AnyElement {
     let label = match info.kind {
         HeroKind::Album => format!("随机播放《{}》", info.title),
@@ -370,16 +370,16 @@ fn shuffle_button(info: &HeroInfo, library: Entity<LibraryEntity>) -> AnyElement
         .tooltip(crate::common::tooltip::builder(label))
         .on_click(move |_, _, cx| {
             library.update(cx, |library, cx| {
-                // 用 set_shuffle 而不是 toggle：已经是随机时，再点一次不该把它关掉。
+                // 用 set_shuffle 而不是 toggle。已经是随机时，再点一次不该把它关掉。
                 library.set_shuffle(true, cx);
-                // 挑第一首能播的，而不是死盯第一行：专辑里第一首可能正是引擎解不了的格式。
+                // 挑第一首能播的，而不是死盯第一行，专辑里第一首可能正是引擎解不了的格式。
                 library.play_first_playable(cx);
             });
         })
         .into_any_element()
 }
 
-/// 更多：只放头图这一排装不下的动作，不重复「播放 / 随机 / 关注」。
+/// 更多。只放头图这一排装不下的动作，不重复「播放、随机、关注」。
 /// 「分享」本仓库没有对应能力，做成禁用态占位。
 fn more_button(
     shell: Entity<ShellEntity>,
@@ -443,7 +443,7 @@ fn more_button(
 }
 
 /// 把光标落到可见区第一行再播它，之后按队列顺序往下走。
-/// 播放队列恒等于曲库顺序（见 `LibraryEntity::set_query`：搜索只改可见性，不改队列）。
+/// 播放队列恒等于曲库顺序，见 `LibraryEntity::set_query`，搜索只改可见性，不改队列。
 fn play_button(info: &HeroInfo, library: Entity<LibraryEntity>) -> AnyElement {
     let label = match info.kind {
         HeroKind::Album => format!("从《{}》的第一首开始播放", info.title),
@@ -467,7 +467,7 @@ fn play_button(info: &HeroInfo, library: Entity<LibraryEntity>) -> AnyElement {
         .child(icon(Glyph::Play, 20., theme::text_on_accent()))
         .on_click(move |_, _, cx| {
             library.update(cx, |library, cx| {
-                // 作用域与搜索自动生效：专辑详情里可见区第一行就是这张专辑的第一首。
+                // 作用域与搜索自动生效，专辑详情里可见区第一行就是这张专辑的第一首。
                 // 第一首若是引擎解不了的格式，会顺延到下一首能播的。
                 library.play_first_playable(cx);
             });
@@ -475,7 +475,7 @@ fn play_button(info: &HeroInfo, library: Entity<LibraryEntity>) -> AnyElement {
         .into_any_element()
 }
 
-/// 封面槽：命中就显示图片，否则请求 + 占位。取图走 [`crate::common::cover::cover_state`]。
+/// 封面槽。命中就显示图片，否则请求 + 占位。取图走 [`crate::common::cover::cover_state`]。
 /// 不能绕开它里的 `is_missing` 那一档，否则没有封面的专辑会每帧重发请求。
 fn cover_slot(
     covers: &Entity<CoverCache>,
@@ -524,7 +524,7 @@ fn cover_slot(
     }
 }
 
-/// 专辑 / 艺术家头图「确实没有封面」那一格。
+/// 专辑与艺术家头图「确实没有封面」那一格。
 fn placeholder_cell(kind: HeroKind, label: &str, radius: f32) -> AnyElement {
     div()
         .flex_none()
@@ -540,7 +540,7 @@ fn placeholder_cell(kind: HeroKind, label: &str, radius: f32) -> AnyElement {
         .into_any_element()
 }
 
-/// 没有封面时的占位：专辑用首字色块（`monogram_color`，各处同一份），艺术家用人形图标。
+/// 没有封面时的占位。专辑用首字色块（`monogram_color`，各处同一份），艺术家用人形图标。
 fn placeholder(kind: HeroKind, initial: Option<char>) -> AnyElement {
     if kind == HeroKind::Artist {
         return div()
@@ -572,7 +572,7 @@ fn placeholder(kind: HeroKind, initial: Option<char>) -> AnyElement {
 
 #[cfg(test)]
 mod tests {
-    // 不要写 `use super::*`：会把 `crate::platform::*` 里的 gpui `test` 宏带进来，
+    // 不要写 `use super::*`。会把 `crate::platform::*` 里的 gpui `test` 宏带进来，
     // 遮蔽内置 `#[test]`。
     use super::HeroInfo;
     use lyre_core::{Track, TrackId};
@@ -594,7 +594,7 @@ mod tests {
         }
     }
 
-    /// 专辑页的「关注」要恰好一位艺术家：多人字段拆开后的那一位才是艺术家页的名字。
+    /// 专辑页的「关注」要恰好一位艺术家，多人字段拆开后的那一位才是艺术家页的名字。
     #[test]
     fn album_follow_target_only_exists_for_a_single_artist() {
         let single = lyre_core::group_by_album(&[track(1, "a", "独集", "林一", None)]);
@@ -682,7 +682,7 @@ mod tests {
 
     #[test]
     fn title_is_never_blank() {
-        // 分组保证标题非空：无标签的曲目归「未知专辑」。
+        // 分组保证标题非空，无标签的曲目归「未知专辑」。
         let tracks = vec![track(1, "a", "", "", None)];
         let groups = lyre_core::group_by_album(&tracks);
         let info = HeroInfo::from_album(&groups[0]);

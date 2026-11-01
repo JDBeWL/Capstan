@@ -31,14 +31,14 @@ pub enum ExclusiveError {
     ThreadSpawn(#[source] std::io::Error),
 }
 
-/// 解码链路的错误直接透传它的文案：那边已经有面向用户的写法了。
+/// 解码链路的错误直接透传它的文案，那边已经有面向用户的写法了。
 impl From<lyre_audio::AudioError> for ExclusiveError {
     fn from(err: lyre_audio::AudioError) -> Self {
         Self::Decode(err.to_string())
     }
 }
 
-/// 反向：独占链路的错误在 `lyre_audio` 那边只留一个入口，内部细节不摊到 `AudioBackend` 上。
+/// 反向。独占链路的错误在 `lyre_audio` 那边只留一个入口，内部细节不摊到 `AudioBackend` 上。
 impl From<ExclusiveError> for lyre_audio::AudioError {
     fn from(err: ExclusiveError) -> Self {
         Self::Exclusive(err.to_string())

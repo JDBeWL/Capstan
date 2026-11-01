@@ -1,5 +1,5 @@
-//! 曲库实体：播放列表、队列顺序、作用域与导入流程。
-//! 曲目集合变了要走三件套：`persist` + `invalidate` + `recompute_visible`。
+//! 曲库实体，管播放列表、队列顺序、作用域与导入流程。
+//! 曲目集合变了要走三件套，`persist` + `invalidate` + `recompute_visible`。
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -36,9 +36,9 @@ pub enum LibraryEvent {
     FocusMoved(usize),
     /// 关注状态变了。详情页头图由 `RootView` 内联渲染、不 observe 实体，只能靠这个事件推重绘。
     FollowChanged,
-    /// 作用域真的换了才发：`set_scope` 是唯一发出者，值没变不发；歌词遮罩只监听它。
+    /// 作用域真的换了才发。`set_scope` 是唯一发出者，值没变不发；歌词遮罩只监听它。
     ScopeChanged,
-    /// 一次导入或补扫完了。`scanned` 是扫到的文件数（含已在库的），`added` 是新入库的，
+    /// 一次导入或补扫完成。`scanned` 为扫到的文件数，含已在库的；`added` 为新入库的数量，
     /// `refreshed` 是重读过标签的；`quiet` 表示这是启动补扫，没有新增就不必打扰用户。
     Imported {
         scanned: usize,
@@ -54,18 +54,18 @@ pub enum LibraryEvent {
         /// 真正重读了几首。
         count: usize,
     },
-    /// 一次操作没能完成，附带的文案直接给用户看（底部提示）。
+    /// 一次操作未能完成，附带的文案直接展示给用户，即底部提示。
     Failed(String),
 }
 
 pub struct LibraryEntity {
     playlist: Playlist,
-    /// 键盘光标：`↑↓` 移动、`Enter` 才播。默认跟着播放走（`follow_playback`）。
-    /// 不变量：要么 `None`，要么在可见行里，由 `recompute_visible` 维持。
+    /// 键盘光标。`↑↓` 移动、`Enter` 才播放。默认跟随播放移动，见 `follow_playback`。
+    /// 不变量。要么 `None`，要么在可见行里，由 `recompute_visible` 维持。
     focus: Option<TrackId>,
-    /// 底色该不该画：光标值一直在（`Enter` / `Delete` 要它），底色只在键盘真的动过之后才画。
+    /// 底色是否绘制。光标值始终存在，`Enter` / `Delete` 依赖它；底色仅在键盘确实移动过之后绘制。
     cursor_visible: bool,
-    /// 实际装进播放器的那一首，不等于 `playlist.current_id()`（后者导入完就指向第一首）。
+    /// 实际装入播放器的曲目，不等于 `playlist.current_id()`；后者在导入完成后即指向第一首。
     now_playing: Option<TrackId>,
     query: String,
     /// 可见曲目在 `playlist.tracks()` 里的下标；`None` = 无过滤，不建恒等索引表。
@@ -76,7 +76,7 @@ pub struct LibraryEntity {
     search_fields: Option<Rc<Vec<crate::entities::filter::SearchFields>>>,
     /// 可见投影的代次。查询、作用域、删歌导致投影重算时加一，派生缓存按它失效。
     visible_generation: u64,
-    /// 曲目 / 歌单 / 收藏 / 最近播放等数据内容的总代次；首页与搜索页的重型派生按它缓存。
+    /// 曲目、歌单、收藏、最近播放等数据内容的总代次；首页与搜索页的重型派生按它缓存。
     data_revision: u64,
     scope: Scope,
     scanning: Option<ScanProgress>,
@@ -85,32 +85,32 @@ pub struct LibraryEntity {
     artist_groups: Option<std::rc::Rc<Vec<ArtistGroup>>>,
     /// 分组缓存的代次，[`Self::invalidate`] 每失效一次加一。
     groups_generation: u64,
-    /// 洗牌种子：进随机时按固定乘加序列推进，决定洗牌顺序。
+    /// 洗牌种子。进随机时按固定乘加序列推进，决定洗牌顺序。
     seed: u64,
-    /// 导入时是否递归子目录（来自设置）
+    /// 导入时是否递归子目录，来自设置。
     recursive: bool,
     /// 导入过的文件夹。曲库只存曲目，没有「是从哪扫来的」这层信息，
     /// 补扫新歌与「我加过哪几个文件夹」都要靠这份根。
     roots: Roots,
-    /// 当前这轮扫描的停止标志：换目标时先立起来，后台线程才不会白读剩下的标签。
+    /// 当前这轮扫描的停止标志。换目标时先立起来，后台线程才不会白读剩下的标签。
     scan_cancel: Option<Arc<AtomicBool>>,
-    /// 随机轴，另一轴是 [`Self::repeat`]，由 [`Self::effective_mode`] 折算成 `PlayMode`
+    /// 随机轴，另一轴是 [`Self::repeat`]，由 [`Self::effective_mode`] 折算成 `PlayMode`。
     shuffle: bool,
     repeat: RepeatState,
     liked: crate::likes::Likes,
-    /// 已关注的艺术家，按名字键控（不是 id）
+    /// 已关注的艺术家，按名字键控，而非 id。
     followed: crate::follows::Follows,
     collections: Collections,
-    /// 最近播放，跨重启
+    /// 最近播放，跨重启。
     recents: crate::recents::Recents,
     /// 首屏还在等后台读 `library.json`。加载期间不落盘，避免把只有新导入项的曲库覆盖回去。
     loading: bool,
-    /// 首屏加载任务，只写不读：留着它才能在实体销毁时取消。
+    /// 首屏加载任务，只写不读，留着它才能在实体销毁时取消。
     #[allow(dead_code)]
     load_task: Option<Task<()>>,
-    /// 后台扫描任务，只写不读：留着它是为了 Drop 时取消扫描 —— `Task` 一 drop 就中止。
+    /// 后台扫描任务，只写不读，留着它是为了 Drop 时取消扫描。`Task` 一 drop 就中止。
     _scan: Option<Task<()>>,
-    /// 启动后回后台核对文件是否还在的任务，只写不读：同样靠 drop 中止。
+    /// 启动后回后台核对文件是否还在的任务，只写不读，同样靠 drop 中止。
     #[allow(dead_code)]
     verify_task: Option<Task<()>>,
 }
@@ -119,7 +119,7 @@ impl EventEmitter<LibraryEvent> for LibraryEntity {}
 
 impl LibraryEntity {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        // 窗口先出来：读盘、解析 JSON 与逐首核对文件都在后台线程做，完成后再合并。
+        // 窗口先出来。读盘、解析 JSON 与逐首核对文件都在后台线程做，完成后再合并。
         let mut this = Self {
             playlist: Playlist::new(),
             focus: None,
@@ -197,7 +197,7 @@ impl LibraryEntity {
         }
     }
 
-    /// 后台核对缓存里的文件是否还在。核完才剔 —— 剔之前那几行就是幽灵。
+    /// 后台核对缓存里的文件是否还在。核完才剔。剔之前那几行就是幽灵。
     fn verify_files(&mut self, cx: &mut Context<Self>) {
         let entries: Vec<(TrackId, std::path::PathBuf)> = self
             .playlist
@@ -223,7 +223,7 @@ impl LibraryEntity {
         self.verify_task = Some(verify);
     }
 
-    /// 批量剔掉已经不在磁盘上的曲目。整趟只落盘一次、只重算一次投影 ——
+    /// 批量剔掉已经不在磁盘上的曲目。整趟只落盘一次、只重算一次投影。
     /// 逐条走 [`Self::remove`] 会把库重写 N 遍。
     fn drop_vanished(&mut self, ids: &[TrackId], cx: &mut Context<Self>) {
         let mut removed = 0usize;
@@ -233,7 +233,7 @@ impl LibraryEntity {
         if removed == 0 {
             return;
         }
-        // 光标不能悬空：它指着的那一行可能刚被剔掉
+        // 光标不能悬空，它指着的那一行可能刚被剔掉。
         if self
             .focus
             .is_some_and(|id| self.playlist.by_id(id).is_none())
@@ -258,12 +258,12 @@ impl LibraryEntity {
         &self.playlist
     }
 
-    /// 全部曲目（未经搜索过滤）
+    /// 全部曲目，未经搜索过滤。
     pub fn tracks(&self) -> &[Track] {
         self.playlist.tracks()
     }
 
-    /// 曲库总数（未经过滤）
+    /// 曲库总数，未经过滤。
     pub fn len(&self) -> usize {
         self.playlist.len()
     }
@@ -299,7 +299,7 @@ fn merge_tracks(loaded: Vec<Track>, pending: Vec<Track>) -> Playlist {
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：`crate::platform::*` 带的 gpui `test` 宏会遮蔽内置 `#[test]`。
+    // 不写 `use super::*`，`crate::platform::*` 带的 gpui `test` 宏会遮蔽内置 `#[test]`。
     use std::path::{Path, PathBuf};
 
     use lyre_core::{Track, TrackId};

@@ -1,4 +1,4 @@
-//! 悬停进度：鼠标进出一行 / 一个按钮时，逐帧返回 0→1 或 1→0。
+//! 悬停进度。鼠标进出一行或一个按钮时，逐帧返回 0→1 或 1→0。
 //! 用 `window` 的 keyed state 存进度；悬停目标放在线程本地，切页时整窗重绘一次即可。
 
 use std::cell::RefCell;
@@ -42,7 +42,7 @@ fn is_active(id: &ElementId) -> bool {
     ACTIVE.with(|active| active.borrow().as_ref() == Some(id))
 }
 
-/// 按钮类：280ms mech。
+/// 按钮类，280ms mech。
 pub fn progress(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) -> f32 {
     sample(
         id.into(),
@@ -53,7 +53,7 @@ pub fn progress(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) -> 
     )
 }
 
-/// 列表行：250ms snap。
+/// 列表行，250ms snap。
 pub fn row_progress(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) -> f32 {
     sample(
         id.into(),

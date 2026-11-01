@@ -1,5 +1,5 @@
-//! `lyre-core` 端到端测试：扫描 → 读标签 → 入队 → 分组 → 排序 / 撤销。
-//! 钉跨模块契约：扫描路径进 `Playlist::push`，`tracks()` 供分组，移出再回插可复原。
+//! `lyre-core` 端到端测试，扫描 → 读标签 → 入队 → 分组 → 排序与撤销。
+//! 钉跨模块契约。扫描路径进 `Playlist::push`，`tracks()` 供分组，移出再回插可复原。
 //! `clippy.toml` 的 `allow-*-in-tests` 不覆盖独立集成测试 crate，故此处显式允许。
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -11,9 +11,10 @@ use lyre_core::{
     scan_into_tracks,
 };
 
-/// 铺一棵曲库树：`a.mp3`、`B.FLAC`（扩展名大小写不敏感）、`notes.txt`（非音频，须忽略）、`sub/c.wav`。
+/// 铺一棵曲库树。`a.mp3`、`B.FLAC`（扩展名大小写不敏感）、`notes.txt`、`sub/c.wav`；
+/// 其中 `notes.txt` 非音频，应被忽略。
 ///
-/// `tag` 必须各用例不同：用例在同一进程里并行跑，共用目录会互相删数据。
+/// `tag` 必须各用例不同。用例在同一进程里并行跑，共用目录会互相删数据。
 fn fixture(tag: &str) -> PathBuf {
     let root =
         std::env::temp_dir().join(format!("lyre-core-pipeline-{tag}-{}", std::process::id()));
@@ -42,7 +43,7 @@ fn file_names(paths: &[PathBuf]) -> Vec<String> {
     names
 }
 
-/// 扫出的曲目。文件里没有真标签，标题来自文件名、专辑 / 艺术家来自目录名。
+/// 扫出的曲目。文件里没有真标签，标题来自文件名、专辑与艺术家来自目录名。
 fn scanned(root: &Path) -> Vec<Track> {
     let paths = collect_audio_paths_with(&[root.to_path_buf()], true);
     let mut tracks = Vec::new();
@@ -68,7 +69,7 @@ fn collection_honours_recursion_extensions_and_dedup() {
         "「仅顶层」不该把直接子目录里的音频也收进来"
     );
 
-    // 同一个文件经由「父目录」和「它自己」各出现一次 —— 结果必须去重
+    // 同一个文件经由「父目录」与「其自身」各出现一次，结果必须去重。
     let overlapping = collect_audio_paths_with(&[root.clone(), root.join("sub")], true);
     assert_eq!(
         file_names(&overlapping),
@@ -94,7 +95,7 @@ fn scanning_reports_every_file_and_reads_broken_ones_as_fallbacks() {
         "按 chunk=2 分批，最后一批不满"
     );
 
-    // 内容是垃圾，读不出标签 → 退化成 fallback：标题取文件名
+    // 内容是垃圾，读不出标签 → 退化成 fallback，标题取文件名。
     let mut titles: Vec<&str> = chunks
         .iter()
         .flatten()
@@ -106,7 +107,7 @@ fn scanning_reports_every_file_and_reads_broken_ones_as_fallbacks() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// 全链路：扫描 → 入队 → 分组 → 排序 → 移出 → 撤销回插 → 打乱模式。
+/// 全链路，扫描 → 入队 → 分组 → 排序 → 移出 → 撤销回插 → 打乱模式。
 #[test]
 fn the_scanned_tracks_flow_through_queue_grouping_and_undo() {
     let root = fixture("pipeline");
@@ -152,7 +153,7 @@ fn the_scanned_tracks_flow_through_queue_grouping_and_undo() {
         "分组不该丢曲目"
     );
 
-    // 换排序键不该丢曲目，只该换顺序
+    // 换排序键不该丢曲目，只该换顺序。
     playlist.sort_by(SortKey::Title);
     assert_eq!(playlist.sort_key(), SortKey::Title);
     let sorted: Vec<&str> = playlist
@@ -167,7 +168,7 @@ fn the_scanned_tracks_flow_through_queue_grouping_and_undo() {
     );
     assert_eq!(playlist.len(), 3, "排序不该改变曲目数");
 
-    // 移出一首再撤销回插：位置与光标都要复原
+    // 移出一首再撤销回插，位置与光标都要复原。
     let victim = playlist.tracks()[1].clone();
     let victim_index = 1;
     playlist.jump_to(victim.id);
@@ -183,7 +184,7 @@ fn the_scanned_tracks_flow_through_queue_grouping_and_undo() {
         Some(victim.title.as_str())
     );
 
-    // 打乱只是换顺序：曲目集合必须原封不动（这是「随机播放丢歌」那类事故的哨兵）
+    // 打乱只是换顺序，曲目集合必须原封不动（这是「随机播放丢歌」那类事故的哨兵）
     playlist.set_mode(PlayMode::Shuffle, 0x1234_5678);
     let shuffled: Vec<String> = playlist
         .tracks()

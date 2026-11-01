@@ -71,7 +71,7 @@ fn host() -> &'static DeviceHost {
 
 fn enumerate_now() -> Vec<AudioDeviceInfo> {
     let host = cpal::default_host();
-    // 先取默认设备：cpal 借此在当前线程初始化 COM，再枚举就不会踩到未初始化的公寓。
+    // 先取默认设备。cpal 借此在当前线程初始化 COM，此后枚举便不会落入未初始化的 COM 单元。
     let default_id = host
         .default_output_device()
         .and_then(|device| device.id().ok())

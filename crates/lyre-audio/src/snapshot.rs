@@ -3,14 +3,14 @@ use std::time::Duration;
 
 use crate::event::PlaybackState;
 
-/// 播放状态的无锁快照：音频线程每 50ms 写一次，渲染线程随时读，双方都不加锁。
+/// 播放状态的无锁快照。音频线程每 50ms 写一次，渲染线程随时读，双方都不加锁。
 /// 进度条每秒读几十次，光通知开销就足以掉帧。
 #[derive(Debug)]
 pub struct Snapshot {
     position_ms: AtomicU64,
     duration_ms: AtomicU64,
     state: AtomicU8,
-    /// `f32::to_bits` 的结果
+    /// `f32::to_bits` 的结果。
     volume_bits: AtomicU32,
 }
 

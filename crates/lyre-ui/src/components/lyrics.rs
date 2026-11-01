@@ -1,4 +1,4 @@
-//! 歌词全屏视图：盖在主区卡片上，当前句高亮居中、逐字点亮、点击跳转。
+//! 歌词全屏视图。盖在主区卡片上，当前句高亮居中、逐字点亮、点击跳转。
 //! 跟随进度重绘的粒度是「换行或换字」，不是每帧。
 
 use std::path::PathBuf;
@@ -13,7 +13,7 @@ use crate::platform::*;
 use crate::shell::ShellEntity;
 use crate::theme;
 
-/// 文字盒高 = 字号 × 这个比例。gpui 默认行高是字号的 1.618 倍，用它会让原文盒（52）远大于译文盒。
+/// 文字盒高 = 字号 × 这个比例。gpui 默认行高是字号的 1.618 倍，用它会使原文盒高 52 远大于译文盒。
 const LINE_BOX_RATIO: f32 = 1.3;
 /// 药丸的上下内边距，左右用 `GAP_LG`。
 const PILL_PAD_Y: f32 = theme::GAP_XS;
@@ -25,13 +25,13 @@ const BASE_FLOOR: f32 = 22.0;
 const _: () = assert!(BASE_FLOOR == BASE_TIERS[BASE_TIERS.len() - 1]);
 /// 挑档位时按多长的句子算「放得下」。再长的让它折行，而不是把整列拖小。
 const LONG_LINE_EM: f32 = 20.0;
-/// 邻行相对当前行的字号比例。用比例而非固定 px 差：基准降到 22 时再减 8 就只剩 14。
+/// 邻行相对当前行的字号比例。用比例而非固定 px 差，基准降到 22 时再减 8 就只剩 14。
 const IDLE_RATIO: f32 = 0.7;
-/// 邻行字号的可读下限。基准最低 22，`22 × 0.7 = 15.4` 会撞到它。
+/// 邻行字号的可读下限。基准最低为 22，`22 × 0.7 = 15.4` 会触及该下限。
 const IDLE_FLOOR: f32 = 16.0;
 /// 译文相对原文的字号差，单位 px。
 const TRANSLATION_STEP: f32 = 4.0;
-/// 邻行按距离衰减的不透明度 —— gpui 的元素样式没有 `blur`，用它代替雾化。
+/// 邻行按距离衰减的不透明度。gpui 的元素样式没有 `blur`，用它代替雾化。
 const OPACITY_NEAR: f32 = 0.5;
 const OPACITY_FAR: f32 = 0.22;
 /// 当前行里还没唱到的字的不透明度，必须高于邻行。
@@ -41,7 +41,7 @@ const _: () = assert!(OPACITY_UNSUNG > OPACITY_NEAR);
 const RAMP_MIN: Duration = Duration::from_millis(60);
 const RAMP_MAX: Duration = Duration::from_millis(900);
 
-/// 弹簧参数：略低于临界阻尼，一步一行的滚动不来回晃。
+/// 弹簧参数。略低于临界阻尼，一步一行的滚动不来回晃。
 const SCROLL_SPRING: SpringConfig = SpringConfig::new(180.0, 26.0, 1.0);
 
 #[derive(Clone, Debug)]
@@ -49,7 +49,7 @@ enum Loaded {
     Idle,
     Loading,
     Ready(Rc<Lyrics>),
-    /// 确认没有同名 `.lrc` / `.ass`，或读不出内容
+    /// 确认没有同名 `.lrc` / `.ass`，或读不出内容。
     Missing,
 }
 
@@ -59,7 +59,7 @@ pub struct LyricsView {
     state: Loaded,
     /// `state` 属于哪首曲目。换曲靠它识别，也用来丢弃过期请求的结果。
     path: Option<PathBuf>,
-    /// 当前行 / 当前字。只在它们变化时 `notify`，把跟随进度的重绘压到每句每字一次。
+    /// 当前行与当前字。只在它们变化时 `notify`，把跟随进度的重绘压到每句每字一次。
     active: Option<usize>,
     word: Option<usize>,
     _subs: Vec<Subscription>,
@@ -71,7 +71,7 @@ impl LyricsView {
         shell: Entity<ShellEntity>,
         cx: &mut Context<Self>,
     ) -> Self {
-        // observe 而不是 subscribe：进度本身不发事件，只会 `notify` 播放实体。
+        // observe 而不是 subscribe。进度本身不发事件，只会 `notify` 播放实体。
         let observe = cx.observe(&playback, |this, _, cx| this.on_playback(cx));
         Self {
             playback,
@@ -84,7 +84,7 @@ impl LyricsView {
         }
     }
 
-    /// 播放实体每次 `notify` 都会走到这里（约 10Hz），但只有换曲、换行、换字才可能重绘。
+    /// 播放实体每次 `notify` 都会走到这里，约 10Hz，但只有换曲、换行、换字才可能重绘。
     fn on_playback(&mut self, cx: &mut Context<Self>) {
         let current = self
             .playback
@@ -112,14 +112,14 @@ impl LyricsView {
         self.sync_active(cx);
     }
 
-    /// 后台读侧文件。发起时不 `notify`：遮罩要么还没打开，要么显示的仍是上一句。
+    /// 后台读侧文件。发起时不 `notify`。遮罩要么还没打开，要么显示的仍是上一句。
     fn request(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.path = Some(path.clone());
         self.state = Loaded::Loading;
         self.active = None;
         self.word = None;
 
-        // `background_executor()` 返回借用，必须 clone 才能带进 'static 任务
+        // `background_executor()` 返回借用，必须 clone 才能带进 'static 任务。
         let executor = cx.background_executor().clone();
         let loaded_for = path.clone();
         cx.spawn(async move |this, cx| {
@@ -127,7 +127,7 @@ impl LyricsView {
                 .spawn(async move { lyre_core::lyrics::load_for_audio(&loaded_for) })
                 .await;
             this.update(cx, |this, cx| {
-                // 期间又换过曲就丢弃这份结果，否则会把上一首的歌词贴到当前这首上
+                // 期间又换过曲就丢弃这份结果，否则会把上一首的歌词贴到当前这首上。
                 if this.path.as_deref() == Some(path.as_path()) {
                     this.state = match loaded {
                         Some(lyrics) => Loaded::Ready(Rc::new(lyrics)),
@@ -170,7 +170,7 @@ fn seek_handler(
     move |_, _, cx| playback.update(cx, |playback, _| playback.seek(start))
 }
 
-/// 一行在给定字号下的估计宽度：CJK / 假名 / 全角标点 ≈ 1 em，其余 ASCII ≈ 0.52 em，
+/// 一行在给定字号下的估计宽度。CJK / 假名与全角标点 ≈ 1 em，其余 ASCII ≈ 0.52 em，
 /// 空格 0.30 em，粗体 ×1.06。只用来数折行的行数，估大比估小安全。
 fn text_width(text: &str, size: f32, bold: bool) -> f32 {
     let em = text
@@ -185,7 +185,7 @@ fn text_width(text: &str, size: f32, bold: bool) -> f32 {
 }
 
 /// 正文可用的文字宽度。gpui 渲染期拿不到元素实际宽度，只能从布局状态推：
-/// 卡片宽 = 窗口宽 − 两侧 GUTTER − 侧栏 −（右面板开着时的缝 + 面板宽），再扣掉内边距。
+/// 卡片宽 = 窗口宽 − 两侧 GUTTER − 侧栏宽 − 右面板开着时的缝与面板宽，再扣掉内边距。
 fn text_budget(window: f32, sidebar: f32, panel_open: bool) -> f32 {
     let panel = if panel_open {
         theme::GUTTER + theme::RIGHT_PANEL_W
@@ -196,7 +196,7 @@ fn text_budget(window: f32, sidebar: f32, panel_open: bool) -> f32 {
         .max(0.0)
 }
 
-/// 整列的基准字号：只看正文预算，不看每句长短（签名里没有句子）。
+/// 整列的基准字号。只看正文预算，不看每句长短，因签名中不含句子。
 fn active_size(budget: f32) -> f32 {
     *BASE_TIERS
         .iter()
@@ -204,7 +204,7 @@ fn active_size(budget: f32) -> f32 {
         .unwrap_or(&BASE_FLOOR)
 }
 
-/// 邻行的字号：基准退一档比例，夹在可读下限上。
+/// 邻行的字号。基准退一档比例，夹在可读下限上。
 fn idle_size(budget: f32) -> f32 {
     (active_size(budget) * IDLE_RATIO).round().max(IDLE_FLOOR)
 }
@@ -225,7 +225,7 @@ fn line_box(size: f32) -> f32 {
     (size * LINE_BOX_RATIO).round()
 }
 
-/// 译文占几行。每行都画自己的译文，所以行高不再统一。
+/// 译文占用的行数。每行分别绘制各自的译文，故行高不统一。
 fn translation_rows(line: &LyricLine) -> Vec<&str> {
     line.translation
         .as_deref()
@@ -233,7 +233,7 @@ fn translation_rows(line: &LyricLine) -> Vec<&str> {
         .unwrap_or_default()
 }
 
-/// 药丸内容区高度：原文 + 它自己的每行译文，各自按 `size` 数出要占几个视觉行。
+/// 药丸内容区高度。原文加其每行译文，各自按 `size` 计算所占视觉行数。
 /// 译文永远按常规字重画，粗体只影响原文行。
 fn pill_height(line: &LyricLine, size: f32, budget: f32, bold: bool) -> f32 {
     let trans = translation_size(size);
@@ -244,14 +244,14 @@ fn pill_height(line: &LyricLine, size: f32, budget: f32, bold: bool) -> f32 {
             .sum::<f32>()
 }
 
-/// 一行的槽位高度：按「这一行是当前行」的字号与粗体算，槽位才永远装得下药丸；
+/// 一行的槽位高度。按「这一行是当前行」的字号与粗体算，槽位才永远装得下药丸；
 /// 且不随谁是当前行变化，否则弹簧每步位移不等距，滚动会一长一短地跳。
 fn slot_height(line: &LyricLine, budget: f32) -> f32 {
     pill_height(line, active_size(budget), budget, true) + 2.0 * PILL_PAD_Y + ROW_GAP
 }
 
 /// 当前行的中心离正文列顶部多远，列从「容器正中」的锚点往上挪这个距离。
-/// 不用外层 flex 居中：列比容器高得多，溢出的 flex 子项怎么居中由布局引擎的 overflow 对齐决定。
+/// 不用外层 flex 居中。列比容器高得多，溢出的 flex 子项怎么居中由布局引擎的 overflow 对齐决定。
 fn active_center_from_top(heights: &[f32], active: usize) -> f32 {
     let Some(last) = heights.len().checked_sub(1) else {
         return 0.0;
@@ -291,7 +291,7 @@ impl Render for LyricsView {
         };
 
         div()
-            // 遮罩必须绑鼠标监听：gpui 只对注册了鼠标监听的元素做命中测试，光有 `id` 不挡点击。
+            // 遮罩必须绑鼠标监听。gpui 只对注册了鼠标监听的元素做命中测试，光有 `id` 不挡点击。
             .id("lyrics-overlay")
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(|_, _, cx| cx.stop_propagation())
@@ -326,7 +326,7 @@ impl Render for LyricsView {
     }
 }
 
-/// 顶部一行：曲目身份 + 关闭按钮。
+/// 顶部一行，曲目身份 + 关闭按钮。
 fn header(
     title: Option<&str>,
     artist: Option<&str>,
@@ -378,7 +378,7 @@ fn header(
         .child(close)
 }
 
-/// 居中一块提示文字：加载中 / 没有歌词 / 没在播放。
+/// 居中一块提示文字，用于加载中、没有歌词与没在播放三种情形。
 fn notice(headline: &'static str, detail: Option<&'static str>) -> impl IntoElement {
     div()
         .flex_1()
@@ -408,7 +408,7 @@ fn notice(headline: &'static str, detail: Option<&'static str>) -> impl IntoElem
         })
 }
 
-/// 歌词正文：每行一个固定槽位（见 [`slot_height`]），药丸在槽位里居中，
+/// 歌词正文。每行一个固定槽位，见 [`slot_height`]；药丸在槽位中居中，
 /// 靠弹簧偏移把当前行送到容器垂直中央。
 fn lyrics_column(
     lyrics: &Rc<Lyrics>,
@@ -418,7 +418,7 @@ fn lyrics_column(
     budget: f32,
 ) -> impl IntoElement {
     let anchor = active.unwrap_or(0);
-    // 整列共用一个字号：邻行只是它退一档，所以两档都先算一次
+    // 整列共用一个字号。邻行只是它退一档，所以两档都先算一次。
     let current = active_size(budget);
     let idle = idle_size(budget);
     let heights: Vec<f32> = lyrics
@@ -448,7 +448,7 @@ fn lyrics_column(
             .flex_wrap()
             .items_center()
             .justify_center()
-            // 放不下的长句折行，所以宽度封顶在正文预算上（行数按同一个预算数出来）。
+            // 过长的句子会折行，故宽度封顶于正文预算，行数也按同一预算计算。
             .max_w(px(budget))
             .line_height(px(original_box))
             .text_size(px(size))
@@ -513,7 +513,7 @@ fn lyrics_column(
         .min_h_0()
         .relative()
         .overflow_hidden()
-        // 容器正中的 0 高锚点：列从它往上挪，绕开「居中溢出盒子」的语义
+        // 容器正中的 0 高锚点。列从它往上挪，绕开「居中溢出盒子」的语义。
         .child(
             div()
                 .absolute()
@@ -529,7 +529,7 @@ fn lyrics_column(
                         .items_center()
                         .w_full()
                         .min_w_0()
-                        // 弹簧自己补帧，视图不必每帧重绘；目标只在换行时变
+                        // 弹簧自行补帧，视图无需每帧重绘；目标仅在换行时变化。
                         .with_spring(
                             "lyrics-scroll",
                             SpringAnimation::new(SCROLL_SPRING).to(px(-offset)),
@@ -540,8 +540,8 @@ fn lyrics_column(
         )
 }
 
-/// 当前行的正文：有逐字时间戳就一格一个元素，正在唱的那格在自己的时长里从暗爬到亮；
-/// 没有逐字信息时整行一个元素。
+/// 当前行的正文。存在逐字时间戳时每格一个元素，正在演唱的那格在其时长内由暗转亮；
+/// 无逐字信息时整行作为一个元素。
 fn original_spans(
     line: &LyricLine,
     row: usize,
@@ -577,8 +577,8 @@ fn original_spans(
                     .child(part.text.clone())
                     .into_any_element();
             }
-            // 动画 id 带格号：换格即重挂，这一格的爬升恰好在自己唱完时到顶。
-            // 时间戳倒挂（脏歌词）时按最短爬升处理，不给 panic 留口子。
+            // 动画 id 携带格号。换格即重新挂载，该格的爬升恰好在其演唱结束时到达顶点。
+            // 时间戳倒挂即歌词为脏数据时，按最短爬升处理，不留下 panic 的可能。
             let ramp = part
                 .end
                 .checked_sub(part.start)
@@ -630,7 +630,7 @@ mod tests {
 
     /// 宽到够得着最大档的预算。
     const WIDE: f32 = 1500.0;
-    /// 最小窗口（560 宽、侧栏收成图标条）时的预算。
+    /// 最小窗口时的预算，此时宽 560、侧栏收成图标条。
     const NARROW: f32 = 150.0;
 
     /// 608 = 1264px 窗口开着右面板，355 = 1011px。
@@ -655,7 +655,7 @@ mod tests {
         );
     }
 
-    /// 放不下的长句折行，所以槽位要按「几个视觉行」留高 —— 只留一行高就会把第二行裁掉。
+    /// 放不下的长句折行，所以槽位要按「几个视觉行」留高。只留一行高就会把第二行裁掉。
     #[test]
     fn 长句按行数占位() {
         let budget = 608.0;
@@ -675,7 +675,7 @@ mod tests {
         assert!(slot_height(&long, budget) > slot_height(&short, budget));
     }
 
-    /// 译文常常比原文长得多，它也要按自己的字号数行数，不能只按原文留高。
+    /// 译文常远长于原文，行数需按其自身字号计算，不可仅按原文预留高度。
     #[test]
     fn 译文行按自己的字号数行数() {
         let budget = 608.0;
@@ -763,7 +763,7 @@ mod tests {
             }
         }
         assert_eq!(active_center_from_top(&[], 3), 0.0, "空列不能 panic");
-        // active 越界（换曲瞬间的旧序号）要夹住，不能读越界
+        // active 越界时需夹住，如换曲瞬间的旧序号，不得越界读取。
         let heights = vec![H; 3];
         assert_eq!(active_center_from_top(&heights, 99), 2.5 * H);
     }
@@ -779,7 +779,7 @@ mod tests {
                 "行高统一时换一句恰好走一行高，弹簧每步位移才等距"
             );
         }
-        // 上一行更高时，换到下一行要多走它的整高，而不是一个固定行高
+        // 上一行更高时，换到下一行要多走它的整高，而不是一个固定行高。
         let mut mixed = vec![H; 8];
         mixed[3] = H + T;
         assert_eq!(
@@ -790,7 +790,7 @@ mod tests {
 
     #[test]
     fn 当前行下方的行不影响它是否居中() {
-        // 锚点法只看「列顶到当前行中心」的距离，所以下面的行长成什么样都无所谓
+        // 锚点法只看「列顶到当前行中心」的距离，所以下面的行长成什么样都无所谓。
         let base = vec![H; 7];
         let mut below = base.clone();
         below[5] += 3.0 * T;
@@ -799,7 +799,7 @@ mod tests {
             active_center_from_top(&below, 2)
         );
 
-        // 上方的行变高，当前行就被顶下去它的整高
+        // 上方的行变高，当前行就被顶下去它的整高。
         let mut above = base.clone();
         above[1] += T;
         assert_eq!(
@@ -807,7 +807,7 @@ mod tests {
             T
         );
 
-        // 当前行自己变高只算一半：要的是中心对齐，不是顶对齐
+        // 当前行自身增高只计入一半。此处需要中心对齐，而非顶对齐。
         let mut own = base.clone();
         own[2] += T;
         assert_eq!(
@@ -842,7 +842,7 @@ mod tests {
             2.0 * trans_box
         );
 
-        // 槽位按「当前行」的字号与行数算，邻行（更小字号、更少行数）永远装得下
+        // 槽位按「当前行」的字号与行数计算，邻行字号更小、行数更少，永远装得下。
         for chars in [3usize, 14, 15, 24, 25, 60] {
             let text = "字".repeat(chars);
             for translation in [None, Some("译文译文"), Some(&"译".repeat(50) as &str)] {
@@ -863,7 +863,7 @@ mod tests {
 
     #[test]
     fn 双语行的墨迹中心落在药丸中心() {
-        // 墨迹在各自的盒子里居中，联合中心按墨迹高度加权
+        // 墨迹在各自的盒子里居中，联合中心按墨迹高度加权。
         let ink_center = |boxes: &[f32], sizes: &[f32]| -> f32 {
             let mut tops = vec![0.0];
             for box_h in &boxes[..boxes.len() - 1] {
@@ -910,9 +910,9 @@ mod tests {
         let karaoke = line("甲乙", None, 3);
         assert_eq!(karaoke.word_index(Duration::ZERO), Some(0));
         assert_eq!(karaoke.word_index(Duration::from_millis(400)), Some(2));
-        // 行尾之后仍停在最后一格，不会翻到下一格
+        // 行尾之后仍停在最后一格，不会翻到下一格。
         assert_eq!(karaoke.word_index(Duration::from_secs(9)), Some(2));
-        // 没有逐字信息的行返回 None，界面整行一起点亮
+        // 没有逐字信息的行返回 None，界面整行一起点亮。
         assert_eq!(line("甲乙", None, 0).word_index(Duration::ZERO), None);
     }
 }

@@ -14,13 +14,13 @@ use crate::error::{AudioError, Result};
 
 use super::track::TrackDecoder;
 
-/// 畸形文件头（声道数写 0）时尝试使用立体声。
+/// 畸形文件头即声道数写 0 时，尝试使用立体声。
 const DEFAULT_CHANNELS: ChannelCount = match std::num::NonZeroU16::new(2) {
     Some(value) => value,
     None => ChannelCount::MIN,
 };
 
-/// 畸形文件头（采样率写 0）时直接尝试 48kHz。
+/// 畸形文件头即采样率写 0 时，直接尝试 48kHz。
 const DEFAULT_SAMPLE_RATE: SampleRate = match std::num::NonZeroU32::new(48_000) {
     Some(value) => value,
     None => SampleRate::MIN,
@@ -28,32 +28,32 @@ const DEFAULT_SAMPLE_RATE: SampleRate = match std::num::NonZeroU32::new(48_000) 
 
 const CHUNK: usize = 16_384;
 
-/// 有界通道容量（块数）：约 5 秒 48kHz 立体声 PCM（约 2MB）。
+/// 有界通道容量，按块计。约 5 秒 48kHz 立体声 PCM，约 2MB。
 const CHANNEL_CAPACITY_CHUNKS: usize = 30;
 
-/// 回收通道容量：音频通道里的块 + 生产端手里的一块 + 消费端手里的一块。
+/// 回收通道容量，音频通道里的块 + 生产端手里的一块 + 消费端手里的一块。
 /// 定了这个上界，消费端归还时就不会遇到「通道满」，稳态下不产生释放。
 const RECYCLE_CAPACITY_CHUNKS: usize = CHANNEL_CAPACITY_CHUNKS + 2;
 
-/// 解码收工后等消费端把在途块送回来的轮询间隔。
+/// 解码结束后等待消费端送回在途块的轮询间隔。
 const TAIL_POLL: Duration = Duration::from_millis(20);
 
-/// 解码线程检查停止标志的间隔（样本数）。`drop` 可能发生在音频回调线程上，
+/// 解码线程检查停止标志的间隔，按样本数计。`drop` 可能发生在音频回调线程上，
 /// 把检查铺进采样循环能把退出延迟压在一个数据包之内。
 const STOP_CHECK_INTERVAL: usize = 256;
 
-/// [`WhenEmpty::Wait`] 的单次等待上限。它同时是换手时收工延迟的上限：
-/// 推送线程卡在等里头时收不到取消标志，只能等这一觉醒来；解码卡死也靠兜底静音放行，不能无限等。
+/// [`WhenEmpty::Wait`] 的单次等待上限，同时是换手时结束延迟的上限：
+/// 推送线程阻塞于等待中时收不到取消标志，只能等本轮超时；解码停滞亦由兜底静音放行，不可无限等待。
 const WAIT_LIMIT: Duration = Duration::from_millis(200);
 
-/// 通道空着、解码还没追上时怎么办 —— 空时吐出的 `0.0` 会被下游当成曲子的内容。
+/// 通道空置、解码尚未跟上时的策略，空时输出的 `0.0` 会被下游当作曲目内容。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WhenEmpty {
     /// 立刻吐静音顶上。rodio 的 mixer 在音频回调线程上拉，那里绝不能阻塞。
-    /// 亏欠只有一次回调那么多（几十毫秒以内），代价可以接受。
+    /// 亏欠仅为一次回调的量，在几十毫秒以内，代价可以接受。
     PadWithSilence,
-    /// 先等一等真样本（最长 `WAIT_LIMIT`），等不到才兜底吐静音。
-    /// 给独占输出的推送线程用：它不在实时线程上，快过解码线程是常态，补白进了环就成了曲子里的沉默段。
+    /// 先等待真实样本，最长 `WAIT_LIMIT`；等不到时才以静音兜底。
+    /// 供独占输出的推送线程使用。它不在实时线程上，快过解码线程属常态，补白进入环便成为曲目中的静音段。
     Wait,
 }
 
@@ -119,15 +119,15 @@ impl LockFreeSource {
                     if batch.is_empty() {
                         break;
                     }
-                    // 通道满了就在这里等，天然形成背压
+                    // 通道满了就在这里等，天然形成背压。
                     if sender.send(batch).is_err() {
                         finished.store(true, Ordering::Release);
                         return;
                     }
                 }
                 finished.store(true, Ordering::Release);
-                // 解码收工后不能马上退出：尾段消费端还会把在途块送回来，通道一断，
-                // 那些块就会在音频回调线程上释放。等源被丢弃（stop 置位）再统一回收。
+                // 解码结束后不得立即退出。尾段消费端仍会送回在途块，通道一旦断开，
+                // 这些块将在音频回调线程上释放。必须等源被丢弃、`stop` 置位后再统一回收。
                 while !stop.load(Ordering::Relaxed) {
                     thread::sleep(TAIL_POLL);
                 }
@@ -178,13 +178,13 @@ impl Iterator for LockFreeSource {
             }
             Fetched::Done => return None,
             Fetched::Starved => {
-                // 欠载时吐静音撑住输出流，绝不在这里阻塞（`Wait` 已经先等过一轮了）
+                // 欠载时以静音维持输出流，此处不得阻塞；`Wait` 已先等待过一轮。
                 self.stalled = true;
                 return Some(0.0);
             }
         }
 
-        // 发送方只在攒到样本时才投递，所以块不会为空；真出现也只是提前结束，不该 panic
+        // 发送方只在攒到样本时才投递，所以块不会为空；真出现也只是提前结束，不该 panic。
         let first = self.chunk.first().copied()?;
         self.chunk_pos = 1;
         Some(first)
@@ -194,7 +194,7 @@ impl Iterator for LockFreeSource {
 /// 取下一块的结果。
 enum Fetched {
     Batch(Vec<f32>),
-    /// 解码线程收工且通道已空 —— 这首放完了。
+    /// 解码线程已结束且通道已空，本曲播放完毕。
     Done,
     /// 通道空着、解码还没追上。
     Starved,
@@ -208,7 +208,7 @@ impl LockFreeSource {
         if batch.capacity() > 0
             && let Some(recycle) = &self.recycle
         {
-            // 通道按「在途块数」定容，稳态下不会满；真失败说明解码线程已收工，只能释放。
+            // 通道按「在途块数」定容，稳态下不会满；若确实失败，说明解码线程已结束，只能释放。
             let _ = recycle.try_send(batch);
         }
         self.chunk_pos = 0;
@@ -224,7 +224,7 @@ impl LockFreeSource {
             Ok(batch) => Fetched::Batch(batch),
             Err(TryRecvError::Disconnected) => Fetched::Done,
             Err(TryRecvError::Empty) => {
-                // 「解码线程收工」且「通道确实空了」才算放完；单看 empty 会把欠载误判成结束
+                // 只有同时满足「解码线程已结束」与「通道确已空」才判定播放完毕；单看 empty 会把欠载误判为结束。
                 if self.finished(receiver) {
                     return Fetched::Done;
                 }
@@ -250,8 +250,8 @@ impl LockFreeSource {
 }
 
 impl Source for LockFreeSource {
-    /// 恒返回 `None`：本源跨度未知，rodio 因此不会按跨度做重采样 bootstrap ——
-    /// 必须在交给 rodio 之前显式把采样率对齐到 mixer（见 `rodio_backend.rs`）。
+    /// 恒返回 `None`。本源跨度未知，rodio 因此不会按跨度做重采样 bootstrap；
+    /// 必须在交给 rodio 之前显式把采样率对齐到 mixer，见 `rodio_backend.rs`。
     fn current_span_len(&self) -> Option<usize> {
         None
     }
@@ -271,14 +271,14 @@ impl Source for LockFreeSource {
 
 impl Drop for LockFreeSource {
     fn drop(&mut self) {
-        // 最后一块也还给解码线程：切歌时这块的释放同样不该落在音频回调线程上。
-        // 先还块再置停止位：解码线程看到停止位就会退出，退早了这次归还就落空。
+        // 最后一块也还给解码线程，切歌时这块的释放同样不该落在音频回调线程上。
+        // 先还块再置停止位。解码线程看到停止位就会退出，退早了这次归还就落空。
         if self.chunk.capacity() > 0
             && let Some(recycle) = &self.recycle
         {
             let _ = recycle.try_send(std::mem::take(&mut self.chunk));
         }
-        // 只置 stop 标志、不 join：解码线程靠每 256 个样本的检查自行退出。
+        // 只置 stop 标志、不 join，解码线程靠每 256 个样本的检查自行退出。
         self.stop_flag.store(true, Ordering::Relaxed);
         drop(self.receiver.take());
     }

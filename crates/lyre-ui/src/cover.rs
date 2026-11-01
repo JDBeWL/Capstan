@@ -1,5 +1,6 @@
-//! 封面缓存：按封面内容哈希 + 缩放档位去重，解码时在软件里缩到界面要用的尺寸。
-//! 必须自己缩：gpui 的 Windows 渲染器按原始尺寸上传图集，纹理固定 `MipLevels: 1` 且不生成 mip 链。
+//! 封面缓存，按封面内容哈希与缩放档位去重，解码时在软件里缩到界面要用的尺寸。
+//! 必须在软件内缩放。gpui 的 Windows 渲染器按原始尺寸上传图集，
+//! 纹理固定 `MipLevels: 1` 且不生成 mip 链。
 //! LRU 淘汰会连带清掉指向它的槽位，观察方发现图没了就重新请求。
 
 use std::cell::Cell;
@@ -21,7 +22,7 @@ const MAX_BUCKET: u32 = 512;
 const _: () = assert!(MAX_BUCKET == BUCKETS[BUCKETS.len() - 1]);
 
 /// 界面槽位尺寸（逻辑像素）→ 该取哪一档。
-/// 乘 1.5 是给 Windows 常见的 1.0–1.25 倍 DPI 留余量：窗口缩放因子在 `&mut App` 上拿不到。
+/// 乘 1.5 是给 Windows 常见的 1.0–1.25 倍 DPI 留余量，窗口缩放因子在 `&mut App` 上拿不到。
 pub fn bucket_for(size: f32) -> u32 {
     let need = (size * 1.5).ceil().max(1.0) as u32;
     *BUCKETS
@@ -30,20 +31,20 @@ pub fn bucket_for(size: f32) -> u32 {
         .unwrap_or(&MAX_BUCKET)
 }
 
-/// 常驻位图的字节预算，不是张数：最高一档 512×512 BGRA 是 1MB，最低一档 64×64 只有 16KB。
-/// 32MB 按本仓库曲库的量级定：约百张封面、每档各一张，全装得下还有余量。
+/// 常驻位图的字节预算，不是张数。最高一档 512×512 BGRA 是 1MB，最低一档 64×64 只有 16KB。
+/// 32MB 按本仓库曲库的量级定，约百张封面、每档各一张，全装得下还有余量。
 const MAX_BYTES: usize = 32 * 1024 * 1024;
 
 /// 同时在解码的封面数上限。解码要按原尺寸分配一次 RGBA（库里最大的一张是 1366×1366 ≈ 7.5MB）。
-/// 等名额用定时重试而不是阻塞线程：等待者占着线程会把正在解的饿死。
+/// 等名额用定时重试而不是阻塞线程，等待者占着线程会把正在解的饿死。
 const MAX_CONCURRENT_DECODES: usize = 4;
 const DECODE_SLOT_POLL: Duration = Duration::from_millis(20);
 
-/// 一张位图的身份：封面内容哈希 + 档位。同一张封面的不同档位要各自缓存、各自淘汰。
+/// 一张位图的身份由封面内容哈希与档位共同确定。同一张封面的不同档位要各自缓存、各自淘汰。
 type ImageId = (u64, u32);
 
-/// 缓存里的一条位图，连同它占的字节数 —— 字节数在解码时算好存着，淘汰时不必回头问 gpui 要尺寸。
-/// `last_used` 是单调递增的使用时刻：取图就刷新，淘汰时挑最小的那张。
+/// 缓存里的一条位图，连同它占的字节数。字节数在解码时算好存着，淘汰时不必回头问 gpui 要尺寸。
+/// `last_used` 是单调递增的使用时刻。取图就刷新，淘汰时挑最小的那张。
 struct Cached {
     image: Arc<RenderImage>,
     bytes: usize,
@@ -52,17 +53,17 @@ struct Cached {
 
 /// 已解码位图的内容表，键与 [`Cached`] 相同。后台解码线程在解之前先查它：
 /// 同一张封面的另一首曲目、另一个槽位不必再读一遍图、再缩一遍尺寸。
-/// 只存 `Weak`：缓存淘汰后位图就该跟着消失，不能因为查表多留一份强引用。
+/// 只存 `Weak`。缓存淘汰后位图就该跟着消失，不能因为查表多留一份强引用。
 type SharedImages = Arc<Mutex<HashMap<ImageId, Weak<RenderImage>>>>;
 
 enum Slot {
     Loading,
     Ready(ImageId),
-    /// 确认没有内嵌封面，或解码失败
+    /// 确认没有内嵌封面，或解码失败。
     Missing,
 }
 
-/// 缓存槽位的键：曲目内嵌封面按 `TrackId`，歌单封面按图片路径的哈希（借 `TrackId::from_path`）。
+/// 缓存槽位的键。曲目内嵌封面按 `TrackId`，歌单封面按图片路径的哈希（借 `TrackId::from_path`）。
 /// 两者必须是不同变体，否则给歌单设封面可能命中某首曲目的图。档位也是键的一部分。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CoverKey {
@@ -71,7 +72,7 @@ pub enum CoverKey {
 }
 
 impl CoverKey {
-    /// 这张图代表哪首曲目 / 哪个图片文件。视图用它在封面完成时判断要不要重绘。
+    /// 这张图代表哪首曲目或哪个图片文件。视图用它在封面完成时判断要不要重绘。
     pub fn track_id(self) -> TrackId {
         match self {
             Self::Track(id, _) | Self::File(id, _) => id,
@@ -79,7 +80,7 @@ impl CoverKey {
     }
 }
 
-/// 封面缓存的事件。整页 observe 会在每张图解码完成后触发，首页与搜索页改为只看自己等的那几张。
+/// 封面缓存的事件。整页 observe 会在每张图解码完成后触发，首页与搜索页改为仅关注自身所需的那几张。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CoverCacheEvent {
     Ready(CoverKey),
@@ -160,7 +161,7 @@ impl CoverCache {
         self.slot(CoverKey::Track(id, bucket_for(size)))
     }
 
-    /// 这张封面是否已经被确认「没有」—— 用来区分「还在加载」和「确实没有封面」。
+    /// 这张封面是否已经被确认「没有」，用来区分「还在加载」和「确实没有封面」。
     pub fn is_missing(&self, id: TrackId, size: f32) -> bool {
         matches!(
             self.slots.get(&CoverKey::Track(id, bucket_for(size))),
@@ -187,22 +188,22 @@ impl CoverCache {
         );
     }
 
-    /// 后台解码：先排一个解码名额，再丢进线程池。
+    /// 后台解码。先排一个解码名额，再丢进线程池。
     fn decode_later(
         key: CoverKey,
         registry: SharedImages,
         decode: impl FnOnce(&SharedImages) -> Option<Decoded> + Send + 'static,
         cx: &mut Context<Self>,
     ) {
-        // App::background_executor() 返回引用，必须 clone 出所有权值才能带进 'static 任务
+        // App::background_executor() 返回引用，必须 clone 出所有权值才能带进 'static 任务。
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let slot = DecodeSlot::acquire(&executor).await;
             let decoded = executor.spawn(async move { decode(&registry) }).await;
             drop(slot);
             this.update(cx, |cache, cx| {
-                // 淘汰要一路做到显存：gpui 按 `ImageId` 把上传过的图钉在图集里，
-                // 不调 `drop_image` 就不释放
+                // 淘汰要一路做到显存。gpui 按 `ImageId` 把上传过的图钉在图集里，
+                // 不调 `drop_image` 就不释放。
                 let evicted = cache.store_key(key, decoded);
                 let evicted_any = !evicted.is_empty();
                 for image in evicted {
@@ -212,7 +213,7 @@ impl CoverCache {
                 if evicted_any {
                     cx.emit(CoverCacheEvent::Evicted);
                 }
-                // 仍保留整体通知：列表 / 侧栏等轻量视图照旧 observe，重活由首页与搜索页自行过滤。
+                // 仍保留整体通知。列表与侧栏等轻量视图照旧 observe，重活由首页与搜索页自行过滤。
                 cx.notify();
             })
             .ok();
@@ -220,7 +221,7 @@ impl CoverCache {
         .detach();
     }
 
-    /// 存一张解码产物，返回被淘汰的位图供调用方归还显存 —— `App::drop_image` 要 `&mut App`。
+    /// 存一张解码产物，返回被淘汰的位图供调用方归还显存。`App::drop_image` 要 `&mut App`。
     fn store_key(&mut self, key: CoverKey, decoded: Option<Decoded>) -> Vec<Arc<RenderImage>> {
         let Some(decoded) = decoded else {
             self.slots.insert(key, Slot::Missing);
@@ -228,7 +229,7 @@ impl CoverCache {
         };
         let image = decoded.image();
 
-        // 同一张封面的多个槽位共用一份位图：第二次遇到只补引用，不重新上传也不重复计字节。
+        // 同一张封面的多个槽位共用一份位图，第二次遇到只补引用，不重新上传也不重复计字节。
         // 后台已经按内容哈希查过一遍，走到这里还是 `Shared` 的说明另一路解码先完成了。
         if !self.images.contains_key(&image) {
             let (bitmap, bytes) = decoded.into_parts();
@@ -273,7 +274,7 @@ impl CoverCache {
     }
 
     /// 超预算就从最久没用的开始淘汰，返回被淘汰的位图供调用方归还显存。
-    /// 至少留一张：全清空的话下一帧同一格又会重新请求，变成「解码—淘汰」的死循环。
+    /// 至少留一张。全清空的话下一帧同一格又会重新请求，变成「解码与淘汰」的死循环。
     fn evict(&mut self) -> Vec<Arc<RenderImage>> {
         let mut evicted = Vec::new();
         while self.bytes > self.limit && self.images.len() > 1 {
@@ -290,7 +291,7 @@ impl CoverCache {
         evicted
     }
 
-    /// 丢一张位图，连带清掉指向它的槽位 —— 否则留下「说是 Ready 却取不到图」的悬空引用。
+    /// 丢一张位图，连带清掉指向它的槽位；否则留下「说是 Ready 却取不到图」的悬空引用。
     fn drop_image(&mut self, image: ImageId) -> Option<Arc<RenderImage>> {
         let cached = self.images.remove(&image)?;
         self.bytes -= cached.bytes;
@@ -310,13 +311,13 @@ impl CoverCache {
 /// 一个解码名额。`Drop` 归还，所以解码中途 panic 也不会把名额漏掉。
 struct DecodeSlot;
 
-/// 正在解码的封面数。进程级：后台池是共享的，几个 `CoverCache` 各限各的等于没限。
+/// 正在解码的封面数，进程级共享。后台池是共享的，几个 `CoverCache` 各限各的等于没限。
 static DECODING: AtomicUsize = AtomicUsize::new(0);
 
 impl DecodeSlot {
     async fn acquire(executor: &BackgroundExecutor) -> Self {
         loop {
-            // 读—判—写必须一步完成，否则两个任务同时看到「还差一个」就会一起过界
+            // 读—判—写必须一步完成，否则两个任务同时看到「还差一个」就会一起过界。
             let current = DECODING.load(Ordering::Relaxed);
             if current < MAX_CONCURRENT_DECODES
                 && DECODING
@@ -389,7 +390,7 @@ fn load_file(path: &Path, bucket: u32, registry: &SharedImages) -> Option<Decode
     load_bytes(&bytes, bucket, registry)
 }
 
-/// 封面字节 → 缓存条目。解码前先按内容哈希查内容表：同一张封面被多首曲目引用时，
+/// 封面字节 → 缓存条目。解码前先按内容哈希查内容表。同一张封面被多首曲目引用时，
 /// 只有第一路需要真的解码，其余直接共用位图。
 fn load_bytes(bytes: &[u8], bucket: u32, registry: &SharedImages) -> Option<Decoded> {
     let image = (fnv1a(bytes), bucket);
@@ -426,9 +427,9 @@ fn decode_bgra(bytes: &[u8], bucket: u32) -> Option<(image::Frame, usize)> {
     let orientation = decoder.orientation().ok()?;
     let mut full = image::DynamicImage::from_decoder(decoder).ok()?;
 
-    // 顺序对齐 gpui：先按 EXIF 转正，再缩到这一档的尺寸
+    // 顺序对齐 gpui，先按 EXIF 转正，再缩到这一档的尺寸。
     full.apply_orientation(orientation);
-    // `thumbnail` 是面积型重采样，不会放大：小于这一档的图原样返回。
+    // `thumbnail` 是面积型重采样，不会放大，小于这一档的图原样返回。
     let thumbnail = full.thumbnail(bucket, bucket);
 
     let mut bgra = thumbnail.into_rgba8();
@@ -466,7 +467,7 @@ mod tests {
     fn decoded_cover_is_bgra_not_rgba() {
         use image::GenericImage as _;
 
-        // 源图取 1024 宽：正好落在最高一档，插值不会给逐字节断言带上 ±1 噪声。
+        // 源图取 1024 宽，正好落在最高一档，插值不会给逐字节断言带上 ±1 噪声。
         const W: u32 = 1024;
         let mut source = image::DynamicImage::new_rgb8(W, 2);
         for x in 0..W {
@@ -652,7 +653,7 @@ mod tests {
         );
     }
 
-    /// 取用要刷新使用时刻：一直显示的那张不能因为别的封面不断解码而被挤掉。
+    /// 取用要刷新使用时刻，一直显示的那张不能因为别的封面不断解码而被挤掉。
     #[test]
     fn reading_a_cached_bitmap_refreshes_its_lru_turn() {
         let mut cache = super::CoverCache {
@@ -696,7 +697,7 @@ mod tests {
         let image = (super::fnv1a(content), 512);
         cache.store_key(slot_of(image.0, image.1), Some(decoded(image.0, image.1)));
 
-        // 内容不是合法图片：只要还尝试解码就会失败，能拿到 Shared 就证明解码被跳过了。
+        // 内容不是合法图片，只要还尝试解码就会失败；能拿到 Shared 就证明解码被跳过了。
         let reused =
             super::load_bytes(content, 512, &cache.registry).expect("应当复用已解码的位图");
         let super::Decoded::Shared {

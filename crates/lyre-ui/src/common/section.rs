@@ -13,7 +13,7 @@ pub fn section_heading(text: impl Into<SharedString>) -> impl IntoElement {
         .child(text.into())
 }
 
-/// `// RECORDS` 眉标：宽体、大写、次要墨色。
+/// `// RECORDS` 眉标，宽体、大写、次要墨色三样。
 pub fn eyebrow(text: impl Into<SharedString>) -> Div {
     let text: SharedString = text.into();
     div()
@@ -56,7 +56,7 @@ pub fn page_title(text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
-/// 字段：宽体等宽数字，次要墨色。日期写成 `2026.10.12`，计数带单位。
+/// 字段。宽体等宽数字，次要墨色。日期写成 `2026.10.12`，计数带单位。
 pub fn field(text: impl Into<SharedString>) -> Div {
     div()
         .flex_none()
@@ -67,7 +67,7 @@ pub fn field(text: impl Into<SharedString>) -> Div {
 }
 
 /// 页头那行字段，后面拖一条极淡的斜线纹带，把标题和右边的控件接起来。
-/// 带子占满剩下的宽度，窄窗口下自己缩没，不会把字段挤掉。
+/// 带子占满剩余宽度，窄窗口下自行收缩，不会挤压字段。
 pub fn field_band(text: impl Into<SharedString>) -> Div {
     div()
         .w_full()

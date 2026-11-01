@@ -1,4 +1,4 @@
-//! 返回 / 前进的落点管理与主区左上角的浮动返回按钮。
+//! 返回与前进的落点管理与主区左上角的浮动返回按钮。
 //! [`HEADER_BACK_INSET`] 由 [`BACK_BTN`] 算出，各页头都靠它让位。
 
 use crate::entities::{LibraryEntity, Scope};
@@ -26,17 +26,17 @@ impl RootView {
         true
     }
 
-    // 前进没有对称的方法：鼠标回调只拿得到 &mut App，只能走自由函数 `nav_click`
+    // 前进没有对称的方法。鼠标回调只拿得到 &mut App，只能走自由函数 `nav_click`。
 
-    /// Esc 一次只退一步，优先级：歌词遮罩 → 返回 → 收起右面板 → 清空搜索词。
+    /// Esc 一次只退一步，优先级，歌词遮罩 → 返回 → 收起右面板 → 清空搜索词。
     pub(super) fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // 遮罩在最上层，必须先关，否则这次 Esc 会去退导航
+        // 遮罩在最上层，必须先关，否则这次 Esc 会去退导航。
         if self.shell.read(cx).shows_lyrics() {
             self.shell.update(cx, ShellEntity::toggle_lyrics);
             return;
         }
 
-        // 判据是历史栈不是 is_scoped()：栈空 + 收窄只可能是点侧栏「曲目」进来的，确实没有上一步
+        // 判据是历史栈不是 is_scoped()。栈空 + 收窄只可能是点侧栏「曲目」进来的，确实没有上一步。
         if self.go_back(cx) {
             return;
         }
@@ -51,14 +51,14 @@ impl RootView {
         }
 
         // 走搜索框而不是直接清曲库，否则框里留着旧文字
-        // 判据用 has_query()：is_filtering() 在「只进了专辑没搜索」时也是 true，那一步会静默无效
+        // 判据用 has_query()。is_filtering() 在「只进了专辑没搜索」时也是 true，那一步会静默无效。
         if self.library.read(cx).has_query() {
             self.search
                 .update(cx, |search, cx| search.clear(window, cx));
             return;
         }
 
-        // 词清空后再按一次才离开搜索页。落点固定是曲目列表：回上一页会撞上被搜索改过的网格状态
+        // 查询词清空后再按一次才离开搜索页。落点固定为曲目列表，返回上一页会触及被搜索改动过的网格状态。
         if self.shell.read(cx).nav_section() == NavSection::Search {
             self.shell.update(cx, |shell, cx| {
                 shell.clear_history();
@@ -68,7 +68,7 @@ impl RootView {
     }
 }
 
-/// 悬停提示说退到哪去：取历史栈顶，不是当前位置。
+/// 悬停提示说退到哪去。取历史栈顶，不是当前位置。
 pub(super) fn back_tooltip(spot: Option<(NavSection, Option<String>)>) -> String {
     match spot {
         Some((_, Some(label))) => format!("返回「{label}」"),
@@ -94,7 +94,7 @@ pub(super) fn floating_back(
     let on_click = nav_click(shell, library, NavDirection::Back);
     let id = ElementId::from(FLOATING_BACK_ID);
     let hover = crate::common::hover::progress(id.clone(), window, cx);
-    // 黄底擦入到一半时图标跨在黑 / 黄之间，颜色跟着进度走才不会有一瞬间看不清
+    // 黄底擦入到一半时图标跨在黑与黄之间，颜色跟着进度走才不会有一瞬间看不清。
     let glyph_color = theme::text_on_control().blend(theme::text_on_accent().opacity(hover));
 
     div()
@@ -135,7 +135,7 @@ pub enum NavDirection {
     Forward,
 }
 
-/// 后退 / 前进的实际搬运：弹出落点后先 `restore_scope` 再 `set_nav`，反过来会渲染一帧错配的组合。
+/// 后退与前进的实际搬运。弹出落点后先 `restore_scope` 再 `set_nav`，反过来会渲染一帧错配的组合。
 pub fn navigate(
     shell: &Entity<ShellEntity>,
     library: &Entity<LibraryEntity>,
@@ -176,7 +176,7 @@ pub fn toggle_settings(shell: &Entity<ShellEntity>, library: &Entity<LibraryEnti
     });
 }
 
-/// 「点击即导航」的回调，浮动返回按钮与顶栏的前进 / 后退按钮共用。
+/// 「点击即导航」的回调，浮动返回按钮与顶栏的前进、后退按钮共用。
 pub fn nav_click(
     shell: Entity<ShellEntity>,
     library: Entity<LibraryEntity>,
@@ -197,7 +197,7 @@ const FLOATING_BACK_ID: &str = "floating-back";
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：glob 会带进 platform 里的 gpui `test` 过程宏，遮蔽内置 `#[test]`
+    // 不写 `use super::*`。glob 会带进 platform 里的 gpui `test` 过程宏，遮蔽内置 `#[test]`。
     use super::back_tooltip;
     use crate::shell::NavSection;
 

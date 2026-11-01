@@ -1,4 +1,4 @@
-//! 多选模式下的批量操作条：出现在工具条与列头之间。
+//! 多选模式下的批量操作条，出现在工具条与列头之间。
 
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -20,9 +20,9 @@ pub(super) struct BatchBar {
     pub(super) chosen_count: usize,
     /// 勾选集合，只有展开「加入歌单」菜单、需要逐项 ✓ 时才排序。
     pub(super) selected: Rc<HashSet<TrackId>>,
-    /// 可见行数，「全选」的提示用
+    /// 可见行数，「全选」的提示用。
     pub(super) rows: usize,
-    /// 当前正看着哪个歌单 —— 决定给不给「从本歌单移出」
+    /// 当前正看着哪个歌单，决定给不给「从本歌单移出」
     pub(super) collection: Option<CollectionId>,
     pub(super) library: Entity<LibraryEntity>,
     pub(super) list: WeakEntity<TrackList>,
@@ -65,7 +65,7 @@ pub(super) fn batch_bar(bar: BatchBar) -> impl IntoElement {
         )
         .child(div().flex_1());
 
-    // 一首都没勾时只给「全选」：其余动作按选中曲目生效，点了也是空操作
+    // 一首都没勾时只给「全选」。其余动作按选中曲目生效，点了也是空操作。
     row = row.child(batch_button(
         "batch-all",
         "全选",
@@ -88,8 +88,8 @@ pub(super) fn batch_bar(bar: BatchBar) -> impl IntoElement {
                 TrackList::like_chosen,
             ));
 
-        // 菜单项在闭包里现造：`PopupMenuItem` 内含 `Box<dyn Fn>`，不是 `Clone`。
-        // ✓ 表示这一组曲目都在这个歌单里，再点一次是移出；批量场景没有「混合」态
+        // 菜单项在闭包里现造。`PopupMenuItem` 内含 `Box<dyn Fn>`，不是 `Clone`。
+        // ✓ 表示这一组曲目都在这个歌单里，再点一次是移出；批量场景没有「混合」态。
         let in_list = list.clone();
         row = row.child(crate::common::menu::dropdown(
             crate::common::button::button_shell("batch-collection", ButtonKind::Outline)
@@ -99,7 +99,7 @@ pub(super) fn batch_bar(bar: BatchBar) -> impl IntoElement {
             move |menu, _window, cx| {
                 let lists: Vec<(CollectionId, String, bool)> = {
                     let read = library.read(cx);
-                    // 菜单真正打开时才生成有序 ID：渲染路径不该为了一次点击扫全表。
+                    // 菜单真正打开时才生成有序 ID，渲染路径不该为了一次点击扫全表。
                     let chosen = ordered_chosen(read, &selected);
                     read.collections()
                         .iter()
@@ -135,7 +135,7 @@ pub(super) fn batch_bar(bar: BatchBar) -> impl IntoElement {
             },
         ));
 
-        // 「移出」只在正看着某个歌单时成立：其它作用域里没有「本歌单」可移
+        // 「移出」只在正看着某个歌单时成立，其它作用域里没有「本歌单」可移。
         if let Some(id) = collection {
             row = row.child(text_button(
                 "batch-leave",
@@ -163,15 +163,15 @@ fn batch_button(
     })
 }
 
-/// 这一组曲目是不是全都在这个歌单里 —— 菜单项的 ✓ 与「再点一次是移出」都由它决定。
-/// 空集合一律 `false`：一首都没勾时不该有任何一项显示成「已加入」。
+/// 这一组曲目是不是全都在这个歌单里。菜单项的 ✓ 与「再点一次是移出」都由它决定。
+/// 空集合一律 `false`，一首都没勾时不该有任何一项显示成「已加入」。
 fn all_inside(collection: &Collection, chosen: &[TrackId]) -> bool {
     !chosen.is_empty() && chosen.iter().all(|id| collection.contains(*id))
 }
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：`platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
+    // 不写 `use super::*`，`platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
     use lyre_core::{Collection, CollectionId, TrackId};
 
     use super::all_inside;
@@ -182,7 +182,7 @@ mod tests {
         collection
     }
 
-    /// 全在里面才算 ✓，少一首就不算 —— 判错会把没加进去的歌从歌单里移出。
+    /// 全在里面才算 ✓，少一首就不算。判错会把没加进去的歌从歌单里移出。
     #[test]
     fn a_checkmark_needs_every_chosen_track_inside() {
         let collection = collection_with(&[1, 2, 3]);

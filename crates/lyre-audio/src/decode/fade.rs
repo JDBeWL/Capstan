@@ -1,4 +1,4 @@
-//! 增益包络：起播与 seek 后的淡入，以及 stop、切歌、换设备时的淡出。
+//! 增益包络。起播与 seek 后的淡入，以及 stop、切歌、换设备时的淡出。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -7,8 +7,8 @@ use std::time::Duration;
 use rodio::Source;
 use rodio::{ChannelCount, SampleRate};
 
-/// 跨线程可写的目标增益。控制线程写，音频回调线程按帧逼近 —— `Player::set_volume`
-/// 是阶跃的，直接改会爆音，所以淡出必须走这里。
+/// 跨线程可写的目标增益。控制线程写入，音频回调线程按帧逼近。`Player::set_volume`
+/// 是阶跃的，直接修改会爆音，故淡出必须走这里。
 #[derive(Debug)]
 pub struct GainControl {
     target_bits: AtomicU32,
@@ -59,7 +59,7 @@ impl<S> GainRamp<S> {
         control: Arc<GainControl>,
     ) -> Self {
         let frames = (ramp.as_secs_f64() * f64::from(sample_rate)).round();
-        // 时长为零的 ramp 等于不淡，直接给到目标值
+        // 时长为零的 ramp 等于不淡，直接给到目标值。
         if frames < 1.0 {
             let gain = control.target();
             return Self {
@@ -91,7 +91,7 @@ impl<S: Iterator<Item = f32>> Iterator for GainRamp<S> {
         let sample = self.inner.next()?;
         let output = sample * self.gain;
 
-        // 增益按帧推进而非逐样本：同一帧内左右声道必须同增益，否则淡入期间声像会偏
+        // 增益按帧推进而非逐样本。同一帧内左右声道必须同增益，否则淡入期间声像会偏。
         self.channel_index += 1;
         if self.channel_index >= self.channels {
             self.channel_index = 0;
@@ -135,7 +135,7 @@ mod tests {
     use super::*;
     use std::num::NonZero;
 
-    /// 固定长度的 f32 音源，每个样本都是 1.0，于是输出就等于增益本身
+    /// 固定长度的 f32 音源，每个样本都是 1.0，于是输出就等于增益本身。
     struct Ramp(usize);
 
     impl Iterator for Ramp {
@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn gain_ramps_per_frame_not_per_sample() {
-        // 1000Hz、立体声、淡入 2ms = 2 帧。4 个样本（2 帧）应当得到 0,0 / 0.5,0.5
+        // 1000Hz、立体声、淡入 2ms = 2 帧。4 个样本（2 帧）应当得到 0,0 / 0.5,0.5。
         let (source, _control) = ramp(4, Duration::from_millis(2), 2);
         let faded: Vec<f32> = source.collect();
 
@@ -196,7 +196,7 @@ mod tests {
         let (source, _control) = ramp(10, Duration::from_millis(1), 2);
         let faded: Vec<f32> = source.collect();
 
-        // 1ms @ 1000Hz = 1 帧淡入，之后应当全为 1.0
+        // 1ms @ 1000Hz = 1 帧淡入，之后应当全为 1.0。
         assert_eq!(faded[0], 0.0);
         assert_eq!(faded[1], 0.0);
         for (index, sample) in faded.iter().enumerate().skip(2) {
@@ -212,7 +212,7 @@ mod tests {
 
     #[test]
     fn shorter_than_fade_source_stays_below_full_gain() {
-        // 音源比淡入窗口还短，不应越界或 panic，只是整个都在淡入段里
+        // 音源比淡入窗口还短，不应越界或 panic，只是整个都在淡入段里。
         let (source, _control) = ramp(2, Duration::from_millis(100), 2);
         let faded: Vec<f32> = source.collect();
 
@@ -225,11 +225,11 @@ mod tests {
     fn pulling_the_target_back_to_zero_fades_the_stream_out() {
         let (mut source, control) = ramp(8, Duration::from_millis(2), 1);
 
-        // 2 帧淡入到满增益
+        // 2 帧淡入到满增益。
         assert_eq!(source.next(), Some(0.0));
         assert_eq!(source.next(), Some(0.5));
 
-        // 满增益那一帧之后把目标拉回 0，两帧内归零
+        // 满增益那一帧之后把目标拉回 0，两帧内归零。
         control.set_target(0.0);
         assert_eq!(source.next(), Some(1.0), "改目标之前的那一帧仍是满增益");
         assert_eq!(source.next(), Some(0.5), "随后按同样的步长回落到 0");
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn gain_never_overshoots_the_target() {
-        // 目标比一步的行程还小：应当一步落到目标，而不是冲过去再退回来
+        // 目标比一步的行程还小。应当一步落到目标，而不是冲过去再退回来。
         let control = Arc::new(GainControl::new());
         control.set_target(0.4);
         let mut source = GainRamp::new(

@@ -1,4 +1,4 @@
-//! 曲库缓存，落盘到 `library.json`：读不到退回空、写不进只记日志。
+//! 曲库缓存，落盘到 `library.json`。读不到退回空，写不进只记日志。
 //! 文件形状是按导入顺序排列的裸 `Vec<Track>`，不含排序键与播放模式。
 
 use std::path::{Path, PathBuf};
@@ -9,22 +9,22 @@ use crate::persist;
 
 const FILE: &str = "library.json";
 
-/// 读缓存。只解析，不核对文件还在不在 —— 核对走 [`gone`]，由调用方把首屏画出来之后再跑。
+/// 读缓存。只解析，不核对文件还在不在。核对走 [`gone`]，由调用方把首屏画出来之后再跑。
 ///
 /// 这几千次 stat 是启动路径上最贵的一段（慢盘、网络盘、休眠中的移动硬盘都是秒级），
-/// 而缓存本身是可信的：上一次退出时这些文件还在。先当真、后核对，比先核对再显示快得多。
+/// 而缓存本身是可信的。上一次退出时这些文件还在。先当真、后核对，比先核对再显示快得多。
 pub fn load() -> Vec<Track> {
     persist::load_or_default(FILE)
 }
 
-/// 用紧凑排版：整库条目可能上千，缩进会让文件涨好几倍。
+/// 用紧凑排版。整库条目可能上千，缩进会让文件涨好几倍。
 pub fn save(tracks: Vec<Track>) {
     persist::save_compact_lossy(FILE, tracks);
 }
 
 /// 核对一批文件还在不在，返回已经消失的 id。
 ///
-/// 整批都不在时返回空：那是盘没醒 / 可移动盘没挂载，照常剔除会把整库覆盖成空。
+/// 整批都不在时返回空。那是盘没醒与可移动盘没挂载，照常剔除会把整库覆盖成空。
 pub fn gone(entries: &[(TrackId, PathBuf)]) -> Vec<TrackId> {
     gone_with(entries, Path::is_file)
 }
@@ -74,11 +74,11 @@ mod tests {
         assert_eq!(parsed[0].id, TrackId(7));
         assert_eq!(parsed[0].audio, AudioInfo::default());
         assert_eq!(parsed[0].sources, FieldSources::default());
-        // 没有指纹就永远比不上，重扫时会老老实实重读一遍
+        // 没有指纹就永远比不上，重扫时会老老实实重读一遍。
         assert_eq!(parsed[0].stamp, FileStamp::default());
     }
 
-    /// 坏 JSON 退空曲库而不是 panic —— 启动不该被一个写坏的文件卡住。
+    /// 坏 JSON 退空曲库而不是 panic。启动不该被一个写坏的文件卡住。
     #[test]
     fn 读不懂就当没有缓存() {
         let parsed: Vec<Track> = serde_json::from_str("这不是 JSON").unwrap_or_default();
@@ -112,7 +112,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// 逐条核对只查一遍：部分失效与整盘未挂载共用同一趟扫描。
+    /// 逐条核对只查一遍，部分失效与整盘未挂载共用同一趟扫描。
     #[test]
     fn 每条路径只核对一次() {
         let dir = temp_dir("single-pass");
@@ -137,7 +137,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// 只要还有一条在，就回到逐条核对：其余该被剔掉。
+    /// 只要还有一条在，就回到逐条核对，其余该被剔掉。
     #[test]
     fn 还有一首在就照常剔掉消失的() {
         let dir = temp_dir("partial");

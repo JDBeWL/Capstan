@@ -1,19 +1,19 @@
-//! 首页的数据派生：把曲目 / 专辑分组折成卡片，这一层不碰 gpui。
+//! 首页的数据派生。把曲目与专辑分组折成卡片，这一层不碰 gpui。
 
 use lyre_core::{AlbumGroup, Track, TrackId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecentCard {
-    /// 代表曲目：用它的封面，也是点击时的播放目标。
+    /// 代表曲目。用它的封面，也是点击时的播放目标。
     pub id: TrackId,
     pub album: String,
     pub artist: String,
-    /// 「12 首」这类说明 —— 这里没有完整分组，只报这次队列里的曲目数。
+    /// 「12 首」这类说明。这里没有完整分组，只报这次队列里的曲目数。
     pub meta: String,
 }
 
-/// 按专辑名去重（保留最近那次），顺序由近及远：卡片位置由这张专辑**最近**一次播放决定。
-/// 前提：`tracks` 已由近及远排好（`recent_tracks` 即此顺序），乱序会弄错顺序与代表曲目。
+/// 按专辑名去重（保留最近那次），顺序由近及远，卡片位置由这张专辑**最近**一次播放决定。
+/// 前提。`tracks` 已由近及远排好（`recent_tracks` 即此顺序），乱序会弄错顺序与代表曲目。
 pub fn recent_cards(tracks: &[Track], limit: usize) -> Vec<RecentCard> {
     let mut out: Vec<RecentCard> = Vec::new();
 
@@ -25,15 +25,15 @@ pub fn recent_cards(tracks: &[Track], limit: usize) -> Vec<RecentCard> {
             .unwrap_or_else(|| lyre_core::UNKNOWN_ALBUM.to_string());
 
         if let Some(existing) = out.iter_mut().find(|card| card.album == album) {
-            // 同一张专辑又出现：只累加曲目数，卡片留在原地。它的位置由这张专辑**最近**那次播放
-            // 决定 —— 而那次就是它被推进来的那一趟，所以这里挪到最前反而会把一张旧专辑顶到
+            // 同一张专辑又出现。只累加曲目数，卡片留在原地。它的位置由这张专辑**最近**那次播放
+            // 决定，而那次就是它被推进来的那一趟，所以这里挪到最前反而会把一张旧专辑顶到
             // 「最近播放」第一位，压住真正刚播过的那张。代表曲目同理，保留最近那次。
             existing.meta = bump(existing.meta.as_str());
             continue;
         }
 
         if out.len() >= limit {
-            // 卡片够了就不再收新专辑，但要接着往下走：更早的曲目仍属于已有专辑，得记进「N 首」。
+            // 卡片够了就不再收新专辑，但要接着往下走。更早的曲目仍属于已有专辑，得记进「N 首」。
             continue;
         }
 
@@ -66,7 +66,7 @@ fn album_card(group: &AlbumGroup) -> RecentCard {
     }
 }
 
-/// 「为你推荐」：按固定步长采样，结果可复现。
+/// 「为你推荐」。按固定步长采样，结果可复现。
 pub fn recommend_cards(groups: &[AlbumGroup], limit: usize) -> Vec<RecentCard> {
     let groups = recommendable(groups);
     if groups.is_empty() || limit == 0 {
@@ -81,8 +81,8 @@ pub fn recommend_cards(groups: &[AlbumGroup], limit: usize) -> Vec<RecentCard> {
         .collect()
 }
 
-/// 「热门专辑」：按组内曲目数降序取前 `limit` 张。数量相同保持原有名称序。
-/// 只做部分选择：整库几千张专辑时不必为了前 12 张全排序。
+/// 「热门专辑」，按组内曲目数降序取前 `limit` 张。数量相同保持原有名称序。
+/// 只做部分选择，整库几千张专辑时不必为了前 12 张全排序。
 pub fn popular_cards(groups: &[AlbumGroup], limit: usize) -> Vec<RecentCard> {
     if limit == 0 {
         return Vec::new();
@@ -108,7 +108,7 @@ pub fn popular_cards(groups: &[AlbumGroup], limit: usize) -> Vec<RecentCard> {
         .collect()
 }
 
-/// 能上首页的专辑分组：排除「未知专辑」这一桶。它是没标签曲目的归处，又因为收得多而常排最前。
+/// 能上首页的专辑分组。排除「未知专辑」这一桶。它是没标签曲目的归处，又因为收得多而常排最前。
 /// 只在这一层排除，侧栏与「浏览」里它照样在。
 fn recommendable(groups: &[AlbumGroup]) -> Vec<&AlbumGroup> {
     groups
@@ -119,7 +119,7 @@ fn recommendable(groups: &[AlbumGroup]) -> Vec<&AlbumGroup> {
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：`crate::platform::*` 带进来的 gpui `test` 宏会遮蔽内置 `#[test]`。
+    // 不写 `use super::*`，`crate::platform::*` 带进来的 gpui `test` 宏会遮蔽内置 `#[test]`。
     use super::{RecentCard, popular_cards, recent_cards, recommend_cards};
     use lyre_core::{Track, TrackId};
 
@@ -176,8 +176,8 @@ mod tests {
         assert_eq!(cards[0].meta, "2 首");
     }
 
-    /// 一张多曲专辑在最近播放里占了好几格时，它只能停在自己**最近**那首的位置上，
-    /// 不能因为「又见到同名专辑」就跳到第一位 —— 那会让刚播过的专辑永远排不到它前面。
+    /// 一张多曲专辑在最近播放中占据多格时，只能停留在其**最近**一首曲目所在的位置，
+    /// 不得因「再次遇到同名专辑」而跳至首位，否则刚播放过的专辑将永远排在它之前。
     #[test]
     fn an_album_stays_where_its_newest_track_is() {
         let tracks = vec![

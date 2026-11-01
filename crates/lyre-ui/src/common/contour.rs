@@ -1,5 +1,5 @@
-//! 等高线：缓坡上的涟漪，等值线从片的一边穿到另一边，不闭合成圈。
-//! 做法与 skill 里 `assets/contours/draw-contours.mjs` 同源：先在网格上算一层
+//! 等高线。缓坡上的涟漪，等值线从片的一边穿到另一边，不闭合成圈。
+//! 做法与 skill 里 `assets/contours/draw-contours.mjs` 同源，先在网格上算一层
 //! 「坡度 + 波浪」的标量场，再用 marching squares 把等值线连成折线，只留横穿整片的开放线。
 //! 一片算一次就够，几何按像素尺寸缓存在线程里；换窗口大小时才重算。
 
@@ -11,9 +11,9 @@ use std::rc::Rc;
 const CELL: f32 = 6.0;
 /// 相邻两条等值线的间距。坡度项在片内大约跨两个单位，条数由此反推。
 const SPACING: f32 = 20.0;
-/// 每隔几条加粗一条，像地形图上的计曲线：一眼看得出坡的走向。
+/// 每隔几条加粗一条，像地形图上的计曲线，一眼看得出坡的走向。
 const INDEX_EVERY: usize = 5;
-/// 整片往中心收的衰减档数：越靠边的线画得越淡，片就没有轮廓。
+/// 整片往中心收的衰减档数。越靠边的线画得越淡，片就没有轮廓。
 /// 档数够多，最外一档淡到看不见，线才不会被片边掐断。
 pub const FADE_STEPS: u8 = 6;
 /// 缓存几片。窗口来回改尺寸时只保留最近用过的这几份。
@@ -24,7 +24,7 @@ pub struct Run {
     pub points: Vec<(f32, f32)>,
     /// 1..=`FADE_STEPS`，越大越靠片心，画得越实。
     pub weight: u8,
-    /// 计曲线：比普通线粗一点。
+    /// 计曲线，比普通线粗一点。
     pub heavy: bool,
 }
 
@@ -33,7 +33,7 @@ pub struct Patch {
     pub runs: Vec<Run>,
 }
 
-/// 缓存表：像素尺寸与种子对应一片等高线。
+/// 缓存表，像素尺寸与种子对应一片等高线。
 type Cache = Vec<((i32, i32, u32), Rc<Patch>)>;
 
 thread_local! {
@@ -98,7 +98,7 @@ impl Patch {
     }
 }
 
-/// 碎屑：太短、太挤的线，画出来只是一道划痕。
+/// 碎屑。太短、太挤的线，画出来只是一道划痕。
 fn is_scrap(line: &[(f32, f32)]) -> bool {
     if line.len() < 5 {
         return true;
@@ -114,7 +114,7 @@ fn is_scrap(line: &[(f32, f32)]) -> bool {
     (right - left).hypot(bottom - top) < 40.0
 }
 
-/// 按离片心的远近把一条线切成几段：同一段共用一个透明度档，片缘自然就淡没了。
+/// 按离片心的远近把一条线切成几段。同一段共用一个透明度档，片缘自然就淡没了。
 fn split_by_fade(
     runs: &mut Vec<Run>,
     line: &[(f32, f32)],
@@ -150,21 +150,21 @@ fn push_run(runs: &mut Vec<Run>, points: &[(f32, f32)], weight: u8, heavy: bool)
     });
 }
 
-/// 椭圆半径归一后收到零：片心一小块保持全实，剩下的一路淡到片边。
+/// 椭圆半径归一后收到零。片心一小块保持全实，剩下的一路淡到片边。
 fn weight_at(at: (f32, f32), center: (f32, f32), radius: (f32, f32)) -> u8 {
     let unit = ((at.0 - center.0) / radius.0).hypot((at.1 - center.1) / radius.1);
     let fade = ((1.0 - unit) / FADE_RUN).clamp(0.0, 1.0);
     (fade * f32::from(FADE_STEPS)).ceil() as u8
 }
 
-/// 衰减占半径的比例：0.55 表示片心 45% 的范围内线是实的，其余一路淡下去。
+/// 衰减占半径的比例。0.55 表示片心 45% 的范围内线是实的，其余一路淡下去。
 const FADE_RUN: f32 = 0.55;
 
 fn midpoint(from: (f32, f32), to: (f32, f32)) -> (f32, f32) {
     (from.0.midpoint(to.0), from.1.midpoint(to.1))
 }
 
-/// 一格四角谁在等值线之上，决定这一格里线段怎么连：0 = 左上，1 = 右上，2 = 右下，3 = 左下。
+/// 格内四角中位于等值线之上的角位，决定该格内线段的连接方式。0 = 左上，1 = 右上，2 = 右下，3 = 左下。
 /// 一格里最多两条线段（55 与 1010 两种对角情形）。
 const SIDES: [&[(u8, u8)]; 16] = [
     &[],
@@ -185,7 +185,7 @@ const SIDES: [&[(u8, u8)]; 16] = [
     &[],
 ];
 
-/// 边的四种位置：0 上，1 下，2 左，3 右。换成网格上的边：横边看左右两格点，竖边看上下两格点。
+/// 边的四种位置。0 上，1 下，2 左，3 右。换成网格上的边后，横边看左右两格点，竖边看上下两格点。
 fn edge_of(side: u8, column: usize, row: usize) -> (u8, usize, usize) {
     match side {
         0 => (0, column, row),
@@ -195,7 +195,7 @@ fn edge_of(side: u8, column: usize, row: usize) -> (u8, usize, usize) {
     }
 }
 
-/// marching squares：把所有格的线段缝成折线，只返回两端落在片边界上的开放线。
+/// marching squares。把所有格的线段缝成折线，只返回两端落在片边界上的开放线。
 fn trace(values: &[f32], columns: usize, rows: usize, level: f32) -> Vec<Vec<(f32, f32)>> {
     let stride = columns + 1;
     let mut net = Net::default();
@@ -298,7 +298,7 @@ impl Net {
     }
 }
 
-/// 缓坡加涟漪：整体朝一个方向斜落，上面叠几条低频波，等值线于是横向流动、左右飘。
+/// 缓坡加涟漪。整体朝一个方向斜落，上面叠几条低频波，等值线于是横向流动、左右飘。
 struct Terrain {
     width: f32,
     height: f32,
@@ -356,7 +356,7 @@ fn bend(t: f32, frequency: f32, phase: f32) -> f32 {
     (std::f32::consts::TAU * frequency * t + phase).sin()
 }
 
-/// mulberry32：和 skill 里的生成器同一支，换个种子就换一片地形。
+/// mulberry32。和 skill 里的生成器同一支，换个种子就换一片地形。
 struct Rng(u32);
 
 impl Rng {
@@ -371,7 +371,7 @@ impl Rng {
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：`crate::platform::*` 带进来的 gpui `test` 宏会遮蔽内置 `#[test]`。
+    // 不写 `use super::*`，`crate::platform::*` 带进来的 gpui `test` 宏会遮蔽内置 `#[test]`。
 
     #[test]
     fn patch_stays_inside_its_box() {

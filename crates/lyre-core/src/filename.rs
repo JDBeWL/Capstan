@@ -1,15 +1,15 @@
 //! 从文件名推断缺失的标签。
 //!
-//! 文件名本身不包含「谁是歌手」这件事：`周杰伦 - 七里香` 与 `七里香 - 周杰伦` 在语法上完全同构，
-//! 一条正则判不出方向。所以这里不做「匹配即结论」，而是先切分、再对「角色分配」打分，
-//! 最后按置信度门限决定要不要采信 —— 判据全部来自文件名之外的证据：
+//! 文件名本身不包含「谁是歌手」这一信息。`周杰伦 - 七里香` 与 `七里香 - 周杰伦` 在语法上完全同构，
+//! 单条正则无法判定方向。因此此处不以「匹配即结论」，而是先切分、再对「角色分配」打分，
+//! 最后按置信度门限决定是否采信。判据全部来自文件名之外的证据：
 //!
-//! 1. **目录结构**：父目录当专辑、祖父目录当艺术家。人手工整理过的目录比文件名可靠。
-//! 2. **库内已知艺人**：已经有标签的曲目提供一份名字词典。
-//! 3. **同目录一致性**：一个专辑目录里艺术家会重复十几次，标题不会。谁在重复谁是艺术家。
+//! 1. **目录结构**，父目录作为专辑、祖父目录作为艺术家。人工整理过的目录比文件名可靠。
+//! 2. **库内已知艺人**，已有标签的曲目可提供一份名字词典。
+//! 3. **同目录一致性**。一个专辑目录内艺术家重复十余次，标题则不会。重复出现者即为艺术家。
 //!
-//! 三条证据都没有时只剩「歌手在前」的位置先验（[`PRIOR_ARTIST_FIRST`]），刚好过门限 ——
-//! 这正是中文曲库的主流写法。看不懂的就不猜，交给调用方保留原样。
+//! 三条证据均缺失时，仅剩「歌手在前」的位置先验，即 `PRIOR_ARTIST_FIRST`，恰好通过门限，
+//! 此即中文曲库的主流写法。证据不足时不作判定，由调用方保留原值。
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -25,15 +25,15 @@ const MAX_BRACKET: usize = 64;
 /// 两侧带空格的分隔符。它在场时优先于裸连字符，见 [`split_parts`]。
 const SPACED_DASH: &str = " - ";
 
-/// 目录给出的提示：父目录当专辑、祖父目录当艺术家。
+/// 目录给出的提示，父目录当专辑、祖父目录当艺术家。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DirHints<'a> {
     pub album: Option<&'a str>,
     pub artist: Option<&'a str>,
 }
 
-/// 解析一个目录时共用的上下文。同一目录里的每一首都要用它 ——
-/// 「谁在重复」这种信号，单看一首文件是拿不到的。
+/// 解析一个目录时共用的上下文，目录内每一个文件都要用它：
+/// 「哪一侧重复」这一信号无法由单个文件得出。
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FolderContext<'a> {
     /// 库内已知艺术家，键是 [`artist_key`] 折过的形式。
@@ -50,7 +50,7 @@ pub struct Guess {
     pub album: Option<String>,
 }
 
-/// 名字的比较形式：全角折半角、各种破折号统一、压掉多余空白，再做小写。
+/// 名字的比较形式。全角折半角、各种破折号统一、压掉多余空白，再做小写。
 /// 落盘的已知艺人集合与这里的所有比较都必须走它，否则全角半角会被当成两个人。
 pub fn artist_key(name: &str) -> String {
     normalise(name).to_lowercase()
@@ -58,11 +58,11 @@ pub fn artist_key(name: &str) -> String {
 
 /// 从路径推目录提示。
 ///
-/// 泛用目录名（`Music` / `下载` / `新建文件夹`）不当提示：它们说的是「这里放音乐」，
-/// 不是「这张专辑叫什么」。宁可少一层信息，也不要造出一堆叫「Music」的专辑。
+/// `Music`、`下载`、`新建文件夹` 这类泛用目录名不作为提示。它们表达的是「此处存放音乐」，
+/// 而非「此专辑的名称」。宁可舍弃一层信息，也不构造一批名为「Music」的专辑。
 ///
-/// 遇到「第几张碟」这类中间层要往上跨过去：`周杰伦/七里香/Disc 1/` 里，
-/// 专辑是七里香、艺术家是周杰伦，`Disc 1` 谁都不是。
+/// 「第几张碟」这类中间层需要向上跨越。`周杰伦/七里香/Disc 1/` 中，
+/// 专辑为七里香、艺术家为周杰伦，`Disc 1` 两者皆非。
 pub fn hints_for(path: &Path) -> DirHints<'_> {
     let mut found: Vec<&str> = Vec::with_capacity(2);
     let mut cursor = path.parent();
@@ -87,9 +87,9 @@ pub fn hints_for(path: &Path) -> DirHints<'_> {
     }
 }
 
-/// 同一目录里各文件「首段 / 次段」的出现次数。
+/// 同一目录里各文件「首段与次段」的出现次数。
 ///
-/// 专辑目录里十首曲子的艺术家是同一个，标题各不相同 —— 于是首段重复、次段不重复。
+/// 专辑目录里十首曲目的艺术家相同，标题各不相同，于是首段重复、次段不重复。
 /// 反过来 `歌名 - 歌手` 的目录里次段重复。这条判断不依赖任何词典，纯靠统计，
 /// 是整张表里唯一能自动适应「压制者习惯」的信号。
 #[derive(Clone, Debug, Default)]
@@ -99,7 +99,7 @@ pub struct Siblings {
 }
 
 impl Siblings {
-    /// 收下一个目录里的全部文件名（不含扩展名）。
+    /// 收下一个目录里的全部文件名，不含扩展名。
     pub fn of<'a>(stems: impl IntoIterator<Item = &'a str>) -> Self {
         let mut siblings = Self::default();
         for stem in stems {
@@ -113,7 +113,7 @@ impl Siblings {
         siblings
     }
 
-    /// 至少还有一个同目录文件也拿它当首段 / 次段。≥ 2 就是「自己 + 别人」。
+    /// 至少另有一个同目录文件也以它作为首段与次段；计数 ≥ 2 表示本文件之外仍有人使用该段。
     fn repeats(&self, name: &str) -> (bool, bool) {
         let key = artist_key(name);
         (
@@ -123,7 +123,7 @@ impl Siblings {
     }
 }
 
-/// 解析一个目录：同一份 [`Siblings`] 喂给目录里的每一首。
+/// 解析目录，把同一份 [`Siblings`] 供给目录内的每一个文件。
 pub fn guess_folder(
     stems: &[String],
     dirs: DirHints<'_>,
@@ -140,11 +140,11 @@ pub fn guess_folder(
         .collect()
 }
 
-/// 推断一首。`None` 表示一个字都没敢动，调用方应当保留原样（整串作标题）。
+/// 推断一首。`None` 表示未作任何改动，调用方应保留原样，即以整串作为标题。
 pub fn guess(stem: &str, dirs: DirHints<'_>, folder: &FolderContext<'_>) -> Option<Guess> {
     let parsed = parse(stem);
     let Some(head) = parsed.parts.first() else {
-        // 剥完括号与音轨号什么都不剩（比如整个文件名就是 `01`），别把标题剥空
+        // 剥除括号与音轨号后可能什么都不剩，如文件名仅为 `01`，不得把标题剥空。
         return None;
     };
     debug_assert!(!head.is_empty());
@@ -182,7 +182,7 @@ pub fn guess(stem: &str, dirs: DirHints<'_>, folder: &FolderContext<'_>) -> Opti
         book_hint.as_deref(),
     );
     if candidates.is_empty() {
-        // 只剩一段正文、也没括号说话：可能只是洗干净了（去了音轨号 / 压制组前缀）。
+        // 只剩一段正文且无括号信息，也可能只是完成了清洗，即去掉音轨号或压制组前缀。
         // 洗干净了才值得回报，否则一个字都没变，回报 `None` 让上层保留原样。
         if clean == normalise(stem) {
             return None;
@@ -202,7 +202,7 @@ pub fn guess(stem: &str, dirs: DirHints<'_>, folder: &FolderContext<'_>) -> Opti
     scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
 
     let &(best, winner) = scored.first()?;
-    // 只有一个候选时没有第二名可比，领先量直接算作充足
+    // 只有一个候选时没有第二名可比，领先量直接算作充足。
     let decisive = scored.get(1).is_none_or(|second| best - second.0 >= MARGIN);
     if best < ACCEPT || !decisive {
         return None;
@@ -216,7 +216,7 @@ pub fn guess(stem: &str, dirs: DirHints<'_>, folder: &FolderContext<'_>) -> Opti
     })
 }
 
-/// 一轮候选：同一次「角色分配」。
+/// 一轮候选，同一次「角色分配」。
 struct Candidate {
     artist: Option<String>,
     album: Option<String>,
@@ -278,8 +278,8 @@ fn candidates(
         });
     }
 
-    // `周杰伦《七里香》`：书名号里是作品名，前面那一段是艺术家。
-    // 不把书名号里的东西同时当专辑 —— 一张只有一首曲子的「专辑」没有意义，
+    // `周杰伦《七里香》`。书名号里是作品名，前面那一段是艺术家。
+    // 不把书名号里的内容同时当作专辑，因为只有一首曲目的「专辑」没有意义，
     // 专辑该由目录给，目录没给就留空。
     if let (1, Some(book)) = (parts.len(), book) {
         out.push(Candidate {
@@ -294,7 +294,7 @@ fn candidates(
     dedupe(out)
 }
 
-/// 同一条分配可能被不同的规则重复生成（`A - A` 这种），去掉免得自己和自己争。
+/// 同一条分配可能被不同规则重复生成，如 `A - A`，应去重，避免同一分配相互竞争。
 fn dedupe(candidates: Vec<Candidate>) -> Vec<Candidate> {
     let mut out: Vec<Candidate> = Vec::with_capacity(candidates.len());
     for candidate in candidates {
@@ -314,7 +314,7 @@ fn score(candidate: &Candidate, dirs: DirHints<'_>, folder: &FolderContext<'_>) 
     let mut score = candidate.prior;
 
     if let Some(artist) = &candidate.artist {
-        // 同目录里谁在重复谁是艺术家，压过位置先验
+        // 同目录内的重复统计优先于位置先验，重复出现者即为艺术家。
         if let Some(siblings) = folder.siblings {
             let (head, tail) = siblings.repeats(artist);
             let (title_head, title_tail) = siblings.repeats(&candidate.title);
@@ -327,7 +327,7 @@ fn score(candidate: &Candidate, dirs: DirHints<'_>, folder: &FolderContext<'_>) 
             }
         }
 
-        // 祖父目录 / 库内词典点名，仅次于同目录一致性
+        // 祖父目录与库内词典点名，仅次于同目录一致性。
         if matches_dir(dirs.artist, artist) {
             score += 4;
         }
@@ -341,15 +341,15 @@ fn score(candidate: &Candidate, dirs: DirHints<'_>, folder: &FolderContext<'_>) 
             score += 3;
         }
 
-        // 专辑名当成了艺术家：切反了，或者把「专辑 - 曲目」当成了「歌手 - 歌名」
+        // 专辑名当成了艺术家，说明切反了，或者把「专辑 - 曲目」当成了「歌手 - 歌名」
         if matches_dir(dirs.album, artist) {
             score -= 6;
         }
-        // 版本标记出现在艺术家侧，说明切反了：`七里香(Live) - 周杰伦`
+        // 版本标记出现在艺术家侧，说明切反了，如 `七里香(Live) - 周杰伦`。
         if has_title_marker(artist) {
             score -= 6;
         }
-        // 纯数字当不了名字（`1 - Intro` 里的那个 1）
+        // 纯数字不能作为名字，如 `1 - Intro` 中的 1。
         if artist.chars().all(|ch| ch.is_ascii_digit()) {
             score -= 6;
         }
@@ -359,7 +359,7 @@ fn score(candidate: &Candidate, dirs: DirHints<'_>, folder: &FolderContext<'_>) 
     }
 
     if let Some(album) = &candidate.album {
-        // 从正文里额外摘出来的专辑，要目录点头才算数
+        // 从正文里额外摘出来的专辑，要目录点头才算数。
         score += if matches_dir(dirs.album, album) {
             3
         } else {
@@ -370,7 +370,7 @@ fn score(candidate: &Candidate, dirs: DirHints<'_>, folder: &FolderContext<'_>) 
     score
 }
 
-/// 候选成立时把版本标记接回标题：`七里香` + `(Live)` → `七里香 (Live)`。
+/// 候选成立时把版本标记接回标题，`七里香` + `(Live)` → `七里香 (Live)`。
 fn decorate(title: &str, suffixes: &[String]) -> String {
     let mut out = title.to_owned();
     for suffix in suffixes {
@@ -381,7 +381,7 @@ fn decorate(title: &str, suffixes: &[String]) -> String {
     out
 }
 
-// ---------------------------------------------------------------- 切分
+// ---------------------------------------------------------------- 切分。
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Bracket {
@@ -390,7 +390,7 @@ enum Bracket {
     Book,
 }
 
-/// 切分结果：正文段、括号内容。
+/// 切分结果是正文段与括号内容。
 #[derive(Debug, Default)]
 struct Parsed {
     parts: Vec<String>,
@@ -408,7 +408,7 @@ fn parse(raw: &str) -> Parsed {
             None => match bracket_pair(ch) {
                 Some((close, kind)) => {
                     open = Some((close, kind, String::new()));
-                    // 括号两侧断成两段，免得 `周杰伦《七里香》` 粘成一个词
+                    // 括号两侧断成两段，免得 `周杰伦《七里香》` 粘成一个词。
                     body.push(' ');
                 }
                 None => body.push(ch),
@@ -426,7 +426,7 @@ fn parse(raw: &str) -> Parsed {
             }
         }
     }
-    // 没闭合的括号按已闭合处理：内容照样收下，正文里那一截本来就已经断开了
+    // 没闭合的括号按已闭合处理，内容照样收下；正文里那一截本来就已经断开了。
     if let Some((_, kind, content)) = open {
         brackets.push((kind, content.trim().to_owned()));
     }
@@ -453,8 +453,8 @@ fn bracket_pair(ch: char) -> Option<(char, Bracket)> {
 
 /// 按分隔符切成正文段。
 ///
-/// 「空格 - 空格」是最没歧义的分隔符：它出现时只认它。名字和标题里自带的连字符很常见
-/// （`塞壬唱片-MSR,z1on,ReStudio`、`Secret of my heart-Hi-Res-5.1`），按裸 `-` 切会把它们剁碎。
+/// 「空格 - 空格」是最无歧义的分隔符，出现时只认它。名字与标题自带连字符的情况很常见，
+/// 如 `塞壬唱片-MSR,z1on,ReStudio`、`Secret of my heart-Hi-Res-5.1`；按裸 `-` 切会将其切断。
 fn split_parts(body: &str) -> Vec<String> {
     if body.contains(SPACED_DASH) {
         body.split(SPACED_DASH).filter_map(trimmed).collect()
@@ -472,10 +472,10 @@ fn trimmed(part: &str) -> Option<String> {
     }
 }
 
-/// 剥掉前导音轨号。返回（音轨号，余下正文）；判不出来时原样返回。
+/// 剥掉前导音轨号，返回音轨号与余下正文；判不出时原样返回。
 ///
-/// 三道闸：数字最多三位、后面必须紧跟分隔符、空格分隔时还要求数字带前导零。
-/// `2002年的第一场雪` 于是不会被削掉四位数字；`7 rings` 里那个孤零零的 7 也不算 ——
+/// 三道闸分别是数字最多三位、后面必须紧跟分隔符，以及空格分隔时数字要带前导零。
+/// `2002年的第一场雪` 于是不会被削掉四位数字；`7 rings` 里那个孤零零的 7 也不算。
 /// 它更像标题的一部分，而不是第 7 轨。
 fn strip_track_no(body: &str) -> (Option<u32>, &str) {
     let text = body.trim_start();
@@ -494,7 +494,7 @@ fn strip_track_no(body: &str) -> (Option<u32>, &str) {
         return (None, body);
     }
     let rest = rest.trim_start_matches(is_separator).trim_start();
-    // 只剩一个数字时不能剥：`01.flac` 的标题就是「01」
+    // 只剩一个数字时不能剥，`01.flac` 的标题就是「01」
     if rest.is_empty() {
         return (None, body);
     }
@@ -524,7 +524,7 @@ fn is_separator(ch: char) -> bool {
     )
 }
 
-// ---------------------------------------------------------------- 括号含义
+// ---------------------------------------------------------------- 括号含义。
 
 enum Role {
     Artist,
@@ -540,7 +540,7 @@ fn role_of(kind: Bracket, text: &str, dirs: DirHints<'_>, folder: &FolderContext
         return Role::Junk;
     }
 
-    // 纯数字：短的是音轨号，四位的是年份
+    // 纯数字时，短的是音轨号，四位的是年份。
     if text.chars().all(|ch| ch.is_ascii_digit()) {
         if text.len() <= 3 {
             return Role::TrackNo;
@@ -559,7 +559,7 @@ fn role_of(kind: Bracket, text: &str, dirs: DirHints<'_>, folder: &FolderContext
         return Role::Suffix;
     }
 
-    // 目录 / 词典点名优先于括号形状
+    // 目录与词典点名优先于括号形状。
     if matches_dir(dirs.album, text) {
         return Role::Album;
     }
@@ -572,9 +572,9 @@ fn role_of(kind: Bracket, text: &str, dirs: DirHints<'_>, folder: &FolderContext
     }
 
     match kind {
-        // 书名号里在中文语境下是作品名（专辑 / 曲名）
+        // 书名号在中文语境下表示作品名，即专辑名或曲名。
         Bracket::Book => Role::Album,
-        // 方头括号多数是压制组、论坛名，没被上面接住的就丢掉
+        // 方头括号多数是压制组、论坛名，没被上面接住的就丢掉。
         Bracket::Square => {
             if is_cjk_name(text) {
                 Role::Artist
@@ -582,8 +582,8 @@ fn role_of(kind: Bracket, text: &str, dirs: DirHints<'_>, folder: &FolderContext
                 Role::Junk
             }
         }
-        // 圆括号里是「(周杰伦)」还是「(Live)」只能看内容：纯中文的短名字当艺术家，
-        // 其余一律接回标题 —— 弄错了只是标题多一个括号，弄丢了才是信息永久消失。
+        // 圆括号里是「(周杰伦)」还是「(Live)」只能看内容。纯中文的短名字当艺术家，
+        // 其余一律接回标题。弄错了只是标题多一个括号，弄丢了才是信息永久消失。
         Bracket::Round => {
             if is_cjk_name(text) {
                 Role::Artist
@@ -594,7 +594,7 @@ fn role_of(kind: Bracket, text: &str, dirs: DirHints<'_>, folder: &FolderContext
     }
 }
 
-/// 纯非 ASCII 的短名字：`周杰伦`、`坂本龍一`。像个人的名字才敢往艺术家上押。
+/// 纯非 ASCII 的短名字，如 `周杰伦`、`坂本龍一`。像个人的名字才敢往艺术家上押。
 fn is_cjk_name(text: &str) -> bool {
     let count = text.chars().count();
     (2..=10).contains(&count)
@@ -603,20 +603,20 @@ fn is_cjk_name(text: &str) -> bool {
             .all(|ch| !ch.is_ascii() && !ch.is_whitespace() && !ch.is_numeric())
 }
 
-// ---------------------------------------------------------------- 文本归一
+// ---------------------------------------------------------------- 文本归一。
 
-/// 折成便于比较的形式：全角转半角、各种破折号统一成 `-`、压掉多余空白。
+/// 折成便于比较的形式，即全角转半角、各种破折号统一成 `-`、压掉多余空白。
 fn normalise(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut space = false;
     for ch in raw.chars() {
         let ch = match ch {
             '\u{3000}' => ' ',
-            // 全角 ASCII：全角标点与全角数字都在这一段
+            // 全角标点与全角数字都落在这一段全角 ASCII 里。
             '\u{FF01}'..='\u{FF5E}' => char::from_u32(u32::from(ch) - 0xFEE0).unwrap_or(ch),
-            // 连字符、en/em dash、减号，写法有十几种，含义只有一种
+            // 连字符、en/em dash、减号，写法有十几种，含义只有一种。
             '\u{2010}'..='\u{2015}' | '\u{2212}' | '\u{FE58}' | '\u{FE63}' => '-',
-            // 零宽字符：从网页上抄下来的文件名常带
+            // 零宽字符，常见于从网页上抄下来的文件名。
             '\u{200B}'..='\u{200D}' | '\u{FEFF}' => continue,
             _ => ch,
         };
@@ -633,7 +633,7 @@ fn normalise(raw: &str) -> String {
     out.trim().to_owned()
 }
 
-// ---------------------------------------------------------------- 标记词
+// ---------------------------------------------------------------- 标记词。
 
 /// 出现在标题侧很正常的词。出现在艺术家侧就说明切反了。
 const VERSION_MARKERS: &[&str] = &[
@@ -660,7 +660,7 @@ const VERSION_MARKERS: &[&str] = &[
     "版",
 ];
 
-/// 只可能是垃圾的词：压制组、论坛、码率、格式。看着像这些的括号内容整段丢掉。
+/// 只可能是垃圾的词，如压制组、论坛、码率、格式。看着像这些的括号内容整段丢掉。
 const JUNK_MARKERS: &[&str] = &[
     "www.", "http", "://", ".com", ".cn", "论坛", "压制", "首发", "整理", "分享", "kbps", "320k",
     "128k", "flac", "mp3", "wav", "dsd", "hires", "hi-res",
@@ -742,7 +742,7 @@ fn is_generic_dir(name: &str) -> bool {
     folded.is_empty() || GENERIC_DIRS.contains(&folded.as_str())
 }
 
-/// 「第几张碟」这类中间层：`Disc 1`、`CD2`、`Vol.1`。它们既不是专辑也不是艺术家，
+/// 「第几张碟」这类中间层。`Disc 1`、`CD2`、`Vol.1`。它们既不是专辑也不是艺术家，
 /// 推断目录提示时要跨过去。
 fn is_part_dir(name: &str) -> bool {
     let folded: String = name
@@ -798,7 +798,7 @@ mod tests {
         );
     }
 
-    /// 用户最常抱怨的那种：`歌名 - 歌手` 与 `歌手 - 歌名` 长得一模一样，
+    /// 用户最常抱怨的那种。`歌名 - 歌手` 与 `歌手 - 歌名` 长得一模一样，
     /// 只能靠目录里重复出现的那一侧来定方向。
     #[test]
     fn 目录里重复的那一侧才是艺术家() {
@@ -837,7 +837,7 @@ mod tests {
         assert_eq!(found.artist.as_deref(), Some("周杰伦"));
         assert_eq!(found.title, "七里香");
 
-        // 正着写也一样：专辑名当艺术家要被 -6 压下去
+        // 正着写也一样，专辑名当艺术家要被 -6 压下去。
         let found = guess("周杰伦 - 七里香", dirs, &with_artists(&artists)).expect("应当切开");
         assert_eq!(found.artist.as_deref(), Some("周杰伦"));
     }
@@ -895,7 +895,7 @@ mod tests {
         assert_eq!(found.title, "天空之城 - 钢琴版");
     }
 
-    /// 名字和标题自带的连字符不该按分隔符处理：有「空格 - 空格」时只认它。
+    /// 名字和标题自带的连字符不该按分隔符处理，有「空格 - 空格」时只认它。
     #[test]
     fn 带空格的连字符优先于裸连字符() {
         let found = guess_plain("塞壬唱片-MSR,z1on,ReStudio - 布道人").expect("应当切开");
@@ -986,7 +986,7 @@ mod tests {
 
     #[test]
     fn 纯数字当不了艺术家() {
-        // `1 - Intro`：数字被当成音轨号剥掉之后不该反过来变成艺术家
+        // 如 `1 - Intro`，数字被当成音轨号剥掉之后不该反过来变成艺术家。
         let found = guess_plain("1 - Intro");
         assert!(
             found.as_ref().is_none_or(|g| g.artist.is_none()),

@@ -1,6 +1,6 @@
 //! APE（Monkey's Audio）解码。symphonia 的 `ape` feature 只注册标签读取器，没有音频解码器。
 //! 它的 MPEG 探测会把 APE 的压缩数据误判成 MP3 帧同步并报「成功」，实际吐出满刻度噪声。
-//! 这里用 `ape-decoder`：纯 Rust、无 FFI；按帧解码，`decode_all()` 会把整首装进内存。
+//! 这里用 `ape-decoder`。纯 Rust、无 FFI；按帧解码，`decode_all()` 会把整首装进内存。
 
 use std::fs::File;
 use std::io::BufReader;
@@ -81,7 +81,7 @@ impl ApeSource {
         self.frame.clear();
         self.pos = 0;
         self.decode_frame(landed.frame_index)?;
-        // `skip_samples` 是每声道的样本数，交错布局里要乘声道数
+        // `skip_samples` 是每声道的样本数，交错布局里要乘声道数。
         self.pos = landed.skip_samples as usize * self.channels as usize;
         Ok(())
     }
@@ -134,7 +134,7 @@ impl Iterator for ApeSource {
         while self.pos >= self.frame.len() {
             match self.pump() {
                 Ok(true) => {}
-                // 整首解完得到 `false`；解码出错记一条日志后停在这里
+                // 整首解完得到 `false`；解码出错记一条日志后停在这里。
                 Ok(false) => return None,
                 Err(err) => {
                     log::warn!("APE 解码中断：{err}");
@@ -148,7 +148,7 @@ impl Iterator for ApeSource {
     }
 }
 
-/// 把 APE 解出的原始字节按容器规格转成 f32：位宽与是否浮点必须取自文件头，猜错就是直流偏移或削顶。
+/// 把 APE 解出的原始字节按容器规格转成 f32。位宽与是否浮点必须取自文件头，猜错就是直流偏移或削顶。
 /// APE 有 8 / 16 / 24 / 32 位整数和 32 位浮点，8 位还分有符号与无符号。
 fn to_f32(pcm: &[u8], info: &ape_decoder::ApeInfo) -> Vec<f32> {
     let bytes = usize::from(info.bytes_per_sample);
@@ -215,7 +215,7 @@ mod tests {
         }
     }
 
-    /// 16 位按 32768 归一：满量程负值是 -1.0，最大值略小于 1.0。
+    /// 16 位按 32768 归一。满量程负值是 -1.0，最大值略小于 1.0。
     #[test]
     fn sixteen_bit_maps_the_full_scale() {
         let out = to_f32(&[0x00, 0x80, 0xFF, 0x7F], &info(2, true, false));
@@ -223,7 +223,7 @@ mod tests {
         assert!((out[1] - 1.0).abs() < 1e-4, "实际 {}", out[1]);
     }
 
-    /// 8 位有两种解释：有符号是补码，无符号是偏移二进制。猜错就是整体加了个直流。
+    /// 8 位有两种解释。有符号是补码，无符号是偏移二进制。猜错就是整体加了个直流。
     #[test]
     fn eight_bit_tells_signed_from_unsigned() {
         let signed = to_f32(&[0x80, 0x00, 0xFF], &info(1, true, false));

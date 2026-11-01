@@ -1,4 +1,4 @@
-//! 侧边栏：上卡片是首页 / 曲库两个导航项，下卡片列曲库内容。
+//! 侧边栏。上卡片是首页与曲库两个导航项，下卡片列曲库内容。
 //! 下卡片粒度默认跟随主区区段（`entries::listing_for`），可被标题下的胶囊 Chip 覆盖（`listing_override`）。
 
 use crate::cover::CoverCache;
@@ -24,10 +24,10 @@ pub struct Sidebar {
     covers: Entity<CoverCache>,
     /// Chip 手动筛选；`None` = 跟随主区区段（`entries::listing_for`）。
     listing_override: Option<Listing>,
-    /// 上次渲染时的主区区段：区段一变就把手动筛选复位回「跟随」，
+    /// 上次渲染时的主区区段。区段一变就把手动筛选复位回「跟随」，
     /// 否则从「专辑」切到「艺术家」区段时侧栏还停在专辑列表。
     last_nav: NavSection,
-    /// 曲库计数每次被悬停进入时加一：换元素的 id，乱码重新落定一次。
+    /// 曲库计数每次被悬停进入时加一。换元素的 id，乱码重新落定一次。
     count_epoch: u64,
     _subs: Vec<Subscription>,
 }
@@ -84,7 +84,7 @@ impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.shell.read(cx).sidebar();
         let nav = self.shell.read(cx).nav_section();
-        // 主区区段变了：把手动筛选复位回「跟随主区」。在 render 里改而不 notify —— 本帧就会用上新值。
+        // 主区区段变了，把手动筛选复位回「跟随主区」。在 render 里改而不 notify。本帧就会用上新值。
         if self.last_nav != nav {
             self.last_nav = nav;
             self.listing_override = None;
@@ -113,12 +113,12 @@ impl Render for Sidebar {
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：`crate::platform::*` 会把 gpui 的 `test` 宏带进来，遮蔽内置 `#[test]`。
+    // 不写 `use super::*`。`crate::platform::*` 会把 gpui 的 `test` 宏带进来，遮蔽内置 `#[test]`。
     use super::entries::{Listing, SideScope, listing_for};
     use super::nav::library_item_selected;
     use crate::shell::NavSection;
 
-    /// 「新建歌单」那一行没有现成的作用域可进 —— 它得先把歌单建出来。
+    /// 「新建歌单」那一行没有现成的作用域可进。它得先把歌单建出来。
     #[test]
     fn only_the_new_row_has_no_scope_to_enter() {
         use crate::entities::Scope;
@@ -149,7 +149,7 @@ mod tests {
         assert_eq!(
             listing_for(NavSection::Tracks),
             Listing::Artists,
-            "曲目区段必须列艺术家 —— 主区是平铺曲目，列专辑会让两边对不上"
+            "曲目区段必须列艺术家，因为主区是平铺曲目，列专辑会让两边对不上"
         );
     }
 
@@ -188,7 +188,7 @@ mod tests {
 
         assert!(
             !library_item_selected(NavSection::Tracks, true),
-            "进了详情（有作用域）时「曲库」不该再亮 —— 亮的是列表里那一行"
+            "进了详情（有作用域）时「曲库」不该再亮；此时亮的是列表里那一行"
         );
 
         for nav in [NavSection::Home, NavSection::Search] {

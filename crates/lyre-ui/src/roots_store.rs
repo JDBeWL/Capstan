@@ -1,5 +1,5 @@
-//! 曲库根落盘到 `roots.json`：一个裸的字符串数组，按用户加进来的顺序。
-//! 读不到就当没有根（老版本没有这份文件），写不进只记日志 —— 丢了根顶多是下次不补扫，
+//! 曲库根落盘到 `roots.json`。一个裸的字符串数组，按用户加进来的顺序。
+//! 读不到就当没有根（老版本没有这份文件），写不进只记日志。丢了根顶多是下次不补扫，
 //! 曲目本身在 `library.json` 里，不该因此启动失败。
 
 use std::path::PathBuf;
@@ -16,16 +16,16 @@ pub fn load() -> Roots {
     Roots::from_paths(paths)
 }
 
-/// 用紧凑排版：根通常只有几行，但和曲库一样不需要缩进。
+/// 用紧凑排版。根通常只有几行，但和曲库一样不需要缩进。
 pub fn save(roots: &Roots) {
     persist::save_compact_lossy(FILE, roots.items().to_vec());
 }
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：`crate::platform::*` 带进来的 gpui `test` 宏会遮蔽内置 `#[test]`。
+    // 不写 `use super::*`，`crate::platform::*` 带进来的 gpui `test` 宏会遮蔽内置 `#[test]`。
 
-    /// 落盘形状是裸数组：老版本读到 `[{"path": ...}]` 会因为类型对不上整份丢掉。
+    /// 落盘形状是裸数组，老版本读到 `[{"path": ...}]` 会因为类型对不上整份丢掉。
     #[test]
     fn 落盘是裸字符串数组() {
         let text = serde_json::to_string(&vec![

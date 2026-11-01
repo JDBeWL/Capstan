@@ -1,13 +1,13 @@
-//! 独占输出的采样环：解码推送线程写，渲染线程读，基于 `rtrb` 的 SPSC 环。
-//! 必须有写世代：切歌或 seek 时旧推送线程可能卡在水位门上，醒来后会灌进上一段的样本，靠世代作废。
-//! 生产者那半放在互斥量里：它要在控制线程与推送线程之间交接（每次切歌换一个），实时渲染线程不碰它。
+//! 独占输出的采样环。解码推送线程写，渲染线程读，基于 `rtrb` 的 SPSC 环。
+//! 必须引入写世代。切歌或 seek 时旧推送线程可能阻塞于水位门，唤醒后会写入上一段的样本，依赖世代作废拦截。
+//! 生产者那半放在互斥量里。它要在控制线程与推送线程之间交接（每次切歌换一个），实时渲染线程不碰它。
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rtrb::{Consumer, Producer, RingBuffer};
 
-/// 环按「最坏情况约 2 秒」一次性分配：192kHz × 8 声道 × 2s。
+/// 环按「最坏情况约 2 秒」一次性分配，192kHz × 8 声道 × 2s。
 /// 容量必须在协商格式之前定下来（环比设备先建好），所以按上限给；实际水位由推送线程的门控决定。
 pub const RING_SAMPLES: usize = 192_000 * 8 * 2;
 
@@ -16,7 +16,8 @@ pub struct SampleRing {
     /// 世代号，[`SampleRing::invalidate`] 每调用一次加一。
     epoch: AtomicU64,
     /// 最近一次作废时环里的存量样本数，它们全部属于被作废的那一代。
-    /// 写入端先写 `stale` 再 release 发布 `epoch`，读取端先 acquire 读 `epoch` 再读 `stale`；反了会把新写入的样本一起丢掉。
+    /// 写入端先写 `stale` 再 release 发布 `epoch`，读取端先 acquire 读 `epoch` 再读 `stale`。
+    /// 顺序相反会把新写入的样本一起丢掉。
     stale: AtomicUsize,
 }
 
@@ -60,10 +61,10 @@ impl SampleRing {
         }
     }
 
-    /// 作废当前世代：**作废那一刻**环里的样本会被读取端丢掉，还持着旧世代的写入端从此写不进东西。
+    /// 作废当前世代。**作废那一刻**环里的样本会被读取端丢掉，还持着旧世代的写入端从此写不进东西。
     /// 作废之后写进来的属于新世代，照常交付。
     pub fn invalidate(&self) {
-        // 存量数与世代号都在锁里动：写入端也在这把锁下核对世代，于是「量完之后才写进来」
+        // 存量数与世代号都在锁里动。写入端也在这把锁下核对世代，于是「量完之后才写进来」
         // 的样本不可能被算进旧的存量里。
         let producer = self.lock();
         self.stale.store(
@@ -99,11 +100,11 @@ impl RingWriter {
         self.ring.backlog()
     }
 
-    /// 写一批采样，返回真正写进去的个数。返回 0 有两种含义，调用方都应当收工：
+    /// 写入一批采样，返回实际写入的个数。返回 0 有两种含义，调用方均应结束写入：
     /// 世代已过期（本线程的样本作废），或环已满（水位门控失效，属异常路径）。
     pub fn write(&self, samples: &[f32]) -> usize {
         let mut producer = self.ring.lock();
-        // 世代要在拿到锁之后再核对一次：先在锁外看一眼的话，「作废」有可能挤在两者之间
+        // 世代要在拿到锁之后再核对一次。先在锁外看一眼的话，「作废」有可能挤在两者之间
         // 完成，于是上一代的样本被当成新世代的数据播出去。
         if self.epoch != self.ring.epoch() {
             return 0;
@@ -130,7 +131,7 @@ impl RingReader {
         let epoch = self.ring.epoch();
         if epoch != self.epoch {
             self.epoch = epoch;
-            // 只丢作废那一刻的存量。作废之后写进来的是新一代的数据，留着当场就能读出去 ——
+            // 只丢作废那一刻的存量。作废之后写进来的是新一代的数据，留着当场就能读出去。
             // 整环清空的话，切歌时新曲目开头那一段就被白扔了。
             self.discard(self.ring.stale());
         }
@@ -146,7 +147,7 @@ impl RingReader {
     }
 
     /// 丢掉 `count` 个样本（不足就只丢环里现有的）。
-    /// 只推进读索引，不把旧样本拷进临时缓冲 —— 这段跑在实时线程上，切歌时可能要丢近两秒的存量。
+    /// 只推进读索引，不把旧样本拷进临时缓冲。这段跑在实时线程上，切歌时可能要丢近两秒的存量。
     fn discard(&mut self, mut count: usize) {
         while count > 0 {
             let take = self.consumer.slots().min(count);
@@ -202,7 +203,7 @@ mod tests {
         assert_eq!(writer.write(&[0.1, 0.2]), 0, "满了就该写不进去");
     }
 
-    /// 作废之后写进来的样本属于新世代：读取端第一次读要丢掉旧存量、同时当场交出新的。
+    /// 作废之后写进来的样本属于新世代。读取端第一次读要丢掉旧存量，同时当场交出新的。
     #[test]
     fn a_swap_discards_only_what_was_there_before_it() {
         let (ring, writer, mut reader) = SampleRing::new();
@@ -210,7 +211,7 @@ mod tests {
 
         ring.invalidate();
 
-        // 新推送线程在渲染线程还没反应过来之前就灌进了一整段
+        // 新推送线程在渲染线程尚未响应之前即已写入一整段。
         let fresh = SampleRing::writer(&ring);
         assert_eq!(fresh.write(&[0.25f32; 1024]), 1024);
 
@@ -227,7 +228,7 @@ mod tests {
         assert_eq!(ring.backlog(), 0);
     }
 
-    /// 连续两次作废（切歌还没消费完又 seek）之后，环里剩下的全是可丢的：上一次作废之后
+    /// 连续两次作废（切歌还没消费完又 seek）之后，环里剩下的全是可丢的，上一次作废之后
     /// 写的也一并作废。存量要按最新一次量的算，不能两次叠起来多丢。
     #[test]
     fn back_to_back_swaps_do_not_stack_up() {
@@ -242,13 +243,13 @@ mod tests {
         let second = SampleRing::writer(&ring);
         second.write(&[0.7f32; 400]);
 
-        // 读取端从头到尾没读过：旧存量 300 + 第一次作废后写的 700 都是可丢的，只剩 400
+        // 读取端从头到尾没读过。旧存量 300 + 第一次作废后写的 700 都是可丢的，只剩 400。
         let mut out = vec![0.0f32; 400];
         assert_eq!(reader.read(&mut out), 400);
         assert!(out.iter().all(|sample| *sample == 0.7));
     }
 
-    /// 作废之后旧写入端一律写不进，环里残留的样本也要被读取端丢弃 ——
+    /// 作废之后旧写入端一律写不进，环里残留的样本也要被读取端丢弃。
     /// 否则切歌后的头几毫秒会掺进上一段的尾巴。
     #[test]
     fn an_invalidated_generation_can_neither_write_nor_read_stale_samples() {
@@ -316,7 +317,7 @@ mod tests {
         assert_eq!(ring.backlog(), 0);
     }
 
-    /// 塞满环再作废，返回一个一读就会丢掉全部存量的读取端。
+    /// 写满环后作废，返回一个首次读取即丢弃全部存量的读取端。
     fn filled_stale_ring() -> (Arc<SampleRing>, RingReader) {
         let (ring, writer, reader) = SampleRing::new();
         let block = vec![0.5f32; 65_536];
@@ -330,7 +331,7 @@ mod tests {
         (ring, reader)
     }
 
-    /// 性能基准：切歌时丢弃整环存量，直接推进读索引 vs 逐块拷贝到临时数组。
+    /// 性能基准。切歌时丢弃整环存量，直接推进读索引 vs 逐块拷贝到临时数组。
     #[test]
     #[ignore = "性能基准，手动运行"]
     fn advancing_the_read_index_beats_copying_stale_samples_out() {

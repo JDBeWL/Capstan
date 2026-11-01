@@ -1,6 +1,6 @@
-//! 设计令牌：纸 / 板 / 墨三色、单一强调色、细线与切角，以及字体与动效。
-//! 浅色是默认，深色是一整套平行取值：不是把浅色反相，而是各自的纸、板、墨、细线。
-//! 所有文字色对背景的对比度必须 ≥ 4.5:1（WCAG AA），由本文件末尾的测试对两套主题逐项强制。
+//! 设计令牌。纸、板、墨三色，单一强调色、细线与切角，以及字体与动效。
+//! 浅色是默认，深色是一整套平行取值。不是把浅色反相，而是各自的纸、板、墨、细线。
+//! 所有文字色对背景的对比度必须 ≥ 4.5:1，即 WCAG AA 的要求；本文件末尾的测试对两套主题逐项强制。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -24,7 +24,7 @@ impl Appearance {
 }
 
 /// 一套完整的主题取值，字段是原始 sRGB。函数只负责按当前明暗取色。
-/// 两套的层级关系一致：板比纸亮，切角露出的始终是更暗的纸。
+/// 两套的层级关系一致。板比纸亮，切角露出的始终是更暗的纸。
 #[derive(Clone, Copy)]
 pub(crate) struct Palette {
     pub(crate) dark: bool,
@@ -66,7 +66,7 @@ const LIGHT: Palette = Palette {
     on_control: 0xffffff,
 };
 
-/// 深色：纸 #191919、板 #222222、墨 #EDEDED，黄不变。
+/// 深色。纸 #191919、板 #222222、墨 #EDEDED，黄不变。
 const DARK: Palette = Palette {
     dark: true,
     paper: 0x191919,
@@ -120,15 +120,15 @@ fn c(value: u32) -> Rgba {
     rgb(value)
 }
 
-/// 纸色：窗口底、侧栏、顶栏和底栏。比板色更暗，让板浮出来。
+/// 纸色。窗口底、侧栏、顶栏和底栏。比板色更暗，让板浮出来。
 pub fn window_base() -> Rgba {
     c(palette().paper)
 }
-/// 板色：主内容区与右面板的底，是给人读的那一张纸。
+/// 板色。主内容区与右面板的底，是给人读的那一张纸。
 pub fn bg() -> Rgba {
     c(palette().panel)
 }
-/// 通栏外壳（顶栏 / 底栏）的底色，与纸同色，靠 1px 细线分区。
+/// 通栏外壳（顶栏与底栏）的底色，与纸同色，靠 1px 细线分区。
 pub fn chrome() -> Rgba {
     window_base()
 }
@@ -138,19 +138,19 @@ pub fn panel() -> Rgba {
     bg()
 }
 
-/// 输入框、搜索框的底色：与板同色，靠 1px 细线分界。
+/// 输入框、搜索框的底色。与板同色，靠 1px 细线分界。
 pub fn surface() -> Rgba {
     bg()
 }
-/// 安静的填充：待机按钮、标签块、列头。
+/// 安静的填充，用于待机按钮、标签块与列头。
 pub fn elevated() -> Rgba {
     c(palette().chip)
 }
-/// 列表行的悬停底色：退回纸色。
+/// 列表行的悬停底色，退回纸色。
 pub fn hover() -> Rgba {
     c(palette().hover)
 }
-/// 键盘光标所在行的底色：比 [`hover`] 更醒目的一档；浅色更深，深色更浅。
+/// 键盘光标所在行的底色。比 [`hover`] 更醒目的一档；浅色更深，深色更浅。
 pub fn cursor() -> Rgba {
     c(palette().cursor)
 }
@@ -163,12 +163,12 @@ pub fn border() -> Rgba {
 pub fn border_soft() -> Rgba {
     c(palette().rule_soft)
 }
-/// 有意义的线：当前项、选中段、强调边框。
+/// 有意义的线，用于当前项、选中段与强调边框。
 pub fn rule_strong() -> Rgba {
     text()
 }
 
-/// 标出「这里」的线：浅色用墨，深色用黄。行首的悬停 / 光标条与焦点环都走它。
+/// 标出「这里」的线。浅色用墨，深色用黄。行首的悬停、光标条与焦点环都走它。
 pub fn trace() -> Rgba {
     trace_for(palette())
 }
@@ -193,31 +193,31 @@ pub fn text_faint() -> Rgba {
     c(palette().faint)
 }
 
-/// 唯一的强调色：当前位置、可点击内容、醒目提醒。只做填充，上面写深色字。
+/// 唯一的强调色。当前位置、可点击内容、醒目提醒。只做填充，上面写深色字。
 pub fn accent() -> Rgba {
     c(palette().signal)
 }
 pub fn accent_hover() -> Rgba {
     c(0xe6e100)
 }
-/// 强调色上的字与图形：两套主题都是深墨色，黄块上不存在浅色字。
+/// 强调色上的字与图形。两套主题都是深墨色，黄块上不存在浅色字。
 pub fn text_on_accent() -> Rgba {
     c(palette().on_signal)
 }
-/// 当前行 / 拖放高亮的淡底色：`accent` 的 0.20 alpha。
+/// 当前行与拖放高亮的淡底色，`accent` 的 0.20 alpha。
 pub fn accent_soft() -> Rgba {
     accent().opacity(0.20)
 }
 
-/// 主控件的填充色：播放键、进度条已播段、勾选框。墨色，悬停时被黄色擦入。
+/// 主控件的填充色。播放键、进度条已播段、勾选框。墨色，悬停时被黄色擦入。
 pub fn control() -> Rgba {
     text()
 }
-/// 主控件悬停档：黄色。字与图形同时换成 [`text_on_accent`]。
+/// 主控件悬停档，黄色。字与图形同时换成 [`text_on_accent`]。
 pub fn control_hover() -> Rgba {
     accent()
 }
-/// 压在 [`control`] 上的图形（播放三角、勾选框的对勾）：浅色白、深色墨。
+/// 压在 [`control`] 上的图形，如播放三角与勾选框的对勾，浅色用白、深色用墨。
 pub fn text_on_control() -> Rgba {
     c(palette().on_control)
 }
@@ -237,7 +237,7 @@ pub fn success() -> Rgba {
     text_muted()
 }
 
-/// 进度 / 音量轨道的底色。
+/// 进度与音量轨道的底色。
 pub fn track() -> Rgba {
     elevated()
 }
@@ -257,11 +257,11 @@ pub fn transparent() -> Rgba {
     rgba(0x00000000)
 }
 
-/// 界面宽体拉丁：Saira，静态切到 100% 宽度。
+/// 界面宽体拉丁。Saira，静态切到 100% 宽度。
 pub const FONT_UI: &str = "Saira";
-/// 字段数字：Saira 112% 宽，等宽数字。
+/// 字段数字。Saira 112% 宽，等宽数字。
 pub const FONT_FIELD: &str = "Saira Field";
-/// 眉标与字标：Saira 125% 宽。
+/// 眉标与字标，Saira 125% 宽。
 pub const FONT_LABEL: &str = "Saira Label";
 
 /// 界面字体。Saira 没有中文字形，回退到系统黑体。
@@ -275,7 +275,7 @@ pub fn ui_font() -> Font {
     }
 }
 
-/// 字段字体：宽体 + 等宽数字。
+/// 字段字体，宽体 + 等宽数字。
 pub fn field_font() -> Font {
     Font {
         family: FONT_FIELD.into(),
@@ -286,7 +286,7 @@ pub fn field_font() -> Font {
     }
 }
 
-/// 眉标 / 字标字体：125% 宽。
+/// 眉标与字标字体，125% 宽。
 pub fn label_font() -> Font {
     Font {
         family: FONT_LABEL.into(),
@@ -326,13 +326,13 @@ pub const FONT_MICRO: f32 = 10.0;
 pub const FONT_CAPTION: f32 = 12.0;
 /// 列表副标题、按钮、导航项。
 pub const FONT_BODY: f32 = 14.0;
-/// 列表主标题（歌名）。
+/// 列表主标题，即歌名。
 pub const FONT_TRACK: f32 = 15.0;
 /// 面板标题、底栏当前曲名。
 pub const FONT_SUBTITLE: f32 = 16.0;
 /// 页面大标题、区块标题。
 pub const FONT_TITLE: f32 = 22.0;
-/// 页面头部标题（压在标题区上的那一行）。
+/// 页面头部标题，即压在标题区上的那一行。
 pub const FONT_HERO: f32 = 34.0;
 /// 字号之间的相对关系是布局前提，写成编译期断言。
 const _: () = assert!(FONT_HERO > FONT_TITLE);
@@ -342,7 +342,7 @@ const _: () = assert!(FONT_HERO <= 40.0);
 pub const FONT_DISPLAY: f32 = 30.0;
 /// 格式标签（wav / mp3）的字号。
 pub const FONT_TAG: f32 = 10.0;
-/// 眉标 / 字段。
+/// 眉标与字段。
 pub const FONT_EYEBROW: f32 = 10.0;
 pub const FONT_FIELD_SIZE: f32 = 12.0;
 /// 首页字标。
@@ -350,17 +350,17 @@ pub const FONT_WORDMARK: f32 = 64.0;
 /// 展示页的空心大编号。
 pub const FONT_HOLLOW_NO: f32 = 120.0;
 
-/// 数字（时长 / 列表序号 / 区块编号）的宽体等宽字体。
+/// 数字（时长、列表序号、区块编号）的宽体等宽字体。
 pub const FONT_MONO: &str = FONT_FIELD;
 
 pub const WEIGHT_TITLE: FontWeight = FontWeight::BOLD;
 pub const WEIGHT_SUBTITLE: FontWeight = FontWeight::SEMIBOLD;
 /// 按钮与导航项的字重，600。
 pub const WEIGHT_BUTTON: FontWeight = FontWeight::SEMIBOLD;
-/// 列表歌名：常态 regular，播放态会额外加粗（见 `track_list`）。
+/// 列表歌名。常态 regular，播放态额外加粗，见 `track_list`。
 pub const WEIGHT_TRACK: FontWeight = FontWeight::NORMAL;
 
-/// 圆角一律为 0：形状语言只分直角与切角。
+/// 圆角一律为 0，形状语言只分直角与切角。
 pub const RADIUS_SM: f32 = 0.0;
 pub const RADIUS_MD: f32 = 0.0;
 pub const RADIUS_LG: f32 = 0.0;
@@ -393,10 +393,10 @@ pub const UNPLAYABLE_OPACITY: f32 = 0.5;
 /// 顶部栏高度。
 pub const TOP_BAR_H: f32 = 52.0;
 pub const BOTTOM_BAR_H: f32 = 76.0;
-/// 底部控制栏在窄窗口下的高度（两行：传输区 + 进度条）。
+/// 底部控制栏在窄窗口下的高度，此时分两行，传输区与进度条。
 pub const BOTTOM_BAR_H_STACKED: f32 = 100.0;
 
-/// 底栏高度。底栏自己和根视图的 toast 定位都要读它。
+/// 底栏高度。底栏自身与根视图的 toast 定位均需读取此值。
 pub fn bottom_bar_height(stacked: bool) -> f32 {
     if stacked {
         BOTTOM_BAR_H_STACKED
@@ -411,13 +411,13 @@ pub const PAGE_PAD: f32 = GAP_XL;
 /// 侧边导航展开宽度。
 pub const SIDEBAR_W: f32 = 232.0;
 pub const SIDEBAR_ICON_W: f32 = 64.0;
-/// 导航项高度：容得下英文眉标 + 中文两行。
+/// 导航项高度，容得下英文眉标 + 中文两行。
 pub const SIDEBAR_ITEM_H: f32 = 48.0;
 pub const SIDEBAR_INDICATOR_W: f32 = 4.0;
 pub const RIGHT_PANEL_W: f32 = 320.0;
-/// 底栏左栏宽度（曲目身份）。
+/// 底栏左栏宽度，即曲目身份区。
 pub const BOTTOM_LEFT_W: f32 = 240.0;
-/// 底栏右栏宽度（功能入口 + 音量）。
+/// 底栏右栏宽度，即功能入口与音量。
 pub const BOTTOM_RIGHT_W: f32 = 320.0;
 pub const BOTTOM_CENTER_MAX: f32 = 620.0;
 pub const ROW_H_COMPACT: f32 = 40.0;
@@ -428,7 +428,7 @@ pub const ROW_CURSOR_BAR_W: f32 = 3.0;
 pub const ROW_INDEX_W: f32 = 36.0;
 /// 列表行与列头的左内边距。
 pub const ROW_PAD_LEFT: f32 = 12.0;
-/// 行首编号 / 播放图标与右侧内容之间的间距。
+/// 行首编号、播放图标与右侧内容之间的间距。
 pub const ROW_INDEX_GAP: f32 = 16.0;
 pub const COLUMN_HEADER_H: f32 = 32.0;
 pub const SEARCH_H: f32 = 34.0;
@@ -438,7 +438,7 @@ pub const MINI_COVER: f32 = 52.0;
 /// 键盘焦点环的宽度。画在元素外侧，不占布局。
 pub const FOCUS_RING_W: f32 = 2.0;
 
-/// 焦点环用 [`trace`]：浅色墨、深色黄，对纸 / 板 / chip 都有 3:1 以上。
+/// 焦点环用 [`trace`]。浅色墨、深色黄，对纸、板与 chip 都有 3:1 以上。
 fn focus_ring_color() -> Hsla {
     trace().into()
 }
@@ -449,17 +449,17 @@ pub fn focus_ring(style: StyleRefinement) -> StyleRefinement {
     ])
 }
 
-/// 机械动效：慢起硬停，像闸门。
+/// 机械动效。慢起硬停，像闸门。
 pub fn ease_mech() -> impl Fn(f32) -> f32 {
     cubic_bezier(0.7, 0.0, 0.2, 1.0)
 }
 
-/// 出现 / 到位：迅速进入后稳住。
+/// 出现与到位，迅速进入后稳住。
 pub fn ease_snap() -> impl Fn(f32) -> f32 {
     cubic_bezier(0.16, 1.0, 0.3, 1.0)
 }
 
-/// 普通过渡：颜色、三色条扫过。
+/// 普通过渡，用于颜色与三色条扫过。
 pub fn ease_std() -> impl Fn(f32) -> f32 {
     cubic_bezier(0.2, 0.7, 0.1, 1.0)
 }
@@ -467,18 +467,18 @@ pub fn ease_std() -> impl Fn(f32) -> f32 {
 /// 一次操作的回应急在 100–400ms；单个入场 ≤ 650ms。
 pub const MOTION_PRESS_MS: u64 = 100;
 pub const MOTION_ROW_MS: u64 = 200;
-/// 悬停回应：按钮 280ms mech，列表行 250ms snap。
+/// 悬停回应。按钮 280ms mech，列表行 250ms snap。
 pub const MOTION_HOVER_MS: u64 = 280;
 pub const MOTION_HOVER_ROW_MS: u64 = 250;
 pub const MOTION_PANEL_IN_MS: u64 = 280;
-/// 抽屉退出 240ms；遮罩 / 歌词退出 160ms。
+/// 抽屉退出 240ms；遮罩与歌词退出 160ms。
 pub const MOTION_PANEL_OUT_MS: u64 = 240;
 pub const MOTION_OVERLAY_OUT_MS: u64 = 160;
 pub const MOTION_PAGE_MS: u64 = 360;
 pub const MOTION_TOAST_IN_MS: u64 = 280;
 pub const MOTION_TOAST_OUT_MS: u64 = 160;
 
-/// CSS `cubic-bezier(x1, y1, x2, y2)` 的求值：牛顿迭代解 x(u) = t，再取 y(u)。
+/// CSS `cubic-bezier(x1, y1, x2, y2)` 的求值。牛顿迭代解 x(u) = t，再取 y(u)。
 /// gpui 的 `with_easing` 只吃 `Fn(f32) -> f32`，没有现成的贝塞尔构造器。
 fn cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32) -> impl Fn(f32) -> f32 {
     let sample = move |a: f32, b: f32, u: f32| {
@@ -521,7 +521,7 @@ fn relative_luminance(color: Rgba) -> f32 {
     0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
 }
 
-/// 把 `fg` 合成到 `bg` 上。`opacity()` 只改 alpha（非预乘），所以要按 source-over 算。
+/// 把 `fg` 合成到 `bg` 上。`opacity()` 只改 alpha、不做预乘，故按 source-over 计算。
 #[cfg(test)]
 fn over(fg: Rgba, bg: Rgba) -> Rgba {
     Rgba {
@@ -551,7 +551,7 @@ mod tests {
 
     /// WCAG AA 正文的门槛。
     const AA: f32 = 4.5;
-    /// 非文字对比度的门槛：焦点环、当前行底色。
+    /// 非文字对比度的门槛，适用于焦点环与当前行底色。
     const NON_TEXT_AA: f32 = 3.0;
 
     fn color(value: u32) -> Rgba {

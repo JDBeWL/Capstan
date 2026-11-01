@@ -1,4 +1,4 @@
-//! `group_by_album` / `group_by_artist` 的基准：`lyre-core` 里唯一随曲库规模变化的热路径，
+//! `group_by_album` / `group_by_artist` 的基准。`lyre-core` 里唯一随曲库规模变化的热路径，
 //! 每次曲库变化都要对全库跑一遍。其余模块要么 O(1) 查表，要么只在单首曲目上工作。
 
 use std::hint::black_box;
@@ -10,7 +10,7 @@ use lyre_core::{
     AudioInfo, FieldSources, FileStamp, Track, TrackId, group_by_album, group_by_artist,
 };
 
-/// 铺一个像真曲库的集合：`albums` 张专辑 × `per_album` 首，艺术家按 97% 复用。
+/// 铺一个像真曲库的集合。`albums` 张专辑 × `per_album` 首，艺术家按 97% 复用。
 fn synthetic_library(albums: usize, per_album: usize) -> Vec<Track> {
     let mut tracks = Vec::with_capacity(albums * per_album);
     for album in 0..albums {
@@ -23,7 +23,7 @@ fn synthetic_library(albums: usize, per_album: usize) -> Vec<Track> {
                 artist: Some(format!("艺术家 {}", album % 97)),
                 album: Some(format!("专辑 {album:04}")),
                 duration: Some(Duration::from_secs(180 + n as u64 % 120)),
-                // 每三首带一张封面：让「选封面代表」那条分支真的被走到
+                // 每三首带一张封面，让「选封面代表」那条分支真的被走到。
                 has_cover: n % 3 == 0,
                 audio: AudioInfo::default(),
                 sources: FieldSources::default(),
@@ -50,7 +50,7 @@ fn grouping(c: &mut Criterion) {
     group.finish();
 }
 
-/// 病态分布：一张合辑里每首都是不同艺术家，组内艺术家去重会走平方路径。
+/// 病态分布。一张合辑里每首都是不同艺术家，组内艺术家去重会走平方路径。
 fn wide_album(tracks: usize) -> Vec<Track> {
     (0..tracks)
         .map(|n| Track {
@@ -68,7 +68,7 @@ fn wide_album(tracks: usize) -> Vec<Track> {
         .collect()
 }
 
-/// 病态分布：一位艺术家名下上千张专辑，组内专辑去重同样会走平方路径。
+/// 病态分布。一位艺术家名下上千张专辑，组内专辑去重同样会走平方路径。
 fn many_albums_by_one_artist(albums: usize) -> Vec<Track> {
     (0..albums)
         .map(|n| Track {

@@ -1,4 +1,4 @@
-//! 封面槽的共用取图流程：查缓存 → 未命中且并非「确定无封面」才发请求 → 否则由调用方画占位。
+//! 封面槽的共用取图流程，查缓存 → 未命中且并非「确定无封面」才发请求 → 否则由调用方画占位。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,13 +11,13 @@ use crate::icon::{Glyph, icon_inherit};
 use crate::platform::*;
 use crate::theme;
 
-/// 无封面占位的底色：墨色块配白字，像一张编号标签。不引入第二种强调色。
+/// 无封面占位的底色。墨色块配白字，像一张编号标签。不引入第二种强调色。
 pub fn monogram_color(_initial: char) -> Rgba {
     theme::text()
 }
 
 /// 封面槽的三态。必须区分「排队中」与「没有封面」：
-/// 前者画骨架屏（内容在路上），后者才是真占位（首字色块 / 人形图标 / 音符）。
+/// 前者画骨架屏（内容在路上），后者才是真占位（首字色块、人形图标、音符）。
 pub enum Cover {
     Ready(Arc<RenderImage>),
     Missing,
@@ -26,7 +26,7 @@ pub enum Cover {
 
 /// 取封面。未命中且并非「确定无封面」时发起一次解码请求，返回 [`Cover::Pending`]。
 /// 分组场景要传该组的 `representative`（第一个有封面的曲目）而非第一首。
-/// `size` 是这一格的逻辑像素边长：缓存按它分档取图。
+/// `size` 是这一格的逻辑像素边长，缓存按它分档取图。
 pub fn cover_state(
     covers: &Entity<CoverCache>,
     library: &Entity<LibraryEntity>,
@@ -38,12 +38,12 @@ pub fn cover_state(
     if let Some(image) = cached {
         return Cover::Ready(image);
     }
-    // 漏掉这一档，无封面的曲目会每帧重发一次解码请求
+    // 漏掉这一档，无封面的曲目会每帧重发一次解码请求。
     if covers.read(cx).is_missing(id, size) {
         return Cover::Missing;
     }
 
-    // 每个可见行都要走一次，所以必须是哈希查表而不是线性扫
+    // 每个可见行都要走一次，所以必须是哈希查表而不是线性扫。
     let path = App::update_entity(cx, library, |library, _| {
         library.playlist().by_id(id).map(|track| track.path.clone())
     });
@@ -52,7 +52,7 @@ pub fn cover_state(
             covers.update(cx, |covers, cx| covers.request(id, path, size, cx));
             Cover::Pending
         }
-        // 曲库里查不到这首：没有可解码的来源，直接判缺失
+        // 曲库里查不到这首。没有可解码的来源，直接判缺失。
         None => Cover::Missing,
     }
 }
@@ -70,7 +70,7 @@ pub fn cover_image(
     }
 }
 
-/// 解码期间的骨架块：浅灰 chip 色，不闪光、不渐变。
+/// 解码期间的骨架块。浅灰 chip 色，不闪光、不渐变。
 pub fn skeleton(height: f32, radius: f32) -> Div {
     div()
         .w_full()
@@ -79,7 +79,7 @@ pub fn skeleton(height: f32, radius: f32) -> Div {
         .bg(theme::elevated())
 }
 
-/// 歌单封面的一格：用户指定的图 → 成员的内嵌封面 → 按名字派生的渐变块。
+/// 歌单封面的一格，用户指定的图 → 成员的内嵌封面 → 按名字派生的渐变块。
 #[allow(clippy::too_many_arguments)]
 pub fn list_cover(
     covers: &Entity<CoverCache>,
@@ -96,13 +96,13 @@ pub fn list_cover(
         covers.update(cx, |cache, cx| cache.request_file(owned, size, cx));
         return match covers.read(cx).ready_file(path, size) {
             Some(image) => image_cell(image, size, radius),
-            // 还在解码、或那张图根本读不出来：退到派生块
+            // 还在解码、或那张图根本读不出来，退到派生块。
             None => derived_cover(size, radius, seed),
         };
     }
 
     let Some(id) = cover_id else {
-        // 空歌单没有任何曲目能代表封面
+        // 空歌单没有任何曲目能代表封面。
         return derived_cover(size, radius, seed);
     };
     match cover_state(covers, library, id, size, cx) {
@@ -117,7 +117,7 @@ pub fn list_cover(
     }
 }
 
-/// 列表 / 侧栏的行首缩略图，尺寸、圆角与缺封面时的占位图标由参数给。
+/// 列表与侧栏的行首缩略图，尺寸、圆角与缺封面时的占位图标由参数给。
 pub fn thumb(
     covers: &Entity<CoverCache>,
     library: &Entity<LibraryEntity>,
@@ -174,7 +174,7 @@ pub fn image_cell(image: Arc<RenderImage>, size: f32, radius: f32) -> AnyElement
     fade_in_key(key, cell).into_any_element()
 }
 
-/// 解码完成的一格淡入。key 带图片指针：换图重播，同一张图重绘不重播。
+/// 解码完成的一格淡入。key 带图片指针。换图重播，同一张图重绘不重播。
 pub fn fade_in<E>(image: &Arc<RenderImage>, el: E) -> AnimationElement<E>
 where
     E: Styled + IntoElement + 'static,

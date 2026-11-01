@@ -1,4 +1,4 @@
-//! `lyre-ui` —— GPUI 视图层，实体之间用 `observe`（整体变化）与 `subscribe`（语义事件）连接。
+//! `lyre-ui` 是 GPUI 视图层，实体之间用 `observe`（整体变化）与 `subscribe`（语义事件）连接。
 //! 高频进度只重绘订阅了 `PlaybackEntity` 的组件，曲目列表与右侧面板不受影响。
 
 pub mod actions;
@@ -17,14 +17,14 @@ pub mod library_store;
 /// 「喜欢」集合与持久化。
 pub mod likes;
 pub mod logging;
-/// 统一的 JSON 持久化层：数据目录定位、原子替换、七份 store 共用的读写语义。
+/// 统一的 JSON 持久化层，负责数据目录定位、原子替换，以及七份 store 共用的读写语义。
 pub mod persist;
 pub mod platform;
 pub mod recents;
 /// 上次播放位置的读写（`resume.json`）。
 pub mod resume;
 pub mod root;
-/// 曲库根（`roots.json`）读写：记住导入过的文件夹，补扫从这里出发。
+/// 曲库根（`roots.json`）读写。记住导入过的文件夹，补扫从这里出发。
 pub mod roots_store;
 pub mod settings;
 pub mod shell;

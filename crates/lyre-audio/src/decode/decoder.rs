@@ -1,4 +1,4 @@
-//! Symphonia 解码器：逐样本吐交错 f32，不依赖 GPUI，也不依赖输出设备。
+//! Symphonia 解码器。逐样本吐交错 f32，不依赖 GPUI，也不依赖输出设备。
 
 use std::fs::File;
 use std::io::{Read, Seek};
@@ -117,7 +117,7 @@ impl AudioBuffer {
     }
 }
 
-/// 一个音轨的 symphonia 解码器：实现 [`Iterator`]，逐样本吐交错 f32，声道数与声源一致。
+/// 一个音轨的 symphonia 解码器。实现 [`Iterator`]，逐样本吐交错 f32，声道数与声源一致。
 pub struct SymphoniaDecoder {
     path: PathBuf,
     sample_rate: u32,
@@ -130,7 +130,7 @@ pub struct SymphoniaDecoder {
     track_id: Option<u32>,
     current_sample: u64,
     source_channels: u16,
-    /// 累计解出的样本数：把「一个样本都没有」（文件放不了，必须报错）和「正常放完」分开。
+    /// 累计解出的样本数。把「一个样本都没有」（文件放不了，必须报错）和「正常放完」分开。
     decoded_samples: u64,
 }
 
@@ -138,7 +138,7 @@ impl SymphoniaDecoder {
     pub fn new(path: &Path) -> Result<Self> {
         let mut file = File::open(path).map_err(AudioError::FileOpen)?;
 
-        // 魔数认得出的文件在探测前拦下：改了扩展名的 APE / WavPack / Ogg-Opus 会被 symphonia 当成可播，实际输出满刻度噪声或全零。
+        // 魔数认得出的文件在探测前拦下。改了扩展名的 APE / WavPack / Ogg-Opus 会被 symphonia 当成可播，实际输出满刻度噪声或全零。
         // `initialize` 只由这里建出的实例调用。
         let mut head = Vec::with_capacity(lyre_core::SIGNATURE_PROBE_LEN);
         (&mut file)
@@ -176,13 +176,13 @@ impl SymphoniaDecoder {
             .and_then(CodecParameters::audio)
             .ok_or(AudioError::MissingCodecParams)?;
 
-        // 报 0 的畸形采样率（`Some(0)`）按「没写」同样退默认值：0 让缓冲尺寸算成 0，除法变 inf。
+        // 报 0 的畸形采样率（`Some(0)`）按「没写」同样退默认值。0 让缓冲尺寸算成 0，除法变 inf。
         let stated_rate = params.sample_rate.filter(|rate| *rate > 0);
         let sample_rate = stated_rate.unwrap_or(44_100);
-        // 声道数同样取自容器头，写 0 的畸形头退成单声道 —— 它会变成除数与帧长
+        // 声道数同样取自容器头；写 0 的畸形头退成单声道，因它会同时充当除数与帧长。
         let source_channels = (params.channels.as_ref().map_or(2, Channels::count) as u16).max(1);
 
-        // 时长只按容器声明的采样率算：拿 CD 级的 44.1kHz 去推未知采样率的流，
+        // 时长只按容器声明的采样率算。拿 CD 级的 44.1kHz 去推未知采样率的流，
         // 会得到一个看着合理、实际错误的秒数。`try_from_secs_f64` 挡的是 inf / NaN。
         let total_duration = match (track.num_frames, stated_rate) {
             (Some(frames), Some(rate)) => {
@@ -191,7 +191,7 @@ impl SymphoniaDecoder {
             _ => None,
         };
 
-        // 按声源的原始声道数解码，下混不在这里做：目标声道数由输出设备决定，
+        // 按声源的原始声道数解码，下混不在这里做。目标声道数由输出设备决定，
         // 是播放链路上 `ChannelConvertSource` 的事。
         let buffer_duration_ms = if sample_rate <= 48_000 { 500 } else { 400 };
         let capacity = buffer_samples(sample_rate, source_channels, buffer_duration_ms);
@@ -247,7 +247,7 @@ impl SymphoniaDecoder {
                 if self.state == DecoderState::EndOfStream {
                     break;
                 }
-                // 前几次失败先容忍，一直填不上才报错
+                // 前几次失败先容忍，一直填不上才报错。
                 if attempts > 10 && self.buffer.remaining() < self.buffer.capacity * 50 / 100 {
                     return Err(AudioError::Prefill(format!(
                         "尝试 {attempts} 次后仍填不满：{err}"
@@ -290,7 +290,7 @@ impl SymphoniaDecoder {
             };
             match format.seek(SeekMode::Accurate, seek_to) {
                 Ok(_) => {
-                    // 状态只在 symphonia 的 seek 成功后才改；失败时保持原样，调用方还能继续播
+                    // 状态只在 symphonia 的 seek 成功后才改；失败时保持原样，调用方还能继续播。
                     self.current_sample = target_ts;
                     self.buffer.clear();
                     decoder.reset();
@@ -336,7 +336,7 @@ impl SymphoniaDecoder {
             .ok_or(AudioError::MissingCodecParams)?
             .clone();
 
-        // 让编码器在头尾写入的补静音被切除，连播时曲间无缝
+        // 让编码器在头尾写入的补静音被切除，连播时曲间无缝。
         let options = AudioDecoderOptions::default().gapless(true);
         let mut decoder = symphonia::default::get_codecs()
             .make_audio_decoder(&params, &options)
@@ -372,7 +372,7 @@ impl SymphoniaDecoder {
             return Ok(());
         }
 
-        // 状态是 `Ready` 却缺件时只报错，不 unwrap
+        // 状态是 `Ready` 却缺件时只报错，不 unwrap。
         let (Some(format), Some(decoder), Some(track_id)) =
             (self.format.as_mut(), self.decoder.as_mut(), self.track_id)
         else {
@@ -389,7 +389,7 @@ impl SymphoniaDecoder {
                     self.state = DecoderState::EndOfStream;
                     break;
                 }
-                // 码流参数变化时 symphonia 要求重建解码器：`ResetRequired` 不是失败，接着拉包
+                // 码流参数变化时 symphonia 要求重建解码器。`ResetRequired` 不是失败，接着拉包。
                 Err(Error::ResetRequired) => {
                     decoder.reset();
                     continue;
@@ -422,7 +422,7 @@ impl SymphoniaDecoder {
                     self.state = DecoderState::EndOfStream;
                     break;
                 }
-                // 单个坏包跳过
+                // 单个坏包跳过。
                 Err(Error::DecodeError(_)) => {}
                 Err(err) => {
                     let error = AudioError::Decode(err.to_string());
@@ -435,7 +435,7 @@ impl SymphoniaDecoder {
         Ok(())
     }
 
-    /// 交错成 f32，不做下混：目标声道数由输出设备决定。
+    /// 交错成 f32，不做下混，目标声道数由输出设备决定。
     /// 包的实际声道数与容器声明不一致时（中途换声道配置的流）按实际布局对齐，否则后续声道整体错位。
     fn convert(audio_buf: &GenericAudioBufferRef<'_>, out: &mut Vec<f32>, expected: u16) {
         let actual = audio_buf.spec().channels().count();
@@ -451,7 +451,7 @@ impl SymphoniaDecoder {
     /// 把已经交错好的采样从 `actual` 声道就地重排成 `expected` 声道。
     fn align_channels(samples: &mut Vec<f32>, actual: usize, expected: usize) {
         let frames = samples.len() / actual;
-        // 目标声道数可能比实际多（声明 6 声道、包里只有 2 声道），先留足位置再就地重写
+        // 目标声道数可能比实际多（声明 6 声道、包里只有 2 声道），先留足位置再就地重写。
         samples.resize(frames * expected.max(actual), 0.0);
 
         let mut aligned = vec![0.0f32; expected];
@@ -472,7 +472,7 @@ impl Iterator for SymphoniaDecoder {
     type Item = f32;
 
     fn next(&mut self) -> Option<f32> {
-        // 填充失败但缓冲里还有样本，就先把这一批放完
+        // 填充失败但缓冲里还有样本，就先把这一批放完。
         if (self.buffer.is_empty() || self.buffer.needs_refill())
             && let Err(err) = self.fill()
             && self.buffer.is_empty()
@@ -493,7 +493,7 @@ fn log_error_once(message: &str) {
     log::warn!("[lyre-audio] 解码中止：{message}");
 }
 
-/// 采样序号转 `Timestamp` 要的 `i64`：溢出时钳到上限，不 panic。
+/// 采样序号转 `Timestamp` 要的 `i64`。溢出时钳到上限，不 panic。
 fn timestamp_of(sample: u64) -> i64 {
     i64::try_from(sample).unwrap_or(i64::MAX)
 }
@@ -502,7 +502,7 @@ fn timestamp_of(sample: u64) -> i64 {
 mod tests {
     use super::{SymphoniaDecoder, buffer_samples};
 
-    /// 容量必须夹在可用区间里：采样率直接取自文件头，坏数据可以是任意 u32。
+    /// 容量必须夹在可用区间里。采样率直接取自文件头，坏数据可以是任意 u32。
     #[test]
     fn buffer_capacity_stays_bounded_for_absurd_header_rates() {
         assert_eq!(buffer_samples(u32::MAX, 2, 500), 4_000_000, "上限挡住 OOM");
@@ -510,7 +510,7 @@ mod tests {
         assert_eq!(buffer_samples(1, 1, 1), 4096, "再小也要留得下一格样本");
     }
 
-    /// 声明 6 声道、包里只有 2 声道：目标比实际多，就地重写必须先扩容，
+    /// 声明 6 声道、包里只有 2 声道。目标比实际多，就地重写必须先扩容，
     /// 否则直接越界 panic（跑在解码线程上，会带走整个进程）。
     #[test]
     fn aligning_fewer_channels_than_declared_does_not_run_off_the_end() {
@@ -522,7 +522,7 @@ mod tests {
         assert!(samples[2..].iter().all(|sample| *sample == 0.0));
     }
 
-    /// 反向：声明 2 声道、包里是 6 声道，按 ITU 系数下混。
+    /// 反向。声明 2 声道、包里是 6 声道，按 ITU 系数下混。
     #[test]
     fn aligning_more_channels_than_declared_downmixes() {
         let mut samples = Vec::new();

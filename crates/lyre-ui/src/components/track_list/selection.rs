@@ -1,4 +1,4 @@
-//! 多选状态机：勾选、Shift 连选，以及四个批量动作的落地。
+//! 多选状态机。勾选、Shift 连选，以及四个批量动作的落地。
 
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -25,7 +25,7 @@ impl TrackList {
         self.clear_chosen(cx);
     }
 
-    /// 勾选 / 取消一行。按住 Shift 从上一次点中的行连选到这一行。
+    /// 勾选与取消一行。按住 Shift 从上一次点中的行连选到这一行。
     pub(super) fn pick_row(
         &mut self,
         index: usize,
@@ -64,7 +64,7 @@ impl TrackList {
         cx.notify();
     }
 
-    /// 可见投影换代后清掉已经看不见的选择。只在查询 / 作用域 / 删歌发生时调用，
+    /// 可见投影换代后清掉已经看不见的选择。只在查询、作用域、删歌发生时调用，
     /// 渲染路径因此不必每帧扫全部可见行。
     pub(super) fn prune_selection(&mut self, cx: &mut App) {
         if self.selected.is_empty() {
@@ -123,7 +123,7 @@ impl TrackList {
             return;
         }
         self.library.update(cx, |library, cx| {
-            // 名字带序号：连着建两个而不改名，侧栏会出现两行同名
+            // 名字带序号。连着建两个而不改名，侧栏会出现两行同名。
             let name = format!("新歌单 {}", library.collections().len() + 1);
             if let Some(id) = library.create_collection(&name, cx) {
                 library.add_many_to_collection(id, &ids, cx);
@@ -162,7 +162,7 @@ fn ordered_by_row(
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：`platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
+    // 不写 `use super::*`，`platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
     use std::collections::HashSet;
 
     use lyre_core::TrackId;
@@ -205,7 +205,7 @@ mod tests {
         );
     }
 
-    /// 性能回归：10 万行只选 1 首时，封面连续完成带来的每一次重绘都不该扫可见行。
+    /// 性能回归。10 万行只选 1 首时，封面连续完成带来的每一次重绘都不该扫可见行。
     #[test]
     #[ignore = "性能基准，手动运行"]
     fn a_hundred_thousand_rows_with_one_selection_do_not_scan_per_repaint() {
@@ -218,7 +218,7 @@ mod tests {
 
         let old = Instant::now();
         for _ in 0..REPAINTS {
-            // 旧路径：每帧复制全部可见 id 再过滤。
+            // 旧路径，每帧复制全部可见 id 再过滤。
             let chosen: Vec<TrackId> = visible
                 .iter()
                 .copied()
@@ -230,7 +230,7 @@ mod tests {
 
         let new = Instant::now();
         for _ in 0..REPAINTS {
-            // 新路径：投影没换代就只读一个计数。
+            // 新路径，投影没换代就只读一个计数。
             black_box(selected.len());
         }
         let new = new.elapsed();

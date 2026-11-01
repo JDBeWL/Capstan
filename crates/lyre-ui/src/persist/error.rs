@@ -17,7 +17,7 @@ pub enum PersistError {
         source: io::Error,
     },
 
-    /// 序列化 / 反序列化失败。
+    /// 序列化与反序列化失败。
     #[error("JSON 处理失败：{0}")]
     Json(#[from] serde_json::Error),
 }

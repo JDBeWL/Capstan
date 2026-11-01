@@ -1,4 +1,4 @@
-//! JSON 持久化层：找数据目录 → 读文件 → 读不懂退默认 → 建目录 → 写临时文件 → rename 覆盖。
+//! JSON 持久化层，找数据目录 → 读文件 → 读不懂退默认 → 建目录 → 写临时文件 → rename 覆盖。
 //! 数据目录只读、文件被外部改坏都只记日志，不阻塞启动。
 
 mod error;
@@ -74,7 +74,7 @@ fn load<T: DeserializeOwned>(file: &str) -> Result<Option<T>, PersistError> {
     Ok(Some(serde_json::from_str(&text)?))
 }
 
-/// 读 JSON；任何失败都退回 `Default` 并记日志 —— 刻意的吞错。
+/// 读 JSON；任何失败都退回 `Default` 并记日志，刻意的吞错。
 pub fn load_or_default<T: DeserializeOwned + Default>(file: &str) -> T {
     match load::<T>(file) {
         Ok(Some(value)) => value,
@@ -86,7 +86,7 @@ pub fn load_or_default<T: DeserializeOwned + Default>(file: &str) -> T {
     }
 }
 
-/// 读 JSON，失败一律当「没有」：「没有」本身是合法状态（如上次播放位置）。
+/// 读 JSON，失败一律视为「没有」；「没有」本身即合法状态，如上次播放位置。
 pub fn load_or_none<T: DeserializeOwned>(file: &str) -> Option<T> {
     match load::<T>(file) {
         Ok(value) => value,
@@ -103,7 +103,7 @@ pub fn save_lossy<T: Serialize + Send + 'static>(file: &'static str, value: T) {
     writer().enqueue_save(file, value, render_pretty);
 }
 
-/// 写 JSON，紧凑（无缩进）。给 `library.json`：整库条目可能上千，缩进会让文件涨好几倍。
+/// 写 JSON，采用紧凑格式、不带缩进。`library.json` 整库条目可能上千，缩进会让文件膨胀数倍。
 pub fn save_compact_lossy<T: Serialize + Send + 'static>(file: &'static str, value: T) {
     writer().enqueue_save(file, value, render_compact);
 }
@@ -210,7 +210,7 @@ impl Writer {
             }),
         };
         match &self.tx {
-            // 接收端已经退出（进程收尾）时只能放弃这次写入，不能把退出路径卡住。
+            // 接收端已退出，即进程处于收尾阶段，此时只能放弃本次写入，不得卡住退出路径。
             Some(tx) => {
                 let _ = tx.send(Command::Save(job));
             }
@@ -244,7 +244,7 @@ impl Writer {
     }
 }
 
-/// 后台单写线程：同一文件的连续保存合并成一次，窗口结束统一落盘。
+/// 后台单写线程。同一文件的连续保存合并成一次，窗口结束统一落盘。
 fn run_writer(rx: &Receiver<Command>, root: Option<&Path>, stats: &Stats) {
     let mut pending: HashMap<&'static str, SaveJob> = HashMap::new();
 
@@ -324,7 +324,7 @@ fn render_compact<T: Serialize>(value: &T) -> serde_json::Result<String> {
     serde_json::to_string(value)
 }
 
-/// 删除一个文件（不存在视为成功）。失败只记日志。
+/// 删除一个文件，不存在视为成功。失败只记日志。
 pub fn remove_lossy(file: &'static str) {
     writer().remove(file);
 }
@@ -359,7 +359,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// 两个渲染器不能接反：小文件靠缩进可 diff，`library.json` 靠紧凑控制体积。
+    /// 两个渲染器不能接反。小文件靠缩进可 diff，`library.json` 靠紧凑控制体积。
     #[test]
     fn pretty_is_indented_and_compact_is_not() {
         let value = vec![1, 2];
@@ -381,7 +381,7 @@ mod tests {
         assert!(write_atomic(Path::new(""), "x").is_err());
     }
 
-    /// 坏内容要能被识别成 JSON 错误，而不是被当成 IO 故障 —— 两者的处置方式不同。
+    /// 坏内容要能被识别成 JSON 错误，而不是被当成 IO 故障。两者的处置方式不同。
     #[test]
     fn corrupt_content_is_reported_as_a_json_error() {
         let parsed: Result<Vec<u32>, _> = serde_json::from_str("这不是 JSON");
@@ -390,14 +390,14 @@ mod tests {
         assert!(matches!(err, PersistError::Json(_)), "应为 Json：{err}");
     }
 
-    /// 读一个不存在的文件必须静默退默认值而不是 panic：首次启动走的就是这条路径。
+    /// 读一个不存在的文件必须静默退默认值而不是 panic，首次启动走的就是这条路径。
     #[test]
     fn a_missing_file_falls_back_to_default() {
         let value: Vec<u32> = load_or_default("mp-next-probe-does-not-exist.json");
         assert!(value.is_empty());
     }
 
-    /// 连续保存同一个文件只落最后一次：删除一首后连续编辑不该把整库重写多遍。
+    /// 连续保存同一个文件只落最后一次，删除一首后连续编辑不该把整库重写多遍。
     #[test]
     fn consecutive_saves_to_one_file_are_coalesced() {
         use super::{Writer, render_compact};
@@ -445,7 +445,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// 删文件与保存同一文件时以最后的动作为准：关掉续播后不能又被一次保存复活。
+    /// 删文件与保存同一文件时以最后的动作为准，关掉续播后不能又被一次保存复活。
     #[test]
     fn a_later_remove_cancels_a_pending_save() {
         use super::{Writer, render_compact};
@@ -471,22 +471,22 @@ mod tests {
         use lyre_core::{CollectionId, Collections, TrackId};
         use std::path::Path;
 
-        // settings.json：对象，每个设置项一个字段。
+        // settings.json。对象，每个设置项一个字段。
         let settings = render_pretty(&Settings::default()).unwrap();
         assert!(settings.starts_with("{\n  \"appearance\""), "{settings}");
         assert!(settings.contains("\"density\""), "{settings}");
         assert!(settings.contains("\"default_view\""), "{settings}");
 
-        // likes.json / recents.json：裸数字数组（`TrackId` 是单字段元组结构体）。
+        // likes.json / recents.json。裸数字数组，因 `TrackId` 是单字段元组结构体。
         let ids = vec![TrackId(1), TrackId(999)];
         assert_eq!(render_pretty(&ids).unwrap(), "[\n  1,\n  999\n]");
         assert_eq!(render_compact(&ids).unwrap(), "[1,999]");
 
-        // follows.json：JSON 字符串数组。
+        // follows.json，JSON 字符串数组。
         let names = vec!["A".to_owned(), "B".to_owned()];
         assert_eq!(render_pretty(&names).unwrap(), "[\n  \"A\",\n  \"B\"\n]");
 
-        // resume.json：对象（路径 + 毫秒），不是裸数组。
+        // resume.json。对象含路径与毫秒，不是裸数组。
         let resume = Resume::new(Path::new("D:/音乐/a.flac"), 83_000);
         let text = render_pretty(&resume).unwrap();
         assert!(
@@ -494,14 +494,14 @@ mod tests {
             "{text}"
         );
 
-        // collections.json：对象，必须带 `next` —— 丢了它，重启后新歌单会顶用老 id。
+        // collections.json。对象，必须带 `next`。丢了它，重启后新歌单会顶用老 id。
         let mut collections = Collections::default();
         let first = collections.create("深夜写歌").expect("建一个").id;
         assert_eq!(first, CollectionId(0));
         assert!(render_pretty(&collections).unwrap().contains("\"next\": 1"));
         assert!(render_compact(&collections).unwrap().contains("\"next\":1"));
 
-        // library.json：裸 `Vec<Track>` 数组，且是紧凑排版（条目可能上千）。
+        // library.json。裸 `Vec<Track>` 数组，且为紧凑排版，因条目可能上千。
         let tracks: Vec<lyre_core::Track> = Vec::new();
         let text = render_compact(&tracks).unwrap();
         assert_eq!(text, "[]");

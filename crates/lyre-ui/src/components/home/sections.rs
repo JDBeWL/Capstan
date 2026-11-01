@@ -1,4 +1,4 @@
-//! 横向滚动区块，以及区块里的三种卡（专辑海报卡 / 歌单卡 / 最近播放卡）。
+//! 横向滚动区块，以及区块里的三种卡（专辑海报卡、歌单卡、最近播放卡）。
 //! `overflow_x_scroll` 的偏移存在帧状态里没有 getter，箭头滚动只能走 [`ScrollHandle`]。
 //! 不挂 `.track_scroll()` 时 `bounds_for_item` 恒为 `None`，步长就没法算。
 
@@ -18,10 +18,10 @@ use super::cards::RecentCard;
 
 const RECENT_COVER: f32 = 140.0;
 const RECENT_PAD: f32 = theme::GAP_SM;
-/// 卡宽必须把左右内边距算进来：只取封面边长会让内容溢出 hover 底色一圈。
+/// 卡宽必须把左右内边距算进来，只取封面边长会让内容溢出 hover 底色一圈。
 pub(super) const RECENT_W: f32 = RECENT_COVER + RECENT_PAD * 2.0;
 
-/// 快捷网格一行放几张：由可用宽度反推，不写死。
+/// 快捷网格一行放几张。由可用宽度反推，不写死。
 pub(super) fn grid_columns_in(usable: f32) -> usize {
     let gap = theme::GAP_MD;
     ((usable + gap) / (RECENT_W + gap)).floor().max(1.0) as usize
@@ -40,8 +40,8 @@ impl HomeView {
         self.rows.borrow_mut().entry(id).or_default().clone()
     }
 
-    /// 箭头的一格 = 一张卡的宽 + 卡间距，用实测边界而不是按断点算。
-    /// 不必自己夹边界：`overflow` 那一趟会把偏移夹回 `[-max, 0]` 并写回同一个 `RefCell`。
+    /// 箭头一格等于卡片宽度加卡间距，依据实际边界而非断点推算。
+    /// 无需自行夹取边界，`overflow` 那一轮会将偏移夹回 `[-max, 0]` 并写回同一个 `RefCell`。
     fn nudge_row(handle: &ScrollHandle, forward: bool, cx: &mut Context<Self>) {
         let step = handle
             .bounds_for_item(0)
@@ -103,7 +103,7 @@ pub(super) fn section_title(index: usize, english: &'static str, text: &'static 
         .child(section_heading(index, english, text))
 }
 
-/// 区块标题：`// 01 / RECENT` 眉标在上，中文粗体在下。编号按区块在首页的出现顺序从 01 起。
+/// 区块标题。`// 01 / RECENT` 眉标在上，中文粗体在下。编号按区块在首页的出现顺序从 01 起。
 fn section_heading(index: usize, english: &'static str, text: &'static str) -> impl IntoElement {
     div()
         .flex()
@@ -121,7 +121,7 @@ fn section_heading(index: usize, english: &'static str, text: &'static str) -> i
         )
 }
 
-/// 一张最近播放卡片：封面 + 专辑名 + 艺术家，点击即从这首开始播。
+/// 一张最近播放卡片。封面 + 专辑名 + 艺术家，点击即从这首开始播。
 pub(super) fn recent_card(
     index: usize,
     card: RecentCard,
@@ -243,7 +243,7 @@ fn scroll_row(
         .into_any_element()
 }
 
-/// 标题那一行：字在左，一对箭头在右。到头的那个方向变灰、不绑事件、也不进 Tab 序列。
+/// 标题那一行。字在左，一对箭头在右。到头的那个方向变灰、不绑事件、也不进 Tab 序列。
 fn section_header(
     index: usize,
     english: &'static str,
@@ -309,7 +309,7 @@ fn row_arrow(
         if forward { "next" } else { "prev" }
     ));
 
-    // tooltip 同时是无障碍名称：禁用态也要说清为什么点不动。
+    // tooltip 同时是无障碍名称，禁用态也要说清为什么点不动。
     let label = match (enabled, forward) {
         (true, true) => "下一批",
         (true, false) => "上一批",
@@ -349,7 +349,7 @@ pub(super) fn horizontal_section(
     scroll_row(index, english, id, title, posters, home, view, window, cx)
 }
 
-/// 横向区块里的海报卡（竖向：封面在上、两行文字在下）。
+/// 横向区块里的海报卡，竖向排布，封面在上、两行文字在下。
 fn poster_card(
     section: &'static str,
     index: usize,
@@ -424,7 +424,7 @@ fn poster_card(
         .into_any_element()
 }
 
-/// 一排歌单卡：收藏 + 每个自建歌单。
+/// 一排歌单卡，收藏 + 每个自建歌单。
 pub(super) fn list_section(
     index: usize,
     english: &'static str,
@@ -454,7 +454,7 @@ pub(super) fn list_section(
     scroll_row(index, english, id, title, row, home, view, window, cx)
 }
 
-/// 一张歌单卡：点它是收窄作用域并切到曲库页，不是开播，所以不画 hover 播放键。
+/// 一张歌单卡。点它是收窄作用域并切到曲库页，不是开播，所以不画 hover 播放键。
 fn list_card(
     index: usize,
     scope: Scope,
@@ -518,7 +518,7 @@ fn list_card(
         .into_any_element()
 }
 
-/// 封面槽：命中就显示图片，否则发一次请求并显示占位。
+/// 封面槽。命中就显示图片，否则发一次请求并显示占位。
 fn cover_slot(
     covers: &Entity<CoverCache>,
     library: &Entity<LibraryEntity>,
@@ -548,21 +548,21 @@ fn cover_slot(
             );
             crate::common::cover::fade_in(&image, cell).into_any_element()
         }
-        // 确认没有封面：首字色块。
+        // 确认没有封面，首字色块。
         crate::common::cover::Cover::Missing => cell
             .border_1()
             .border_color(theme::border())
             .child(monogram(label.chars().next()))
             .into_any_element(),
-        // 解码中：骨架屏。
+        // 解码中，骨架屏。
         crate::common::cover::Cover::Pending => cell
             .child(crate::common::cover::skeleton(size, theme::RADIUS_LG))
             .into_any_element(),
     }
 }
 
-/// 没有封面时的占位：标题首字 + 稳定色块。
-/// 调色板必须与 `album_grid::monogram` 一致 —— 同一专辑在两处颜色不同会被当成两张专辑。
+/// 没有封面时的占位，标题首字 + 稳定色块。
+/// 调色板必须与 `album_grid::monogram` 一致。同一专辑在两处颜色不同会被当成两张专辑。
 fn monogram(initial: Option<char>) -> impl IntoElement {
     let Some(ch) = initial else {
         return div()
@@ -582,7 +582,7 @@ fn monogram(initial: Option<char>) -> impl IntoElement {
         .child(ch.to_string())
 }
 
-/// 首页右侧的展示画框：切角封面 + 硬边斜线纹影子 + 墨色铭牌。
+/// 首页右侧的展示画框，切角封面 + 硬边斜线纹影子 + 墨色铭牌。
 /// 内容全部来自最近播放的那张专辑；没有记录时给出空状态。
 pub(super) fn showcase_frame(
     card: Option<&RecentCard>,
@@ -736,10 +736,10 @@ pub(super) fn showcase_frame(
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：`platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
+    // 不写 `use super::*`，`platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
     use super::RowEdges;
 
-    /// 首帧放行：布局还没跑过时读到的 `bounds` / `max_offset` 都是 0，照它断言「到底」会让两枚箭头一起灭掉。
+    /// 首帧放行。布局还没跑过时读到的 `bounds` / `max_offset` 都是 0，照它断言「到底」会让两枚箭头一起灭掉。
     #[test]
     fn the_first_frame_claims_nothing() {
         let unmeasured = RowEdges::of(0.0, 0.0, 0.0);

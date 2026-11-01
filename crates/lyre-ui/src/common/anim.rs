@@ -1,4 +1,4 @@
-//! 一次性入场与未知进度：短、硬、机械，时长和曲线都取自 `theme`。
+//! 一次性入场与未知进度。短、硬、机械，时长和曲线都取自 `theme`。
 //! gpui 的 `Animation` 没有 delay，错开用一段不改样式的先行动画拼出来。
 
 use std::time::Duration;
@@ -6,25 +6,25 @@ use std::time::Duration;
 use crate::platform::*;
 use crate::theme;
 
-/// 列表行错开：38ms 一行。
+/// 列表行错开，38ms 一行。
 pub const STAGGER_ROW_MS: u64 = 38;
 /// 换内容后等用户停手再错开入场；这段时间用来合并连续输入。
 pub const STAGGER_DEBOUNCE_MS: u64 = 180;
 /// 一次入场只照顾首屏这些行；滚出去再回来不重播。
 pub const STAGGER_ROWS: usize = 12;
-/// 错开窗口：超过它就不再把新挂载的行算进这次入场。
+/// 错开窗口，超过它就不再把新挂载的行算进这次入场。
 pub const STAGGER_WINDOW_MS: u64 = 900;
-/// 大块内容错开：100ms 一块。
+/// 大块内容错开，100ms 一块。
 pub const STAGGER_BLOCK_MS: u64 = 100;
 /// 首屏数据比骨架晚 120ms 开始。
 pub const DATA_DELAY_MS: u64 = 120;
-/// 逐行亮起 / 表面出现。
+/// 逐行亮起与表面出现。
 pub const MOTION_COME_MS: u64 = 320;
 /// 封面解码完成后的淡入。
 pub const MOTION_COVER_MS: u64 = 180;
 /// 未知进度条跑完一圈。
 pub const MOTION_LOADER_MS: u64 = 1200;
-/// 字标推入：慢起硬停。
+/// 字标推入，慢起硬停。
 pub const MOTION_DRIVE_MS: u64 = 620;
 /// 字标第二行相对第一行的错开。
 pub const WORDMARK_STAGGER_MS: u64 = 140;
@@ -34,12 +34,12 @@ pub const MOTION_SWEEP_MS: u64 = 600;
 pub const MOTION_SCRAMBLE_MS: u64 = 600;
 /// 悬停时读数重新落定。
 pub const MOTION_SCRAMBLE_HOVER_MS: u64 = 360;
-/// 分段控件 / 页签的墨块滑动。
+/// 分段控件与页签的墨块滑动。
 pub const MOTION_SEG_MS: u64 = 280;
-/// 导航当前块滑动：与换页同档。
+/// 导航当前块滑动，与换页同档。
 pub const MOTION_NAV_MS: u64 = 360;
 
-/// 出现：透明 + 从左侧滑到位，snap 曲线。
+/// 出现。透明 + 从左侧滑到位，snap 曲线。
 pub fn enter<E>(
     id: impl Into<ElementId>,
     delay_ms: u64,
@@ -60,7 +60,7 @@ where
     )
 }
 
-/// 换页：用页面色盖板从右往左退开，前缘留一道墨线；慢起硬停。
+/// 换页。用页面色盖板从右往左退开，前缘留一道墨线；慢起硬停。
 /// GPUI 这一支没有 clip-path，盖板擦除是快门的近似。
 pub fn page_enter<E>(id: impl Into<ElementId>, el: E) -> AnimationElement<E>
 where
@@ -109,7 +109,7 @@ where
     )
 }
 
-/// 字标推入：透明 + 从左侧滑到位，慢起硬停。
+/// 字标推入。透明 + 从左侧滑到位，慢起硬停。
 pub fn drive<E>(id: impl Into<ElementId>, delay_ms: u64, el: E) -> AnimationElement<E>
 where
     E: Styled + IntoElement + 'static,
@@ -124,7 +124,7 @@ where
     )
 }
 
-/// 分段控件的当前块位置：索引之间按 280ms mech 插值。
+/// 分段控件的当前块位置，索引之间按 280ms mech 插值。
 pub fn segment_slide(
     id: impl Into<ElementId>,
     index: usize,
@@ -134,7 +134,7 @@ pub fn segment_slide(
     slide(id, index, MOTION_SEG_MS, window, cx)
 }
 
-/// 导航的当前块位置：与换页同档，360ms mech。
+/// 导航的当前块位置。与换页同档，360ms mech。
 pub fn nav_slide(id: impl Into<ElementId>, index: usize, window: &mut Window, cx: &mut App) -> f32 {
     slide(id, index, MOTION_NAV_MS, window, cx)
 }
@@ -155,7 +155,7 @@ fn slide(
     )
 }
 
-/// 乱码落定：progress 从 0 到 1，数字逐位从左往右锁定，未锁定的位持续翻滚。
+/// 乱码落定。progress 从 0 到 1，数字逐位从左往右锁定，未锁定的位持续翻滚。
 pub fn scramble(text: &str, progress: f32) -> String {
     if progress >= 1.0 {
         return text.to_owned();
@@ -178,7 +178,7 @@ pub fn scramble(text: &str, progress: f32) -> String {
         .collect()
 }
 
-/// 数据入场 + 乱码落定：延迟期间只占位不显示，之后按 duration 线性锁定。
+/// 数据入场 + 乱码落定。延迟期间只占位不显示，之后按 duration 线性锁定。
 /// `build` 每帧拿到 0→1 的进度，用 [`scramble`] 生成当前文字。
 pub fn scramble_content<E, C>(
     id: impl Into<ElementId>,
@@ -231,7 +231,7 @@ where
     })
 }
 
-/// 不知道进度的加载条：24 格底格，6 格黄块按格从左走到右，一圈 1.2s。
+/// 不知道进度的加载条。24 格底格，6 格黄块按格从左走到右，一圈 1.2s。
 /// 元素只在加载期间存在，完成即停；减少动态效果时停在首格。
 pub fn unknown_progress() -> impl IntoElement {
     const CELLS: usize = 24;

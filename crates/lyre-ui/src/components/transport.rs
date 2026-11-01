@@ -1,5 +1,5 @@
-//! 播放控制栏：上一曲 / 播放暂停 / 下一曲。
-//! 只 `subscribe` 语义事件、不 `observe`：进度每 100ms 变一次，observe 会让按钮每秒重绘十次。
+//! 播放控制栏，含上一曲、播放暂停与下一曲。
+//! 只 `subscribe` 语义事件、不 `observe`。进度每 100ms 变一次，observe 会让按钮每秒重绘十次。
 
 use crate::entities::{PlaybackEntity, PlaybackEvent};
 use crate::icon::{Glyph, icon};
@@ -40,7 +40,7 @@ impl Transport {
                     this.has_track = playback.current().is_some();
                     cx.notify();
                 }
-                // `Finished` 由上层推进队列、设备列表只有底栏的设备菜单关心，这里都不处理
+                // `Finished` 由上层推进队列、设备列表只有底栏的设备菜单关心，这里都不处理。
                 PlaybackEvent::Finished
                 | PlaybackEvent::VolumeChanged
                 | PlaybackEvent::DevicesChanged
@@ -106,7 +106,7 @@ impl Render for Transport {
                 theme::text_faint()
             },
         ));
-        // 柠檬黄实心底配近黑三角，同官网播放钮：黑压黄远超 AA，反过来黄三角在浅底上太弱。
+        // 柠檬黄实心底配近黑三角，同官网播放钮。黑压黄远超 AA，反过来黄三角在浅底上太弱。
         let mut play = round("transport-play", 40., play_hover, theme::text_muted())
             .bg(if enabled {
                 theme::control()
@@ -123,7 +123,7 @@ impl Render for Transport {
                 if enabled {
                     theme::text_on_control()
                 } else {
-                    // 禁用态图标必须用 `text()`：`text_faint` 压 `track()` 底达不到 AA。
+                    // 禁用态图标必须用 `text()`，`text_faint` 压 `track()` 底达不到 AA。
                     theme::text()
                 },
             ));
@@ -164,7 +164,7 @@ impl Render for Transport {
                 }))
                 .tooltip(crate::common::tooltip::builder("下一曲"));
         } else {
-            // 禁用态也要给读屏用户一个说明：按钮存在，只是还不可用。
+            // 禁用态也要给读屏用户一个说明。按钮存在，只是还不可用。
             play = play
                 .cursor_default()
                 .tooltip(crate::common::tooltip::builder("先导入音乐才能播放"));

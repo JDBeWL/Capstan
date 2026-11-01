@@ -1,12 +1,12 @@
-//! 曲库根：用户交代过的音乐文件夹。
+//! 曲库根，用户交代过的音乐文件夹。
 //! 曲库本身只存曲目，没有「这些曲目是从哪个文件夹扫来的」这层信息；
-//! 想补扫新歌、想记住加过哪些文件夹，就得单独记一份根。
-//! 只记目录：单个音频文件随导入进库，但不会成为「以后还要再看一眼」的地方。
+//! 补扫新增曲目、记录已加入的文件夹，均需单独维护一份根。
+//! 只记目录。单个音频文件随导入进库，但不会成为「以后还要再看一眼」的地方。
 
 use std::path::{Component, Path, PathBuf};
 
 /// 一组曲库根，顺序是用户加进来的顺序。
-/// 不变量：任意两项都不互相包含（父目录已经在册时，子目录不该再单独占一行）。
+/// 不变量。任意两项都不互相包含（父目录已经在册时，子目录不该再单独占一行）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Roots {
     items: Vec<PathBuf>,
@@ -17,7 +17,7 @@ impl Roots {
         Self::default()
     }
 
-    /// 收一组路径：逐条走 [`Self::add`]，顺序保留。
+    /// 收一组路径。逐条走 [`Self::add`]，顺序保留。
     pub fn from_paths(paths: impl IntoIterator<Item = PathBuf>) -> Self {
         let mut roots = Self::new();
         for path in paths {
@@ -39,7 +39,7 @@ impl Roots {
     }
 
     /// 收一个目录。已经被在册的根覆盖就返回 `false`；比某个在册的根更外层，
-    /// 就把里面那些并掉 —— 同一个目录不该在两行里各算一次，也不该被扫两遍。
+    /// 就把里面那些并掉。同一个目录不该在两行里各算一次，也不该被扫两遍。
     pub fn add(&mut self, path: impl Into<PathBuf>) -> bool {
         let path = normalise(&path.into());
         if self.items.iter().any(|known| under(&path, known)) {
@@ -50,7 +50,7 @@ impl Roots {
         true
     }
 
-    /// 移掉一条。只认完全相同的目录，不做包含判断：移除父目录不该顺手带走子目录那一行。
+    /// 移掉一条。只认完全相同的目录，不做包含判断，移除父目录不该顺手带走子目录那一行。
     pub fn remove(&mut self, path: &Path) -> bool {
         let path = normalise(path);
         let before = self.items.len();
@@ -74,8 +74,8 @@ fn normalise(path: &Path) -> PathBuf {
     std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// `child` 是不是 `parent` 自己或它的子目录。
-/// 按路径分量比而不是按字符串前缀比：`/music` 不该被当成 `/music-old` 的父目录。
+/// `child` 是否为 `parent` 本身或其子目录。
+/// 按路径分量比而不是按字符串前缀比，`/music` 不该被当成 `/music-old` 的父目录。
 fn under(child: &Path, parent: &Path) -> bool {
     let mut parts = child.components();
     for want in parent.components() {
@@ -104,7 +104,7 @@ mod tests {
 
     use super::Roots;
 
-    /// 期望值也要过一遍归一：Windows 上 `/music` 会折成 `D:\music`，直接比字面量测不到东西。
+    /// 期望值也要过一遍归一。Windows 上 `/music` 会折成 `D:\music`，直接比字面量测不到东西。
     fn want(paths: &[&str]) -> Vec<PathBuf> {
         paths
             .iter()
@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn 移除只认同一条() {
         let mut roots = Roots::from_paths(["/music".into(), "/music/live".into()]);
-        // `/music/live` 已经被 `/music` 覆盖，不会单独入册
+        // `/music/live` 已经被 `/music` 覆盖，不会单独入册。
         assert_eq!(roots.len(), 1);
         assert!(!roots.remove(Path::new("/music/live")));
         assert!(roots.remove(Path::new("/music")));

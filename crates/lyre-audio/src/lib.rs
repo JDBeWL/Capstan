@@ -1,4 +1,4 @@
-//! 音频内核：cpal 的 `Stream` 不实现 `Send`，音频对象只能活在一条专属线程上。
+//! 音频内核。cpal 的 `Stream` 不实现 `Send`，音频对象只能活在一条专属线程上。
 //! UI 经 [`PlayerCommand`] / [`PlayerEvent`] 两条单向通道与它打交道，高频进度走 [`Snapshot`] 原子量。
 
 pub mod backend;
@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use crate::device_monitor::DeviceMonitor;
 
-/// 独占后端工厂，由上层注入 —— `lyre-audio-exclusive` 依赖本 crate 才能复用解码链，
+/// 独占后端工厂，由上层注入。`lyre-audio-exclusive` 依赖本 crate 才能复用解码链，
 /// 本 crate 不能反向依赖它。参数是目标设备的稳定标识，`None` 表示系统默认。
 pub type ExclusiveOpenFn = Box<dyn FnMut(Option<&str>) -> Result<Box<dyn AudioBackend>> + Send>;
 
@@ -36,11 +36,11 @@ pub type ExclusiveOpenFn = Box<dyn FnMut(Option<&str>) -> Result<Box<dyn AudioBa
 pub struct AudioHandle {
     tx: Sender<PlayerCommand>,
     snapshot: Arc<Snapshot>,
-    /// 所有克隆共享同一个 owner：只有最后一个句柄析构才会关线程。
+    /// 所有克隆共享同一个 owner，只有最后一个句柄析构才会关线程。
     _owner: Arc<OwnerGuard>,
 }
 
-/// 设备监视线程挂在这里，随最后一个句柄一起收工。
+/// 设备监视线程挂载于此，随最后一个句柄一同结束。
 struct OwnerGuard {
     tx: Sender<PlayerCommand>,
     _monitor: DeviceMonitor,
@@ -83,7 +83,7 @@ impl AudioHandle {
         )
     }
 
-    /// 启动音频线程，后端由调用方提供；懒创建 —— 第一条命令才开设备，没声卡也能启动。
+    /// 启动音频线程，后端由调用方提供；懒创建，第一条命令才开设备，没声卡也能启动。
     /// 返回 `Err` 只表示资源耗尽；设备打不开是懒创建阶段的事，经 [`PlayerEvent::Error`] 上报。
     pub fn spawn_with<F>(events: Sender<PlayerEvent>, open: F) -> Result<Self>
     where

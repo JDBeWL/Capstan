@@ -10,7 +10,7 @@ use crate::persist;
 /// 落盘文件名。
 const FILE: &str = "likes.json";
 
-/// 用 `HashSet`：「这首喜不喜欢」在每个可见行上每帧都查一次，`Vec` 的线性查找可测量。
+/// 用 `HashSet`。「这首喜不喜欢」在每个可见行上每帧都查一次，`Vec` 的线性查找可测量。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Likes {
     ids: HashSet<TrackId>,
@@ -55,7 +55,7 @@ impl Likes {
         }
     }
 
-    /// 批量收藏，返回真正新增的条数 —— 已收藏的不能算进去，否则调用方会以为存盘成功了。
+    /// 批量收藏，返回真正新增的条数。已收藏的不能算进去，否则调用方会以为存盘成功了。
     pub fn insert_all(&mut self, ids: impl IntoIterator<Item = TrackId>) -> usize {
         let before = self.ids.len();
         self.ids.extend(ids);

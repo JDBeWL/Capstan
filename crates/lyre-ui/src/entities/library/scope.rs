@@ -7,22 +7,22 @@ use crate::platform::*;
 
 use super::{LibraryEntity, LibraryEvent};
 
-/// 「我喜欢的音乐」的显示名，侧栏 / 面包屑 / 后退提示共用这一处。
+/// 「我喜欢的音乐」的显示名，侧栏、面包屑、后退提示共用这一处。
 pub const FAVORITES_NAME: &str = "我喜欢的音乐";
 
-/// 主区正在看曲库的哪一部分。与搜索正交：作用域定义容器，搜索在容器里再筛。
-/// 专辑 / 艺术家按名字圈定，歌单按 id 圈定 —— 歌单名可重复也可改，按名字定位会让导航历史指错。
+/// 主区正在看曲库的哪一部分。与搜索正交。作用域定义容器，搜索在容器里再筛。
+/// 专辑与艺术家按名字圈定，歌单按 id 圈定。歌单名可重复也可改，按名字定位会让导航历史指错。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Scope {
     #[default]
     All,
-    /// 只看某一张专辑
+    /// 只看某一张专辑。
     Album(String),
-    /// 只看某一位艺术家
+    /// 只看某一位艺术家。
     Artist(String),
-    /// 只看某个自建歌单
+    /// 只看某个自建歌单。
     Collection(CollectionId),
-    /// 「我喜欢的音乐」：成员由收藏决定，不是一个真的歌单
+    /// 「我喜欢的音乐」。成员由收藏决定，不是一个真的歌单。
     Favorites,
 }
 
@@ -31,7 +31,7 @@ impl Scope {
         !matches!(self, Self::All)
     }
 
-    /// 歌单与收藏都归 [`ScopeKind::All`]：曲目不来自单一容器，专辑列不能省。
+    /// 歌单与收藏都归 [`ScopeKind::All`]。曲目不来自单一容器，专辑列不能省。
     pub fn kind(&self) -> ScopeKind {
         match self {
             Self::All | Self::Collection(_) | Self::Favorites => ScopeKind::All,
@@ -41,7 +41,7 @@ impl Scope {
     }
 }
 
-/// [`Scope`] 的种类，剥掉名字：`Copy`，行渲染每帧取用而不 clone `String`。
+/// [`Scope`] 的种类，剥掉名字。`Copy`，行渲染每帧取用而不 clone `String`。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ScopeKind {
     #[default]
@@ -63,7 +63,7 @@ impl LibraryEntity {
         self.set_scope(Scope::Artist(name.into()), cx);
     }
 
-    /// 进入一个歌单。id 查不到时什么都不做 —— 点到的卡片可能已经被删掉了。
+    /// 进入一个歌单。id 查不到时什么都不做。点到的卡片可能已经被删掉了。
     pub fn enter_collection(&mut self, id: CollectionId, cx: &mut Context<Self>) {
         if self.collections.get(id).is_some() {
             self.set_scope(Scope::Collection(id), cx);
@@ -90,7 +90,7 @@ impl LibraryEntity {
         }
     }
 
-    /// 回到整个曲库。搜索词不清：它是另一个维度的条件。
+    /// 回到整个曲库。搜索词不清，它是另一个维度的条件。
     pub fn exit_scope(&mut self, cx: &mut Context<Self>) {
         self.set_scope(Scope::All, cx);
     }

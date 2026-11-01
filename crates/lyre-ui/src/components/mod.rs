@@ -1,5 +1,5 @@
-//! 业务组件：认识 `Track` / `PlaybackEntity`，与 `common/` 相对。
-//! 要不要 `observe` 播放实体只决定组件自己重不重算：祖先被标脏时它照样跟着重渲染。
+//! 业务组件。认识 `Track` / `PlaybackEntity`，与 `common/` 相对。
+//! 是否 `observe` 播放实体仅决定组件自身是否重算，祖先被标脏时组件仍会随之重渲染。
 
 pub mod album_grid;
 pub mod bottom_bar;
@@ -56,7 +56,7 @@ pub(crate) fn card_play_button(
     title: &str,
     kind: NavSection,
 ) -> AnyElement {
-    // 点击闭包是 `'static`，队列用的名字得自己有一份，不能借用 `title`。
+    // 点击闭包为 `'static`，队列所需的名字必须自持一份，不得借用 `title`。
     let play_name = title.to_owned();
     div()
         .id(el_id)
@@ -71,7 +71,7 @@ pub(crate) fn card_play_button(
         .opacity(0.0)
         .cursor_pointer()
         .group_hover(group, |style| style.opacity(1.0))
-        // 键盘用户看不见 hover 态：给了 Tab 停靠点就得在聚焦时显形，否则 Enter 按下去屏幕没反应。
+        // 键盘用户看不到 hover 态。设置 Tab 停靠点后必须在聚焦时显形，否则按下 Enter 屏幕无任何反应。
         .tab_index(crate::common::button::TAB_STOP)
         .focus(|style| style.opacity(1.0))
         .focus_visible(theme::focus_ring)
@@ -82,7 +82,7 @@ pub(crate) fn card_play_button(
             let library = library.clone();
             move |_, _, cx| {
                 cx.stop_propagation();
-                // 播放统一走 `activate_*`，不在这里自己改 cursor；队列按整张专辑 / 整位艺术家定。
+                // 播放统一经由 `activate_*`，不在此处自行修改 cursor；队列按整张专辑与整位艺术家确定。
                 library.update(cx, |library, cx| match kind {
                     NavSection::Albums => library.activate_album(&play_name, track_id, cx),
                     _ => library.activate_artist(&play_name, track_id, cx),

@@ -1,6 +1,6 @@
-//! 侧栏的导航项：首页 / 曲库，以及图标态下替代整个列表的那一项。
-//! 都走 [`crate::shell::go_to`]：先记一条历史再跳，顶栏的 ← 因此能退回来源页。
-//! 当前项整格黄块、右下切角、墨字加粗 —— 颜色之外还有形状与字重两个通道。
+//! 侧栏的导航项。首页与曲库，以及图标态下替代整个列表的那一项。
+//! 都走 [`crate::shell::go_to`]。先记一条历史再跳，顶栏的 ← 因此能退回来源页。
+//! 当前项整格黄块、右下切角、墨字加粗。颜色之外还有形状与字重两个通道。
 
 use crate::common::{anim, thousands, tooltip};
 use crate::entities::LibraryEntity;
@@ -44,7 +44,7 @@ pub(super) struct LibraryItem {
     pub(super) on_hover: Option<HoverEnter>,
 }
 
-/// 「首页」项：记一条历史再跳，并退出作用域。
+/// 「首页」项。记一条历史再跳，并退出作用域。
 pub(super) fn home_item(
     id: &'static str,
     label: &'static str,
@@ -74,7 +74,7 @@ pub(super) fn home_item(
     item.into_any_element()
 }
 
-/// 「曲库」项：回到整个曲库（全部曲目），切到 `Tracks`。右侧计数是真实曲目数。
+/// 「曲库」项。回到整个曲库（全部曲目），切到 `Tracks`。右侧计数是真实曲目数。
 pub(super) fn library_item(item: LibraryItem, deps: NavDeps) -> AnyElement {
     let NavDeps { shell, library, .. } = deps;
     let LibraryItem {
@@ -113,12 +113,12 @@ pub(super) fn library_item(item: LibraryItem, deps: NavDeps) -> AnyElement {
     item.into_any_element()
 }
 
-/// 「曲库」是否选中：在看曲库的切面，且没有停在某个具体条目里。
+/// 「曲库」是否选中。在看曲库的切面，且没有停在某个具体条目里。
 pub(super) fn library_item_selected(nav: NavSection, scoped: bool) -> bool {
     nav.in_library() && !scoped
 }
 
-/// 展开态滑动块的目标：0 首页、1 曲库；搜索页不属于任何一项。
+/// 展开态滑动块的目标。0 首页、1 曲库；搜索页不属于任何一项。
 pub(super) fn active_index(section: NavSection, scoped: bool) -> Option<usize> {
     if section == NavSection::Home {
         Some(0)
@@ -129,7 +129,7 @@ pub(super) fn active_index(section: NavSection, scoped: bool) -> Option<usize> {
     }
 }
 
-/// 图标态与展开态同一套判据：主区在曲库切面（含某个条目）就点亮库图标。
+/// 图标态与展开态同一套判据，主区在曲库切面（含某个条目）就点亮库图标。
 pub(super) fn icon_index(section: NavSection) -> Option<usize> {
     if section == NavSection::Home {
         Some(0)
@@ -140,8 +140,8 @@ pub(super) fn icon_index(section: NavSection) -> Option<usize> {
     }
 }
 
-/// 导航项共用的外壳，不绑行为：点击由调用方接。
-/// 选中底色由外层的滑动块负责，行只改文字色 —— 否则整行底色会盖住滑过来的黄块。
+/// 导航项共用的外壳，不绑行为，点击由调用方接。
+/// 选中底色由外层的滑动块负责，行只改文字色；否则整行底色会盖住滑过来的黄块。
 fn nav_item_shell(item: NavItem, on_hover: Option<HoverEnter>) -> Stateful<Div> {
     let NavItem {
         id,
@@ -167,16 +167,16 @@ fn nav_item_shell(item: NavItem, on_hover: Option<HoverEnter>) -> Stateful<Div> 
             .px(px(theme::GAP_MD))
             .pr(px(theme::GAP_MD + theme::CUT_SM))
     } else {
-        // 与 lib_fallback_item 同尺寸同居中：收起侧栏后上下两个图标才落回同一条竖线
+        // 与 lib_fallback_item 同尺寸同居中，收起侧栏后上下两个图标才落回同一条竖线。
         item.w(px(theme::SIDEBAR_ITEM_H)).justify_center()
     };
 
     let mut item = item
-        // 选中行整行压在黄块上：两套主题都用深墨色，深色主题里不能跟着 text() 变浅。
+        // 选中行整行压在黄块上。两套主题都用深墨色，深色主题里不能跟着 text() 变浅。
         .when(selected, |item| item.text_color(theme::text_on_accent()))
         .when(!selected, |item| item.text_color(theme::text_muted()))
         .hover(|style| {
-            // 当前项的黄块由外层画，悬停不再铺一层底，免得盖住正在滑动的块
+            // 当前项的黄块由外层画，悬停不再铺一层底，免得盖住正在滑动的块。
             if selected {
                 style.text_color(theme::text_on_accent())
             } else {

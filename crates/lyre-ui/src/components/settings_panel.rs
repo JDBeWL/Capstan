@@ -1,4 +1,4 @@
-//! 设置面板：每项平铺成「标题 + 一组互斥选项」，最多三个选项；另有只读的快捷键一览与数据统计。
+//! 设置面板。每项平铺成「标题 + 一组互斥选项」，最多三个选项；另有只读的快捷键一览与数据统计。
 
 use std::rc::Rc;
 
@@ -23,7 +23,7 @@ pub struct SettingsPanel {
     /// 快捷键卡的展开态，本地状态、不落盘。
     shortcuts_open: bool,
     /// 面板整块可纵向滚动，矮窗口下「导入」以下会被裁掉。
-    /// gpui 不画滚动条，要自己叠一条（见 `common::scroll::scrollbar`）；句柄必须常驻，每帧新建等于归零。
+    /// gpui 不绘制滚动条，需自行叠加一条（见 `common::scroll::scrollbar`）；句柄必须常驻，每帧新建等于归零。
     scroll: ScrollHandle,
     _subs: Vec<Subscription>,
 }
@@ -39,7 +39,7 @@ impl SettingsPanel {
         let sub = cx.observe(&settings, |_, _, cx| cx.notify());
         // 数据卡写着各项计数，所以要 observe 曲库；曲库仅在扫描时每 80ms notify 一批。
         let library_sub = cx.observe(&library, |_, _, cx| cx.notify());
-        // 只关心输出模式：observe 播放实体会跟着进度的 10Hz 重绘一起白跑
+        // 只关心输出模式，observe 播放实体会跟着进度的 10Hz 重绘一起白跑。
         let mode_sub = cx.subscribe(&playback, |_, _, event: &PlaybackEvent, cx| {
             if matches!(event, PlaybackEvent::OutputModeChanged) {
                 cx.notify();
@@ -113,7 +113,7 @@ impl Render for SettingsPanel {
             } else {
                 Density::Comfortable
             };
-            // 既落盘供下次启动，也立刻应用到 shell，否则改完看不出变化。
+            // 既落盘供下次启动，也立即应用于 shell，否则修改后无可见变化。
             for_density.update(cx, |this, cx| this.set_density(value, cx));
             shell.update(cx, |shell, cx| shell.set_density(value, cx));
         });
@@ -133,7 +133,7 @@ impl Render for SettingsPanel {
             library.update(cx, |library, cx| library.set_recursive(value, cx));
         });
 
-        // 下面三项是启动时的偏好：改完不动当前界面，否则「收起右面板」会变成一条关不掉的设置。
+        // 下面三项是启动时的偏好。改完不动当前界面，否则「收起右面板」会变成一条关不掉的设置。
         let panel: Picker = Rc::new(move |index: usize, cx: &mut App| {
             let value = match index {
                 1 => Some(PanelTab::NowPlaying),
@@ -156,7 +156,7 @@ impl Render for SettingsPanel {
             for_resume.update(cx, |this, cx| this.set_resume_position(index == 0, cx));
         });
 
-        // 音频线程是另一条线程，落盘之外还得当场把新值送过去
+        // 音频线程是另一条线程，落盘之外还得当场把新值送过去。
         let smooth: Picker = Rc::new(move |index: usize, cx: &mut App| {
             let value = index == 0;
             for_smooth.update(cx, |this, cx| this.set_smooth_device_switch(value, cx));
@@ -318,7 +318,7 @@ impl Render for SettingsPanel {
             .flex()
             .flex_col()
             .gap(px(theme::GAP_LG))
-            // 右边多留一档：滚动条叠在滚动区上，不避让会压在数字和路径上。
+            // 右边多留一档。滚动条叠在滚动区上，不避让会压在数字和路径上。
             .p(px(theme::PAGE_PAD))
             .child(choices)
             .child(shortcuts_section(two_columns, self.shortcuts_open, cx));
@@ -346,7 +346,7 @@ impl Render for SettingsPanel {
             .relative()
             .flex()
             .flex_col()
-            // 不铺底色：铺一层不透明会把浮在左上角的返回按钮整个盖掉
+            // 不铺底色，铺一层不透明会把浮在左上角的返回按钮整个盖掉。
             .child(header(back_inset))
             .child(scroll_area)
             .child(crate::common::scroll::scrollbar(
@@ -373,7 +373,7 @@ fn card(english: &str, title: &str) -> Div {
         .bg(theme::window_base())
         .border_1()
         .border_color(theme::border())
-        // 顶边一小段墨色页签，和首页的浏览看板同一种形状语言
+        // 顶边一小段墨色页签，和首页的浏览看板同一种形状语言。
         .child(
             div()
                 .absolute()
@@ -387,7 +387,7 @@ fn card(english: &str, title: &str) -> Div {
         .child(crate::common::section::section_heading(title))
 }
 
-/// `flex_1` + `min_w_0`：长路径与长标题不许把某一列顶宽。
+/// `flex_1` + `min_w_0`，长路径与长标题不许把某一列顶宽。
 fn column(cards: Vec<Div>) -> AnyElement {
     cards
         .into_iter()
@@ -405,7 +405,7 @@ fn column(cards: Vec<Div>) -> AnyElement {
 
 /// 让位量与浮动返回按钮的位置同源于 `root::BACK_*`，两处不一致按钮就会压住标题。
 fn header(back_inset: bool) -> impl IntoElement {
-    // 返回键占一条 40px 高的顶行：眉标与它同高，大标题落到它下方，并与卡片共用页边线。
+    // 返回键占一条 40px 高的顶行。眉标与它同高，大标题落到它下方，并与卡片共用页边线。
     let eyebrow_left = if back_inset {
         crate::root::HEADER_BACK_INSET - theme::PAGE_PAD + theme::GAP_SM
     } else {
@@ -453,7 +453,7 @@ fn header(back_inset: bool) -> impl IntoElement {
     )
 }
 
-/// 快捷键表里每组的小标题。用 `text_muted` 而不是 `text_faint`：它是一组行的抬头，
+/// 快捷键表里每组的小标题。用 `text_muted` 而不是 `text_faint`。它是一组行的抬头，
 /// 比行文字还淡的话整块会先糊掉。
 fn sub_title(text: &str) -> impl IntoElement {
     div()
@@ -464,8 +464,8 @@ fn sub_title(text: &str) -> impl IntoElement {
         .child(text.to_owned())
 }
 
-/// 一行设置：`title` + 一组互斥选项。`on_pick` 收到选项下标，由调用方映射成枚举。
-/// 回调签名压成 `Picker`：到处写全 `Rc<dyn Fn…>` 已跨过 clippy 的类型复杂度上限。
+/// 一行设置。`title` + 一组互斥选项。`on_pick` 收到选项下标，由调用方映射成枚举。
+/// 回调签名压成 `Picker`，到处写全 `Rc<dyn Fn…>` 已跨过 clippy 的类型复杂度上限。
 type Picker = Rc<dyn Fn(usize, &mut App)>;
 
 fn choice_row(
@@ -547,7 +547,7 @@ fn segmented(
     for (index, (label, active)) in options.iter().enumerate() {
         let label = (*label).to_owned();
         let active = *active;
-        // 字色跟着墨块走：滑到哪一段，哪一段反白；只按逻辑选中切换会有一半时间白字压白底。
+        // 字色跟着墨块走。滑到哪一段，哪一段反白；只按逻辑选中切换会有一半时间白字压白底。
         let under = (slide - index as f32).abs() < 0.5;
         let on_pick = Rc::clone(on_pick);
         let a11y = format!("{title}：{label}{}", if active { "（已选中）" } else { "" });
@@ -572,7 +572,7 @@ fn segmented(
                     theme::text_muted()
                 })
                 .cursor_pointer()
-                // 悬停只改字色：再铺一层底色会盖住滑过来的墨块
+                // 悬停只改字色，再铺一层底色会盖住滑过来的墨块。
                 .when(!under, |seg| {
                     seg.hover(|style| style.text_color(theme::text()))
                 })
@@ -586,9 +586,9 @@ fn segmented(
 }
 
 /// 一行「名字 + 值」的只读信息（快捷键表的每一行、独占格式那类短值）。
-/// 名字吃剩余宽度、放不下就折行；值固定不收缩、靠右 —— 反过来做的话，长名字
-/// （`后退一层：歌词 → 返回 → 面板 → 搜索`）会把按键挤成省略号，等于把要查的东西藏了。
-/// 字号用 `FONT_CAPTION` 而不是 `FONT_MICRO`：10px 的中文在浅色底上糊成一片。
+/// 名字吃剩余宽度、放不下就折行；值固定不收缩、靠右。反过来做的话，像
+/// `后退一层。歌词 → 返回 → 面板 → 搜索` 这样的长名字会把按键挤成省略号，要查的东西全被藏起来。
+/// 字号用 `FONT_CAPTION` 而不是 `FONT_MICRO`，10px 的中文在浅色底上糊成一片。
 fn info_row(label: &str, value: impl Into<String>) -> impl IntoElement {
     div()
         .flex()
@@ -612,7 +612,7 @@ fn info_row(label: &str, value: impl Into<String>) -> impl IntoElement {
         )
 }
 
-/// 一行「名字 + 长值」（数据目录那种路径）。与 [`info_row`] 相反：值必须能截断，
+/// 一行「名字 + 长值」（数据目录那种路径）。与 [`info_row`] 相反。值必须能截断，
 /// 否则一条 `/Users/…/Library/Application Support/…` 会把整张卡顶宽。
 fn path_row(label: &str, value: String) -> impl IntoElement {
     div()
@@ -653,7 +653,7 @@ fn stat_cell(label: &str, value: String) -> Div {
                 .child(value),
         )
         .child(
-            // 数字下面那行说明也用 `FONT_CAPTION` + `text_muted`：10px 的淡灰在纸色底上
+            // 数字下面那行说明也用 `FONT_CAPTION` + `text_muted`，10px 的淡灰在纸色底上
             // 只剩下一道影子，读不出这一格统计的是什么。
             div()
                 .text_size(px(theme::FONT_CAPTION))
@@ -772,9 +772,7 @@ fn data_section(library: &Entity<LibraryEntity>, cx: &App) -> Div {
     card("Data", "数据").child(content)
 }
 
-/// 把内部写法 `ctrl-up` 翻成界面上的 `Ctrl + ↑`，只翻展示层。
-/// `keymap.rs` 绑定的仍是原始串，两边都从 `crate::shortcuts::keys` 取值。
-/// 音乐文件夹：把「记住哪些目录」摆出来，并且能加、能重扫、能移除。
+/// 音乐文件夹。把「记住哪些目录」摆出来，并且能加、能重扫、能移除。
 /// 曲库只存曲目，不存「这首是从哪个文件夹扫来的」，所以这层关系只能显式记一份根。
 fn roots_block(
     library: &Entity<LibraryEntity>,
@@ -843,7 +841,7 @@ fn roots_block(
                                 .text_color(theme::text())
                                 .child(root.display().to_string()),
                         )
-                        // 移动硬盘没插、共享盘没挂载都会走到这里：不是错误，只是现在扫不到
+                        // 移动硬盘没插、共享盘没挂载都会走到这里。不是错误，只是现在扫不到。
                         .when(!root.is_dir(), |column| {
                             column.child(
                                 div()
@@ -907,7 +905,7 @@ fn roots_block(
                     },
                 )),
         )
-        // 与上面两颗不是一回事：那两颗管「文件夹里多了什么」，这颗管「文件里写了什么」。
+        // 与上面两颗不是一回事。那两颗管「文件夹里多了什么」，这颗管「文件里写了什么」。
         // 混在一行里容易被当成同一个动作的强弱版。曲库空着时它没有意义，索性不画。
         .when(has_tracks, |block| {
             block.child(
@@ -940,6 +938,8 @@ fn roots_block(
         })
 }
 
+/// 把内部写法 `ctrl-up` 翻成界面上的 `Ctrl + ↑`，只翻展示层。
+/// `keymap.rs` 绑定的仍是原始串，两边都从 `crate::shortcuts::keys` 取值。
 fn pretty_keys(raw: &str) -> String {
     raw.split('-')
         .map(|part| match part {
@@ -963,7 +963,7 @@ fn pretty_keys(raw: &str) -> String {
         .join(" + ")
 }
 
-/// 设置的持有者：改动一律经 `update_and_save` 落盘，绕过它就等于改了不保存。
+/// 设置的持有者。改动一律经 `update_and_save` 落盘，绕过它就等于改了不保存。
 pub struct SettingsEntity {
     settings: Settings,
 }
@@ -986,7 +986,7 @@ impl SettingsEntity {
 
     pub fn set_appearance(&mut self, appearance: theme::Appearance, cx: &mut Context<Self>) {
         self.update_and_save(cx, |settings| settings.appearance = appearance);
-        // 两套明暗都要立刻生效：本项目 palette + 组件库 ThemeMode，再整窗重画。
+        // 两套明暗都要立刻生效。本项目 palette + 组件库 ThemeMode，再整窗重画。
         crate::platform::set_appearance(appearance, cx);
         cx.refresh_windows();
     }
@@ -1013,13 +1013,13 @@ impl SettingsEntity {
 
     pub fn set_resume_position(&mut self, resume: bool, cx: &mut Context<Self>) {
         self.update_and_save(cx, |settings| settings.resume_position = resume);
-        // 关掉就把文件删了，否则重新打开会跳回一个几个月前的位置
+        // 关掉就把文件删了，否则重新打开会跳回一个几个月前的位置。
         if !resume {
             crate::resume::Resume::clear();
         }
     }
 
-    /// 音量与静音必须一起写：静音时 `volume` 存的仍是静音前的值，分开写会留下「取消静音回到 0」的存档。
+    /// 音量与静音必须一起写。静音时 `volume` 存的仍是静音前的值，分开写会留下「取消静音回到 0」的存档。
     pub fn set_volume(&mut self, volume: f32, muted: bool, cx: &mut Context<Self>) {
         self.update_and_save(cx, |settings| {
             settings.volume = volume;
@@ -1056,7 +1056,7 @@ mod tests {
 
     #[test]
     fn single_character_keys_survive_their_own_hyphen() {
-        // `ctrl-,` 切出来是 ["ctrl", ","]，单字符要变大写而不是当键名查表
+        // `ctrl-,` 切出来是 ["ctrl", ","]，单字符要变大写而不是当键名查表。
         assert_eq!(pretty_keys("ctrl-,"), "Ctrl + ,");
         assert_eq!(pretty_keys("/"), "/");
         assert_eq!(pretty_keys("m"), "M");

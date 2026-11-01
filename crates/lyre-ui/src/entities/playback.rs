@@ -1,4 +1,4 @@
-//! 播放实体：向音频线程下发 [`PlayerCommand`]，把 [`PlayerEvent`] 翻成 [`PlaybackEvent`]。
+//! 播放实体。向音频线程下发 [`PlayerCommand`]，把 [`PlayerEvent`] 翻成 [`PlaybackEvent`]。
 
 use std::sync::Arc;
 use std::sync::mpsc::{self, TryRecvError};
@@ -25,11 +25,11 @@ pub enum PlaybackEvent {
     Restored,
     StateChanged,
     VolumeChanged,
-    /// 可用设备列表或当前输出设备变了
+    /// 可用设备列表或当前输出设备变了。
     DevicesChanged,
-    /// 实际生效的输出模式（或独占协商到的格式）变了
+    /// 实际生效的输出模式（或独占协商到的格式）变了。
     OutputModeChanged,
-    /// 一首歌自然播完了 —— 由上层决定下一曲还是循环
+    /// 一首歌自然播完了，由上层决定下一曲还是循环。
     Finished,
 }
 
@@ -44,7 +44,7 @@ fn exclusive_factory() -> lyre_audio::ExclusiveOpenFn {
 }
 
 pub struct PlaybackEntity {
-    /// 音频线程起不来时为 `None`：界面照常可用，只是没有声音。
+    /// 音频线程起不来时为 `None`。界面照常可用，只是没有声音。
     handle: Option<AudioHandle>,
     snapshot: Arc<Snapshot>,
 
@@ -78,7 +78,7 @@ impl EventEmitter<PlaybackEvent> for PlaybackEntity {}
 impl PlaybackEntity {
     pub fn new(initial_device: Option<String>, cx: &mut Context<Self>) -> Self {
         let (tx, rx) = mpsc::channel();
-        // 线程起不来（资源耗尽）不是致命错误：退化成没声音但界面可用，原因留在 `error` 里显示。
+        // 线程起不来（资源耗尽）不是致命错误。退化成没声音但界面可用，原因留在 `error` 里显示。
         let mut startup_error = None;
         let handle =
             match AudioHandle::spawn_with_exclusive(tx, initial_device, exclusive_factory()) {
@@ -90,21 +90,21 @@ impl PlaybackEntity {
                     None
                 }
             };
-        // 设备列表不会主动推给一个还没问过的新句柄，先要一份，否则菜单在首次插拔前一直是空的
+        // 设备列表不会主动推给一个还没问过的新句柄，先要一份，否则菜单在首次插拔前一直是空的。
         if let Some(handle) = &handle {
             handle.send(PlayerCommand::EnumerateDevices);
         }
-        // 没有句柄就没有共享快照，自己造一个默认的：进度恒为 0，界面不至于崩。
+        // 无句柄即无共享快照，构建一份默认值。进度恒为 0，界面不至于崩溃。
         let snapshot = handle
             .as_ref()
             .map_or_else(|| Arc::new(Snapshot::default()), AudioHandle::snapshot);
         let volume = snapshot.volume();
 
-        // `background_executor()` 返回借用，必须 clone 出所有权值才能带进 'static 任务
+        // `background_executor()` 返回借用，必须 clone 出所有权值才能带进 'static 任务。
         let executor = cx.background_executor().clone();
         let pump = cx.spawn(async move |this, cx| {
             let rx = rx;
-            // 进度只写进共享快照、不发事件，所以「位置变了」得自己察觉，否则没人重绘
+            // 进度只写入共享快照、不发送事件，故「位置变化」需自行察觉，否则无人重绘。
             let mut shown = Duration::ZERO;
             loop {
                 executor.timer(PUMP_INTERVAL).await;
@@ -132,7 +132,7 @@ impl PlaybackEntity {
                         if moved {
                             shown = this.snapshot.position();
                         }
-                        // 暂停与空载时位置不动，也就不重绘
+                        // 暂停与空载时位置不动，也就不重绘。
                         if got_events || moved {
                             cx.notify();
                         }
@@ -142,7 +142,7 @@ impl PlaybackEntity {
                     })
                     .is_ok();
 
-                // Err 说明窗口 / 实体已销毁，必须收工，否则任务泄漏
+                // Err 说明窗口与实体已销毁，必须结束任务，否则造成任务泄漏。
                 if !alive {
                     break;
                 }
@@ -232,7 +232,7 @@ impl PlaybackEntity {
         cx.notify();
     }
 
-    /// 装载曲目：`current` 与状态乐观更新，时长稍后由 `PlayerEvent::Loaded` 校正。
+    /// 装载曲目。`current` 与状态乐观更新，时长稍后由 `PlayerEvent::Loaded` 校正。
     pub fn load(&mut self, track: Track, autoplay: bool, cx: &mut Context<Self>) {
         self.error = None;
         self.state = if autoplay {
@@ -252,7 +252,7 @@ impl PlaybackEntity {
         cx.notify();
     }
 
-    /// 启动续播专用：装载并跳位，只发 `Restored` 不发 `TrackChanged`。
+    /// 启动续播专用。装载并跳位，只发 `Restored` 不发 `TrackChanged`。
     /// 根视图靠这个区分「用户点了播放」与「装回上次那首」，否则会记一次播放、并把尚未生效的
     /// 0 秒写回 `resume.json`。
     pub fn restore(&mut self, track: Track, position: Duration, cx: &mut Context<Self>) {
@@ -271,7 +271,7 @@ impl PlaybackEntity {
 
     pub fn toggle_play(&mut self, cx: &mut Context<Self>) {
         self.send(PlayerCommand::TogglePlay);
-        // 不做乐观更新：播放 / 暂停以音频线程回来的 State 事件为准
+        // 不做乐观更新，播放与暂停以音频线程回来的 State 事件为准。
         cx.notify();
     }
 
@@ -317,7 +317,7 @@ impl PlaybackEntity {
         self.send(PlayerCommand::SetSmoothSwitch(enabled));
     }
 
-    /// 是否用 WASAPI 独占输出。独占起不来时音频线程会自己退回共享并发回事件。
+    /// 是否启用 WASAPI 独占输出。独占无法建立时，音频线程会自行退回共享模式并发回事件。
     pub fn set_exclusive_output(&mut self, exclusive: bool) {
         if self.exclusive_wanted == exclusive {
             return;
@@ -326,12 +326,12 @@ impl PlaybackEntity {
         self.send(PlayerCommand::SetOutputMode { exclusive });
     }
 
-    /// 实际生效的输出模式。与开关的期望值可能不同：独占协商失败会退回共享。
+    /// 实际生效的输出模式。与开关的期望值可能不同，独占协商失败会退回共享。
     pub const fn output_mode(&self) -> OutputMode {
         self.output_mode
     }
 
-    /// 独占协商到的口径（采样率 / 声道 / 位深）；共享模式或尚未协商到时为空串。
+    /// 独占协商到的口径（采样率、声道与位深）；共享模式或尚未协商到时为空串。
     pub fn output_detail(&self) -> &str {
         &self.output_detail
     }
@@ -339,7 +339,7 @@ impl PlaybackEntity {
     fn apply(&mut self, event: PlayerEvent, emitted: &mut Vec<PlaybackEvent>) {
         match event {
             PlayerEvent::Loaded { duration, .. } => {
-                // 标签里的时长可能不准，以解码器报的为准
+                // 标签里的时长可能不准，以解码器报的为准。
                 if duration > Duration::ZERO {
                     self.duration = duration;
                 }
@@ -376,7 +376,7 @@ impl PlaybackEntity {
             }
 
             PlayerEvent::OutputModeChanged { mode, detail } => {
-                // 口径会在切歌、换设备时重协商，值没变就不必惊动界面
+                // 口径会在切歌、换设备时重协商，值没变就不必惊动界面。
                 if self.output_mode != mode || self.output_detail != detail {
                     self.output_mode = mode;
                     self.output_detail = detail;

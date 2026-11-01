@@ -1,4 +1,4 @@
-//! 导入流程：开对话框 → 记下曲库根 → 起扫描线程 → 分批读标签 → 入队。
+//! 导入流程，开对话框 → 记下曲库根 → 起扫描线程 → 分批读标签 → 入队。
 //! 扫描在后台线程跑，主线程每 `SCAN_FLUSH_INTERVAL` 收一批、每拍只 `notify` 一次。
 //! 补扫走同一条路，只是先按库里已有的 id 筛一遍，已有的曲目不再读标签。
 
@@ -37,14 +37,14 @@ enum ScanTick {
 
 /// 一次扫描的意图。
 struct ScanRequest {
-    /// 要扫的路径：目录递归展开，文件按单首收。
+    /// 要扫的路径。目录递归展开，文件按单首收。
     inputs: Vec<PathBuf>,
-    /// 只读库里没有的文件。补扫用：已经入库的不再读一遍标签。
+    /// 只读库里没有的文件。补扫用，已经入库的不再读一遍标签。
     fresh_only: bool,
-    /// 不看文件指纹，每一首都重读。只由「重读全部标签」置位 ——
+    /// 不看文件指纹，每一首都重读。只由「重读全部标签」置位。
     /// 文件没动但标签被外部编辑器改过时，只有这条路能把改动带回来。
     force: bool,
-    /// 启动补扫：没有新增就不打扰用户。
+    /// 启动补扫，没有新增就不打扰用户。
     quiet: bool,
 }
 
@@ -118,13 +118,13 @@ impl LibraryEntity {
 
     /// 重读全部曲目的标签。
     ///
-    /// 和 [`Self::rescan`] 是两件事：那个只把新文件补进来，已经在库的一首都不碰；
+    /// 和 [`Self::rescan`] 是两件事。那个只把新文件补进来，已经在库的一首都不碰；
     /// 这个不看指纹、不在乎文件有没有变，每一首都重新开容器解析。标签是在 Lyre 之外被改过
     /// （别的编辑器、脚本、重新下的版本）时，只有这里能把改动带回来。
     ///
     /// 手改过的字段不受影响，见 [`lyre_core::Track::keep_manual`]。
     pub fn refresh_tags(&mut self, cx: &mut Context<Self>) {
-        // 首屏还在后台读盘时曲库是空的，这时候刷新等于什么都没做
+        // 首屏还在后台读盘时曲库是空的，这时候刷新等于什么都没做。
         if self.loading {
             return;
         }
@@ -154,12 +154,12 @@ impl LibraryEntity {
         self.rescan_with(false, cx);
     }
 
-    /// 启动补扫：上一次退出之后新增的曲目在这里补进来，没有新增就不弹提示。
+    /// 启动补扫。上一次退出之后新增的曲目在这里补进来，没有新增就不弹提示。
     pub fn rescan_quietly(&mut self, cx: &mut Context<Self>) {
         self.rescan_with(true, cx);
     }
 
-    /// 移除一个曲库根。只停止跟踪，不动已经入库的曲目 ——
+    /// 移除一个曲库根。只停止跟踪，不动已经入库的曲目。
     /// 顺带删曲目是另一回事，不能藏在一个「移除文件夹」里。
     pub fn forget_root(&mut self, path: &Path, cx: &mut Context<Self>) {
         if self.roots.remove(path) {
@@ -201,11 +201,11 @@ impl LibraryEntity {
         }
     }
 
-    /// 起一轮扫描。同一时刻只有一轮：新的一来，旧的先被叫停。
+    /// 起一轮扫描。同一时刻只有一轮。新的一来，旧的先被叫停。
     // `_scan` 只写不读，作用是在 Drop 时取消扫描。
     #[allow(clippy::used_underscore_binding)]
     fn start_scan(&mut self, request: ScanRequest, cx: &mut Context<Self>) {
-        // 旧任务的接收端马上会被换掉，先把它的停止标志立起来，省下白读的标签
+        // 旧任务的接收端马上会被换掉，先把它的停止标志立起来，省下白读的标签。
         if let Some(cancel) = self.scan_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
         }
@@ -213,8 +213,8 @@ impl LibraryEntity {
         self.scanning = Some(ScanProgress::default());
         cx.notify();
 
-        // 已在库的曲目连同文件指纹一起带走：补扫拿它当「别读」，整目录重导拿它当
-        // 「文件没动过就别再读一遍标签」。指纹和 id 同出一源，一次遍历就够了。
+        // 已在库的曲目连同文件指纹一并取走。补扫据此判定「无需读取」，整目录重导据此判定
+        // 「文件未变更则不再读取标签」。指纹与 id 同出一源，一次遍历即可完成。
         let cached: HashMap<TrackId, FileStamp> = self
             .playlist
             .tracks()
@@ -227,22 +227,22 @@ impl LibraryEntity {
         } else {
             HashSet::new()
         };
-        // 「重读全部标签」故意不带指纹：带了就等于什么都没做
+        // 「重读全部标签」故意不带指纹，带了就等于什么都没做。
         let cached = (!request.force).then_some(cached);
 
-        // 库里已有的艺术家名单：文件名推断拿它定方向。首次导入时是空的，只能靠目录结构。
+        // 库里已有的艺术家名单。文件名推断拿它定方向。首次导入时是空的，只能靠目录结构。
         let artists = known_artists(self.playlist.tracks());
 
         let (tx, rx) = mpsc::channel::<ScanTick>();
-        // `background_executor()` 返回借用，要 clone 出所有权值才能带进 'static 任务
+        // `background_executor()` 返回借用，要 clone 出所有权值才能带进 'static 任务。
         let executor = cx.background_executor().clone();
-        // 后台任务拿不到实体，开关按值带进去
+        // 后台任务拿不到实体，开关按值带进去。
         let recursive = self.recursive;
         let cancel = Arc::new(AtomicBool::new(false));
         self.scan_cancel = Some(Arc::clone(&cancel));
 
         // 展开目录 → 读标签 → 分批发送；`tx` drop 后的 `Disconnected` 就是扫完了。
-        // 用专用 OS 线程而不是 `executor.spawn`：整段阻塞、没有一个 `await`，会长时间占住共享池里的一个 worker。
+        // 用专用 OS 线程而不是 `executor.spawn`。整段阻塞、没有一个 `await`，会长时间占住共享池里的一个 worker。
         let scan = std::thread::Builder::new()
             .name("mp-scan".to_owned())
             .spawn(move || {
@@ -258,7 +258,7 @@ impl LibraryEntity {
             });
 
         if let Err(err) = scan {
-            // 线程起不来（资源耗尽）：必须清掉 `scanning`，否则界面永远停在「正在扫描」；还要发 `Failed`，否则点了导入毫无反应。
+            // 线程起不来（资源耗尽）。必须清掉 `scanning`，否则界面永远停在「正在扫描」；还要发 `Failed`，否则点了导入毫无反应。
             let message = format!("无法启动扫描线程：{err}");
             log::error!("{message}");
             self.scanning = None;
@@ -270,7 +270,7 @@ impl LibraryEntity {
         let quiet = request.quiet;
         let refresh = request.force;
         let task = cx.spawn(async move |this, cx| {
-            // 三个计数各有用处：`scanned` 是扫到的文件数（含已在库的），`added` 是新入库的，
+            // 三个计数各有用处。`scanned` 是扫到的文件数（含已在库的），`added` 是新入库的，
             // `refreshed` 是重读过标签的。只报 `added` 的话，空文件夹和「全都已在库」都是 0。
             let mut scanned = 0usize;
             let mut added = 0usize;
@@ -309,14 +309,14 @@ impl LibraryEntity {
                                 progress.found += read;
                             }
                             // 带过滤条件时新曲目也要按条件进投影，否则导入时列表看着毫无变化；
-                            // 刷新标签改了标题同理 —— 命中集合会变。
+                            // 刷新标签改了标题同理。命中集合会变。
                             if this.is_filtering() {
                                 this.recompute_visible(cx);
                             }
                         }
                         if done {
                             this.scanning = None;
-                            // 有新增才写盘：整库重写一遍不便宜，启动补扫天天跑。
+                            // 有新增才写盘。整库重写一遍不便宜，启动补扫天天跑。
                             if added > 0 || !quiet {
                                 this.persist();
                             }
@@ -347,8 +347,8 @@ impl LibraryEntity {
     }
 }
 
-/// 后台线程：展开目录 → 挑出库里没有的 → 逐首读标签，一批一批发回去。
-/// 参数按值收：这是线程入口，所有东西都得从 `start_scan` 那边搬进来。
+/// 后台线程。展开目录 → 挑出库里没有的 → 逐首读标签，一批一批发回去。
+/// 参数按值收。这是线程入口，所有东西都得从 `start_scan` 那边搬进来。
 #[allow(clippy::needless_pass_by_value)]
 fn run_scan(
     inputs: Vec<PathBuf>,
@@ -360,7 +360,7 @@ fn run_scan(
     tx: Sender<ScanTick>,
 ) {
     let files = collect_audio_paths_with(&inputs, recursive);
-    // 总数先报：界面据此知道这次扫到了多少，也才知道「一首新的都没有」是正常结果
+    // 总数先报。界面据此知道这次扫到了多少，也才知道「一首新的都没有」是正常结果。
     if tx.send(ScanTick::Found(files.len())).is_err() {
         return;
     }
@@ -371,7 +371,7 @@ fn run_scan(
         cached: cached.as_ref(),
     };
 
-    // 分片读：每片之间看一眼停止标志。换扫描目标时，剩下的标签不必再读完。
+    // 分片读。每片之间看一眼停止标志。换扫描目标时，剩下的标签不必再读完。
     for slice in fresh.chunks(SCAN_CHUNK) {
         if cancel.load(Ordering::Relaxed) {
             return;
@@ -382,7 +382,7 @@ fn run_scan(
     }
 }
 
-/// 库里出现过的艺术家名，折成可比较的形式。多人的字段按分隔符拆开 ——
+/// 库里出现过的艺术家名，折成可比较的形式。多人的字段按分隔符拆开。
 /// `周杰伦/费玉清` 里的两位都算认识，否则这类合作曲目的文件名推不出来。
 fn known_artists(tracks: &[Track]) -> HashSet<String> {
     tracks
@@ -425,7 +425,7 @@ mod tests {
             .collect()
     }
 
-    /// 「新增的歌会不会被扫到」全靠这一层筛：在库的要挡掉，不在库的要留下。
+    /// 「新增的歌会不会被扫到」全靠这一层筛。在库的要挡掉，不在库的要留下。
     #[test]
     fn 补扫只挑库里没有的() {
         let found = fresh_paths(
@@ -435,7 +435,7 @@ mod tests {
         assert_eq!(found, paths(&["/m/b.flac"]));
     }
 
-    /// 整目录导入不筛：已经在库的曲目要重读标签，`push` 会按 id 替换旧条目。
+    /// 整目录导入不筛。已经在库的曲目要重读标签，`push` 会按 id 替换旧条目。
     #[test]
     fn 没有已知集合时原样返回() {
         let files = paths(&["/m/a.flac", "/m/b.flac"]);

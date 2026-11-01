@@ -1,5 +1,5 @@
-//! 独占输出后端：`lyre_audio::AudioBackend` 的第二个实现。
-//! 与共享后端共用解码链，末端不同：采样经环缓冲由渲染线程独占写入设备，绕开 rodio 的 mixer。
+//! 独占输出后端，`lyre_audio::AudioBackend` 的第二个实现。
+//! 与共享后端共用解码链，仅末端不同。采样经环缓冲由渲染线程独占写入设备，绕开 rodio 的 mixer。
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -26,7 +26,7 @@ use crate::ring::SampleRing;
 /// 等协商回执的最长时间。设备被别的程序占着时初始化要重试，但也不能无限等。
 const CONFIGURE_TIMEOUT: Duration = Duration::from_secs(5);
 const FADE: Duration = Duration::from_millis(60);
-/// 流失联后的首次重试间隔；之后按倍数退避，避免在坏设备上来回撞。
+/// 流中断后的首次重试间隔；此后按倍数退避，避免在故障设备上反复重试。
 const RETRY_INITIAL: Duration = Duration::from_millis(250);
 const RETRY_MAX: Duration = Duration::from_secs(2);
 
@@ -50,7 +50,7 @@ pub struct ExclusiveBackend {
     preferred: Option<(u32, u16)>,
     /// 流失联后的待重建状态；`None` 表示链路正常。
     loss: Option<LostStream>,
-    /// 需要上浮给音频线程的异步通知（中断 / 恢复）。
+    /// 需要上浮给音频线程的异步通知（中断与恢复）。
     notices: VecDeque<BackendNotice>,
     current: Option<Loaded>,
     volume: f32,
@@ -75,7 +75,7 @@ struct Loaded {
 }
 
 impl ExclusiveBackend {
-    /// 打开独占后端。会立刻协商一次格式 —— 协商不过就说明这台设备用不了独占，
+    /// 打开独占后端。会立刻协商一次格式。协商不过就说明这台设备用不了独占，
     /// 由上层回退到共享后端。
     pub fn open(device_id: Option<&str>) -> Result<Self> {
         Self::open_with(device_id, Box::new(open_stream))
@@ -130,8 +130,8 @@ impl ExclusiveBackend {
         &self.device_name
     }
 
-    /// 累计欠载采样数：环里没货、只能拿静音顶上设备的那部分。
-    /// 涨了就说明推送线程（解码、建链、换手）跟不上渲染线程，听感是断音或卡顿。
+    /// 累计欠载采样数，即环内无数据、只能以静音填充设备的那部分。
+    /// 该值增长说明推送线程（解码、建链、换手）跟不上渲染线程，听感为断音或卡顿。
     pub fn underrun_samples(&self) -> u64 {
         self.shared.starved.load(Ordering::Relaxed)
     }
@@ -152,7 +152,7 @@ impl ExclusiveBackend {
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                // 清掉可能滞留的旧回执，否则会错配到下一条命令上
+                // 清掉可能滞留的旧回执，否则会错配到下一条命令上。
                 while self.responses.try_recv().is_ok() {}
                 self.stream_alive = false;
                 return Err(ExclusiveError::Initialize("独占初始化超时".to_owned()));
@@ -181,7 +181,7 @@ impl ExclusiveBackend {
                     self.stream_alive = false;
                     return Err(ExclusiveError::Unsupported(message));
                 }
-                // 老流在协商期间报的故障：记下来，继续等这次协商的回执
+                // 老流在协商期间报的故障，先记下来，继续等这次协商的回执。
                 Ok(RenderResponse::DeviceLost { message }) => self.note_lost(message),
                 Err(RecvTimeoutError::Timeout) => {
                     while self.responses.try_recv().is_ok() {}
@@ -196,7 +196,7 @@ impl ExclusiveBackend {
         }
     }
 
-    /// 保证当前流的口径能接下这一首。现成口径就能位完美直出时不动设备 —— 重开流要几百毫秒。
+    /// 保证当前流的口径能接下这一首。现成口径就能位完美直出时不动设备，重开流要几百毫秒。
     fn ensure_format(&mut self, preferred: (u32, u16)) -> Result<()> {
         if self.stream_alive
             && self
@@ -212,7 +212,7 @@ impl ExclusiveBackend {
     }
 
     /// 当前独占流是否已经落在目标设备上。
-    /// 跟随默认时不能只看标识：标识没变但流可能还停在旧设备上，要拿此刻默认设备比。
+    /// 跟随默认时不能只看标识。标识没变，流也可能还停在旧设备上，要拿此刻默认设备比。
     fn stream_is_on(&self, wanted: Option<&str>) -> bool {
         if !self.stream_alive {
             return false;
@@ -227,7 +227,7 @@ impl ExclusiveBackend {
         }
     }
 
-    /// 先备好整条链（换采样率、按 `start` 跳转、预解码），再一次性换手：停旧推送线程、作废环、起新线程。
+    /// 先备好整条链（换采样率、按 `start` 跳转、预解码），再一次性换手，停旧推送线程、作废环、起新线程。
     /// 顺序反了，建链耗时全变成断音。
     fn rebuild(
         &mut self,
@@ -246,10 +246,10 @@ impl ExclusiveBackend {
         }
         let source_rate = decoder.sample_rate();
 
-        // 推送线程不在实时线程上：解码没跟上时**等**真样本，别让它把补出来的静音
-        // 当内容灌进环 —— 那会在每首开头留下一段断断续续的沉默
+        // 推送线程不在实时线程上。解码未跟上时必须等待真实样本，不得把补出的静音
+        // 当作内容写入采样环，否则每首开头会出现一段断续的静默。
         let source = LockFreeSource::new(decoder, WhenEmpty::Wait)?;
-        // 采样率一致就整段跳过重采样 —— 这正是位完美那条路径
+        // 采样率一致就整段跳过重采样。这正是位完美那条路径。
         let resampled: Box<dyn Source<Item = f32> + Send> = if source_rate == format.sample_rate {
             Box::new(source)
         } else {
@@ -274,15 +274,15 @@ impl ExclusiveBackend {
         );
         let clipped = SoftClip::new(ramped);
 
-        // 换手：旧推送线程先收工，再作废环里剩下的样本 —— 反过来的话旧线程会在作废之后
-        // 又灌进一批。它手里的写入端带着旧世代，作废之后一律写不进东西。
+        // 换手时先结束旧推送线程，再作废环内剩余样本。顺序相反时，旧线程会在作废之后
+        // 继续写入一批；其写入端携带旧世代号，作废后无法写入任何数据。
         self.stop_push();
         self.ring.invalidate();
-        // 换一代推送线程。完工标志带着世代号，这里不必（也不能）去清零：清零是异步生效的，
+        // 换一代推送线程。完工标志带着世代号，这里不必也不能去清零。清零是异步生效的，
         // 新线程可能已经把整首写完并置上了标志，渲染线程这才处理到那条清零命令。
         let generation = self.shared.begin_producer();
         // `written` 必须在此同步归零，不能只等渲染线程处理 `Flush`。
-        // 下面马上把 `base` 改成 `start`，旧计数会让 `position()` 多算一段：进度条先虚高再回落。
+        // 下面马上把 `base` 改成 `start`，旧计数会让 `position()` 多算一段，进度条先虚高再回落。
         self.shared.written.store(0, Ordering::SeqCst);
         let _ = self.commands.send(RenderCommand::Flush);
 
@@ -384,7 +384,7 @@ impl ExclusiveBackend {
         }
     }
 
-    /// 按当前曲目重建整条流。`autoplay` 为 `None` 时沿用曲目原本的播放意图。
+    /// 按当前曲目重建整条流。`autoplay` 为 `None` 时沿用曲目既有的播放意图。
     fn recover(&mut self, autoplay: Option<bool>) -> Result<()> {
         let preferred = self.preferred;
         let Some(current) = self.current.as_ref() else {
@@ -404,7 +404,7 @@ impl ExclusiveBackend {
     }
 }
 
-/// 失联重建的退避间隔：250ms、500ms、1s、2s 封顶。
+/// 失联重建的退避间隔依次是 250ms、500ms、1s、2s，之后封顶。
 fn retry_delay(attempts: u32) -> Duration {
     let factor = 1u32 << attempts.min(4);
     (RETRY_INITIAL * factor).min(RETRY_MAX)
@@ -420,7 +420,7 @@ fn channel_count(value: u16) -> ChannelCount {
 
 impl AudioBackend for ExclusiveBackend {
     fn load(&mut self, path: &Path, autoplay: bool) -> std::result::Result<Duration, AudioError> {
-        // 解码器只打开一次：口径要从它身上看，链路又得用它来建。
+        // 解码器只打开一次。口径要从它身上看，链路又得用它来建。
         // 分开打开的话，WavPack 这类要通读一遍文件的格式会白读两遍。
         let decoder = TrackDecoder::open(path)?;
         let preferred = (decoder.sample_rate(), decoder.channels());
@@ -432,7 +432,7 @@ impl AudioBackend for ExclusiveBackend {
 
     fn play(&mut self) -> std::result::Result<(), AudioError> {
         if self.loss.is_some() {
-            // 用户显式播放：不等退避，立刻按当前曲目重建一次
+            // 用户显式播放时不等退避，立刻按当前曲目重建一次。
             self.recover(Some(true)).map_err(AudioError::from)?;
             self.loss = None;
             return Ok(());
@@ -440,7 +440,7 @@ impl AudioBackend for ExclusiveBackend {
 
         let ended = self.shared.finished.load(Ordering::Acquire);
         if self.stopped || self.push.is_none() || ended {
-            // 播完之后再按播放键：按当前曲目重建（与共享后端同语义）
+            // 播完之后再按播放键，按当前曲目重建，与共享后端同语义。
             let Some(current) = self.current.as_ref() else {
                 return Ok(());
             };
@@ -488,7 +488,7 @@ impl AudioBackend for ExclusiveBackend {
             position
         };
 
-        // 独占下的 seek 只能重建链路：环里缓存着几秒采样，原地跳既复杂又不精确。
+        // 独占下的 seek 只能重建链路。环里缓存着几秒采样，原地跳既复杂又不精确。
         // 跳转与建链要在旧链路还在播的时候做完，换手的空档才短得听不出。
         let decoder = TrackDecoder::open(&path)?;
         self.rebuild(decoder, &path, target, was_playing)
@@ -513,7 +513,7 @@ impl AudioBackend for ExclusiveBackend {
         if per_second == 0 {
             return current.base;
         }
-        // 只算已经交给设备的那部分：环里还没写进去的不算播过
+        // 只算已经交给设备的那部分，环里还没写进去的不算播过。
         let seconds = self.shared.written.load(Ordering::Acquire) as f64 / per_second as f64;
         let position = current.base + Duration::from_secs_f64(seconds);
 
@@ -551,30 +551,30 @@ impl AudioBackend for ExclusiveBackend {
 
     fn set_device(&mut self, device: Option<&str>) -> std::result::Result<(), AudioError> {
         let wanted = device.map(str::to_owned);
-        // 光比标识不够：跟随默认时默认设备被换掉，标识没变，但流必须重建。
+        // 光比标识不够。跟随默认时默认设备被换掉，标识没变，但流必须重建。
         if wanted == self.device_id && self.stream_is_on(wanted.as_deref()) {
             return Ok(());
         }
 
         let Some(current) = self.current.as_ref() else {
-            // 还没装载任何东西：下次 load 自然按新设备协商
+            // 还没装载任何东西，下次 load 自然按新设备协商。
             self.device_id = wanted;
             return Ok(());
         };
         let previous = self.device_id.clone();
         let (path, playing) = (current.path.clone(), current.playing);
-        // 从「此刻播到的位置」续上，不能用 `current.base`：base 只在 load / seek 时更新，
+        // 从「此刻播到的位置」续上，不能用 `current.base`。base 只在 load 与 seek 时更新，
         // 拿它重建会把上次手动跳转之后播过的那一段全丢掉，进度直接退回去。
         let start = self.position();
 
-        // 解码器先打开：文件打不开就不该动设备
+        // 解码器先打开，文件打不开就不该动设备。
         let decoder = TrackDecoder::open(&path)?;
         let preferred = Some((decoder.sample_rate(), decoder.channels()));
         self.preferred = preferred;
 
         match self.configure(wanted.clone(), preferred) {
             Ok(()) => {
-                // 新流真的开起来了才提交选择；协商失败时 self.device_id 还留在旧值上
+                // 新流真的开起来了才提交选择；协商失败时 self.device_id 还留在旧值上。
                 self.device_id = wanted;
                 self.loss = None;
                 self.rebuild(decoder, &path, start, playing)
@@ -583,10 +583,10 @@ impl AudioBackend for ExclusiveBackend {
             }
             Err(switch_err) => {
                 if previous == wanted {
-                    // 目标就是旧设备：没有可回滚的别处，交给失联退避或下一次显式操作
+                    // 目标就是旧设备，没有可回滚的别处，交给失联退避或下一次显式操作。
                     return Err(AudioError::from(switch_err));
                 }
-                // 新设备不可用：把旧设备的流重建回来，别让一次失败的切换把声音弄没
+                // 新设备不可用，把旧设备的流重建回来，别让一次失败的切换把声音弄没。
                 let rollback = match self.configure(previous, preferred) {
                     Ok(()) => self
                         .rebuild(decoder, &path, start, playing)
@@ -739,7 +739,7 @@ mod tests {
         wait_position(&backend, after + Duration::from_millis(40));
     }
 
-    /// 流中途失效：先上报可恢复错误，再按退避重建；设备回来后自动续播。
+    /// 流中途失效。先上报可恢复错误，再按退避重建；设备回来后自动续播。
     #[test]
     fn a_lost_device_is_retried_with_backoff_and_playback_resumes() {
         let dir = tempfile::tempdir().expect("临时目录");
@@ -754,7 +754,7 @@ mod tests {
             let opened = Arc::clone(&opened);
             Box::new(move |_, _| {
                 attempts.lock().expect("attempts lock").push(Instant::now());
-                // 第 0 次是初始开流；第 1 次恢复撞上「设备仍被占用」；再下一次成功
+                // 第 0 次为初始开流；第 1 次恢复时遇到「设备仍被占用」；再下一次成功。
                 if opened.fetch_add(1, Ordering::SeqCst) == 1 {
                     return Err(ExclusiveError::Unsupported("设备被占用".to_owned()));
                 }
@@ -771,7 +771,7 @@ mod tests {
         backend.load(&path, true).expect("装载应当成功");
         wait_position(&backend, Duration::from_millis(30));
 
-        // 拔卡 / 驱动复位：当前流下一次写设备就失败
+        // 模拟拔卡或驱动复位，当前流下一次写设备就会失败。
         control(&controls, 0)
             .fail_write
             .store(true, Ordering::Relaxed);

@@ -8,7 +8,7 @@ use crate::persist;
 
 const FILE: &str = "resume.json";
 
-/// 存路径而不是 `TrackId`：`TrackId` 由路径算出，重新导入会变，路径才是跨启动稳定的键。
+/// 存路径而不是 `TrackId`。`TrackId` 由路径算出，重新导入会变，路径才是跨启动稳定的键。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Resume {
     pub path: PathBuf,

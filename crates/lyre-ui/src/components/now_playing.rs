@@ -1,5 +1,5 @@
-//! 右侧「正在播放」面板：封面 + 标题 + 关于艺术家 + 制作人员 + 下一首。
-//! 封面按需加载：曲目变化时才读标签、解码，结果落到 `CoverCache`。
+//! 右侧「正在播放」面板，封面 + 标题 + 关于艺术家 + 制作人员 + 下一首。
+//! 封面按需加载。曲目变化时才读标签、解码，结果落到 `CoverCache`。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -41,7 +41,7 @@ impl NowPlaying {
         shell: Entity<ShellEntity>,
         cx: &mut Context<Self>,
     ) -> Self {
-        // 用 `subscribe` 而不是 `observe`：`PlaybackEntity` 播放期间每 100ms 因进度 notify 一次，
+        // 用 `subscribe` 而不是 `observe`。`PlaybackEntity` 播放期间每 100ms 因进度 notify 一次，
         // 而 gpui 的 `notify` 是全树失效；逐帧进度归 `SeekBar` / `VolumeControl`。
         let track_sub = cx.subscribe(&playback, |this, _, event: &PlaybackEvent, cx| {
             match event {
@@ -49,9 +49,9 @@ impl NowPlaying {
                     this.refresh_covers(cx);
                     cx.notify();
                 }
-                // 状态变化也要跟：加载失败走的是 `Error → StateChanged`，只听换曲会让错误提示拖到切下一首才出现。
+                // 状态变化也要跟。加载失败走的是 `Error → StateChanged`，只听换曲会让错误提示拖到切下一首才出现。
                 PlaybackEvent::StateChanged => cx.notify(),
-                // 设备列表只有底栏的设备菜单关心
+                // 设备列表只有底栏的设备菜单关心。
                 PlaybackEvent::Finished
                 | PlaybackEvent::VolumeChanged
                 | PlaybackEvent::DevicesChanged
@@ -67,7 +67,7 @@ impl NowPlaying {
 
         // 关注状态、艺术家统计、下一首都来自曲库；曲库变了要重画。
         let library_sub = cx.observe(&library, |_, _, cx| cx.notify());
-        // 浮层模式下右上角多一枚关闭键；面板实体不一定随根视图重绘，自己订阅外壳。
+        // 浮层模式下右上角新增关闭键；面板实体不一定随根视图重绘，需自行订阅外壳。
         let shell_sub = cx.observe(&shell, |_, _, cx| cx.notify());
 
         let mut this = Self {
@@ -110,11 +110,11 @@ impl NowPlaying {
         }
     }
 
-    /// 从曲库派生的三样：当前曲的艺术家们、每位艺术家的分组统计、队列里的下一首。
-    /// 全部读缓存 / 只取两首，适合每帧调用。
+    /// 从曲库派生的三样东西，即当前曲的艺术家、每位艺术家的分组统计与队列里的下一首。
+    /// 全部读缓存与只取两首，适合每帧调用。
     fn derived(&self, track: Option<&Track>, cx: &mut App) -> Derived {
         App::update_entity(cx, &self.library, |library, _| {
-            // 标签里的「甲/乙」是两个人，不是一个人名：艺术家分组里也没有这一整串。
+            // 标签里的「甲/乙」是两个人，不是一个人名，艺术家分组里也没有这一整串。
             // 按拆开的单人查统计与关注，一栏里就该列几行；查整串会让统计和关注一起消失。
             let groups = library.artists();
             let artists = shown_artists(track.and_then(|t| t.artist.as_deref()))
@@ -137,7 +137,7 @@ impl NowPlaying {
     }
 }
 
-/// 「关于艺术家」卡里的一行。一首歌有几位艺术家就有几行 —— 每行各自关注、各自计数。
+/// 「关于艺术家」卡里的一行。一首歌有几位艺术家就有几行。每行各自关注、各自计数。
 struct ArtistLine {
     /// 拆分后的单个名字，见 `lyre_core::artist_keys`。
     name: String,
@@ -255,7 +255,7 @@ impl Render for NowPlaying {
             hero = hero.child(crate::common::section::field(format_duration(duration)));
         }
 
-        // 换曲：只让封面 + 标题这一块重新入场，下面的关于 / 制作信息直接换。
+        // 换曲。只让封面 + 标题这一块重新入场，下面的关于与制作信息直接换。
         let track_key = track.as_ref().map_or(0, |track| track.id.0);
 
         if let Some(error) = error {
@@ -328,7 +328,7 @@ impl Render for NowPlaying {
             .flex_none()
             .relative()
             .w(px(theme::RIGHT_PANEL_W))
-            // 只写 `w()` 压不住内容：flex 默认 `min-width: auto`，长歌名会把面板顶宽。`min_w` + `max_w` 钉死。
+            // 只写 `w()` 压不住内容。flex 默认 `min-width: auto`，长歌名会把面板顶宽。`min_w` + `max_w` 钉死。
             .min_w(px(theme::RIGHT_PANEL_W))
             .max_w(px(theme::RIGHT_PANEL_W))
             .overflow_hidden()
@@ -345,7 +345,7 @@ impl Render for NowPlaying {
                     .p(px(theme::GAP_XL))
                     .child(body),
             )
-            // 浮层盖在主区上时没有自己的标题栏，关闭键浮在封面外的右上角。
+            // 浮层覆盖主区时没有独立标题栏，关闭键浮于封面之外的右上角。
             .when(overlay, |panel| {
                 panel.child(
                     div()
@@ -370,8 +370,8 @@ fn card() -> Div {
         .p(px(theme::GAP_MD))
 }
 
-/// 这一栏要列的艺术家：标签按「/」「,」拆成单个人，并剔掉「未知艺术家」——
-/// 那一位没有主页也没有统计，列出来只是一行噪音，整张卡这时干脆不画。
+/// 这一栏要列的艺术家。标签按「/」「,」拆成单个人，并剔掉「未知艺术家」。
+/// 该位艺术家既无主页也无统计，列出仅为一行噪声，此时整张卡片不予绘制。
 /// 拆分口径必须与 [`lyre_core::artist_keys`] 一致，否则点进去的组与这里的名字对不上。
 fn shown_artists(artist: Option<&str>) -> Vec<&str> {
     artist_keys_str(artist)
@@ -380,8 +380,8 @@ fn shown_artists(artist: Option<&str>) -> Vec<&str> {
         .collect()
 }
 
-/// 「关于艺术家」卡：纸色底 + 1px 细线，不引入第二套色相。
-/// 一首歌挂了几位艺术家就画几行：标签里的「甲/乙」是两个人，不是一个人名，
+/// 「关于艺术家」卡。纸色底 + 1px 细线，不引入第二套色相。
+/// 一首歌挂了几位艺术家就画几行。标签里的「甲/乙」是两个人，不是一个人名，
 /// 关注与曲目数都得各算各的，所以下面没有「合起来」的那一条。
 fn about_artist(artists: Vec<ArtistLine>, library: &Entity<LibraryEntity>) -> AnyElement {
     let mut card = div()
@@ -396,7 +396,7 @@ fn about_artist(artists: Vec<ArtistLine>, library: &Entity<LibraryEntity>) -> An
         .child(crate::common::section::eyebrow("Artist"));
 
     for (index, line) in artists.into_iter().enumerate() {
-        // 第二位起先压一条细线：不留缝的话几位艺术家的名字会挤成一段，看不出是两个人。
+        // 第二位起先压一条细线。不留缝隙时多位艺术家的名字会连成一段，无法辨为两人。
         if index > 0 {
             card = card.child(div().w_full().h(px(1.)).bg(theme::border()));
         }
@@ -406,7 +406,7 @@ fn about_artist(artists: Vec<ArtistLine>, library: &Entity<LibraryEntity>) -> An
     card.into_any_element()
 }
 
-/// 一位艺术家：名字 + 关注按钮，下面是这位名下的曲目数与专辑数。
+/// 一位艺术家。名字 + 关注按钮，下面是这位名下的曲目数与专辑数。
 fn artist_row(index: usize, line: ArtistLine, library: Entity<LibraryEntity>) -> AnyElement {
     let ArtistLine {
         name,
@@ -414,7 +414,7 @@ fn artist_row(index: usize, line: ArtistLine, library: Entity<LibraryEntity>) ->
         following,
     } = line;
 
-    // id 必须带序号：同一个卡里出现两枚同 id 的按钮，悬停与点击状态会串。
+    // id 必须带序号。同一个卡里出现两枚同 id 的按钮，悬停与点击状态会串。
     let follow = crate::common::button::toggle_chip(
         SharedString::from(format!("np-follow-{index}")),
         if following {
@@ -479,8 +479,8 @@ fn artist_row(index: usize, line: ArtistLine, library: Entity<LibraryEntity>) ->
     row.into_any_element()
 }
 
-/// 「制作人员」：曲目标签里只有艺术家 / 专辑 / 格式，没有词曲、制作人，只列可得的字段。
-/// 艺术家逐行列（第二行起不重复标签）：一行只写一个人，不把「甲/乙」当成一个人名。
+/// 「制作人员」。曲目标签里只有艺术家、专辑与格式，没有词曲、制作人，只列可得的字段。
+/// 艺术家逐行列（第二行起不重复标签）。一行只写一个人，不把「甲/乙」当成一个人名。
 fn credits(track: &Track) -> AnyElement {
     let format = track.format().unwrap_or_else(|| "未知".to_owned());
     let artists = shown_artists(track.artist.as_deref());
@@ -639,11 +639,11 @@ fn placeholder(initial: Option<char>) -> impl IntoElement {
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：`crate::platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
+    // 不写 `use super::*`，`crate::platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
     use super::shown_artists;
     use lyre_core::UNKNOWN_ARTIST;
 
-    /// 一栏里列的是人，不是标签原文：`23.exe/初音ミク` 必须拆成两位。
+    /// 一栏里列的是人，不是标签原文，`23.exe/初音ミク` 必须拆成两位。
     #[test]
     fn a_collaboration_credit_lists_each_artist() {
         assert_eq!(

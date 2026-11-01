@@ -28,7 +28,7 @@ const INIT_RETRIES: usize = 3;
 /// 单次协商的总时限。候选格式有几十种、每种重试三次，不设上限会让用户干等好几秒。
 const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// 独占模式下设备要求的周期，按 128 字节对齐 —— Intel HDA 一类设备不对齐会直接拒绝初始化。
+/// 独占模式下设备要求的周期，按 128 字节对齐。Intel HDA 一类设备不对齐会直接拒绝初始化。
 const PERIOD_ALIGN_BYTES: u32 = 128;
 
 /// 协商出来的独占格式。
@@ -42,7 +42,7 @@ pub struct ExclusiveFormat {
 }
 
 impl ExclusiveFormat {
-    /// 口径与声源完全一致：中间不做重采样也不做声道转换，样本原样进硬件。
+    /// 口径与声源完全一致。中间不做重采样也不做声道转换，样本原样进硬件。
     pub const fn is_bit_perfect_for(self, sample_rate: u32, channels: u16) -> bool {
         self.sample_rate == sample_rate && self.channels == channels
     }
@@ -77,7 +77,7 @@ pub(crate) trait RenderStream {
     fn device_endpoint(&self) -> &str;
     fn start(&self) -> Result<()>;
     fn stop(&self) -> Result<()>;
-    /// `Ok(true)` 是设备事件已触发，`Ok(false)` 是等到超时 —— 后者是正常轮询，不是故障。
+    /// `Ok(true)` 是设备事件已触发，`Ok(false)` 是等到超时；后者是正常轮询，不是故障。
     fn wait_event(&self, timeout_ms: u32) -> Result<bool>;
     fn available_frames(&self) -> Result<usize>;
     fn write(&self, frames: usize, payload: &[u8]) -> Result<()>;
@@ -98,7 +98,7 @@ impl ExclusiveStream {
     /// 打开独占流。`device_id` 是 `lyre_audio` 那套 `host:endpoint` 形式的稳定标识，
     /// `None` 表示系统默认设备；`preferred` 是声源的口径。
     pub fn open(device_id: Option<&str>, preferred: Option<(u32, u16)>) -> Result<Self> {
-        // COM 必须先在这个线程上初始化成 MTA，否则后面每个调用都会失败
+        // COM 必须先在这个线程上初始化成 MTA，否则后面每个调用都会失败。
         if !initialize_mta().is_ok() {
             log::warn!("独占输出：COM 多线程单元初始化未成功，继续尝试");
         }
@@ -166,7 +166,7 @@ impl ExclusiveStream {
                     }
                     Err(error) => {
                         last_error = error.to_string();
-                        // 这台设备上的这次尝试失败了，重新取一个客户端再试下一个格式
+                        // 这台设备上的这次尝试失败了，重新取一个客户端再试下一个格式。
                         client = device.get_iaudioclient().map_err(|err| {
                             ExclusiveError::Initialize(format!("重取音频客户端失败：{err:?}"))
                         })?;
@@ -229,7 +229,7 @@ impl RenderStream for ExclusiveStream {
 }
 
 /// 按 endpoint 标识找设备，找不到再退回友好名，都没有就用系统默认设备。
-/// 一并返回实际那台设备的 endpoint —— 退回默认之后两者就不是同一个了。
+/// 一并返回实际那台设备的 endpoint。退回默认之后两者就不是同一个了。
 fn find_device(
     enumerator: &DeviceEnumerator,
     device_id: Option<&str>,
@@ -288,12 +288,12 @@ fn find_device(
     Ok((device, name, endpoint))
 }
 
-/// `host:endpoint` 里的 endpoint 部分。cpal 的稳定标识带 host 前缀，WASAPI 自己不带。
+/// `host:endpoint` 中的 endpoint 部分。cpal 的稳定标识带 host 前缀，WASAPI 侧的标识不含该前缀。
 pub(crate) fn endpoint_of(id: &str) -> &str {
     id.split_once(':').map_or(id, |(_, endpoint)| endpoint)
 }
 
-/// 候选口径，按优先级：声源自己的 → 设备混音格式 → 常用档位（各带上原声道数与 2 声道）。
+/// 候选格式口径，按优先级，声源本身 → 设备混音格式 → 常用档位（各含原声道数与 2 声道）。
 fn candidates(preferred: Option<(u32, u16)>, mix_rate: u32, mix_channels: u16) -> Vec<(u32, u16)> {
     let mut out: Vec<(u32, u16)> = Vec::new();
     let mut push = |rate: u32, channels: u16| {
@@ -321,7 +321,7 @@ fn wave_format(
     channels: u16,
 ) -> WaveFormat {
     let channels = channels as usize;
-    // 两声道以内用 WAVEFORMATEX 就够；多声道必须带通道掩码，否则设备多半不认
+    // 两声道以内用 WAVEFORMATEX 就够；多声道必须带通道掩码，否则设备多半不认。
     let mask = (channels > 2).then(|| make_simple_channelmask(channels));
     WaveFormat::new(
         bits,
@@ -337,7 +337,7 @@ fn wave_format(
 fn interpret(accepted: &WaveFormat) -> Option<ExclusiveFormat> {
     let bits = accepted.get_bitspersample();
     let valid = accepted.get_validbitspersample();
-    // 24-in-32 这类「容器比有效位宽」的排布我们不写：写满 32 位会让音量差 256 倍
+    // 24-in-32 这类「容器比有效位宽」的排布我们不写，写满 32 位会让音量差 256 倍。
     if valid != 0 && valid != bits {
         return None;
     }
@@ -416,7 +416,7 @@ mod tests {
             endpoint_of("wasapi:{0.0.0.00000000}.{abc}"),
             "{0.0.0.00000000}.{abc}"
         );
-        // 没有 host 前缀时原样返回，其余平台的标识不该被截断
+        // 没有 host 前缀时原样返回，其余平台的标识不该被截断。
         assert_eq!(endpoint_of("Speakers"), "Speakers");
     }
 
@@ -440,7 +440,7 @@ mod tests {
         let list = candidates(None, 48_000, 2);
         assert_eq!(list[0], (48_000, 2));
         assert!(!list.is_empty());
-        // 去重：同一个口径不该重复出现
+        // 去重后，同一口径不该重复出现。
         let mut seen = list.clone();
         seen.dedup();
         assert_eq!(seen.len(), list.len());

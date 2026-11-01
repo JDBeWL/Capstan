@@ -1,5 +1,5 @@
-//! 首页「浏览」那排跳转卡：切角看板 + 顶部墨色页签 + 真实计数。
-//! 不压历史栈：历史栈只记「作用域收窄」，否则返回会退到一半变成切区段。
+//! 首页「浏览」那排跳转卡，切角看板 + 顶部墨色页签 + 真实计数。
+//! 不压历史栈。历史栈只记「作用域收窄」，否则返回会退到一半变成切区段。
 
 use crate::entities::LibraryEntity;
 use crate::icon::{Glyph, icon_inherit};
@@ -9,7 +9,7 @@ use crate::theme;
 
 const ENTRY_H: f32 = 96.0;
 
-/// 一张跳转看板：点击切到对应区段。
+/// 一张跳转看板，点击切到对应区段。
 pub(super) fn entry_card(
     id: &'static str,
     glyph: Glyph,
@@ -47,11 +47,11 @@ pub(super) fn entry_card(
         .cursor_pointer()
         .hover(|style| style.bg(theme::elevated()))
         .on_click(move |_, _, cx| {
-            // `go_to` 自己会退作用域并记一条历史，顶栏 ← 因此能退回首页。
+            // `go_to` 本身会退出作用域并记录一条历史，顶栏 ← 因此可退回首页。
             crate::shell::go_to(section, &shell, &library, cx);
         })
         .child(crate::common::ornament::cut_br(theme::CUT, theme::bg()))
-        // 顶边一小段墨色页签，悬停时铺满整条边
+        // 顶边一小段墨色页签，悬停时铺满整条边。
         .child(
             div()
                 .absolute()

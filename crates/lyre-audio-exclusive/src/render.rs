@@ -1,6 +1,6 @@
-//! 独占输出的渲染线程：命令处理、事件驱动的样本搬运、音量与淡入淡出。
+//! 独占输出的渲染线程，负责命令处理、事件驱动的样本搬运，以及音量与淡入淡出。
 //! COM 对象只在创建它的那条线程上使用，控制线程只经命令通道与它打交道。
-//! 淡入淡出按挂钟时间推进 —— 设备停转时按帧计数走不完淡出，Stop/Pause 的状态会卡住。
+//! 淡入淡出按挂钟时间推进。设备停转时按帧计数走不完淡出，Stop/Pause 的状态会卡住。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -22,19 +22,19 @@ const IDLE_SLEEP: Duration = Duration::from_millis(10);
 const MAX_CHUNK_SAMPLES: usize = 16_384;
 /// 淡入淡出时长。够抹平接缝又听不出爬升。
 pub const FADE: Duration = Duration::from_millis(30);
-/// 欠载日志的最小间隔，避免异常时刷屏。
+/// 欠载日志的最小间隔，避免异常时日志洪泛。
 const UNDERRUN_REPORT: Duration = Duration::from_secs(1);
-/// 环排空之后再写这么久静音才收尾。备份缓冲只有一个设备周期（几毫秒），
+/// 环排空之后再写这么久静音才收尾。备份缓冲仅一个设备周期，即几毫秒，
 /// 取一个周期再多一点的余量。
 const DRAIN_LINGER: Duration = Duration::from_millis(20);
 /// 一首放完之后还留着独占流多久。下一首通常几十毫秒后就到，接在同一条流上即可；
-/// 立刻停流的话，下次起播要重新抢占设备、重新锁时钟 —— 独占下那一下听得见。
+/// 立刻停流的话，下次起播要重新抢占设备、重新锁时钟。独占下那一下听得见。
 const IDLE_GRACE: Duration = Duration::from_secs(1);
 
-/// 送给渲染线程的命令。只有协商需要回执，其余是单向的 —— 通道本身保序。
+/// 送给渲染线程的命令。只有协商需要回执，其余是单向的。通道本身保序。
 #[derive(Clone, Debug)]
 pub enum RenderCommand {
-    /// 按指定设备与声源口径协商（重新）打开独占流。
+    /// 按指定设备与声源口径协商，然后打开或重建独占流。
     Configure {
         device: Option<String>,
         preferred: Option<(u32, u16)>,
@@ -43,7 +43,7 @@ pub enum RenderCommand {
     Pause,
     Stop,
     SetVolume(f32),
-    /// 环里残留的样本作废，播放位置归零（切歌、seek）。
+    /// 环里残留的样本作废，播放位置归零；切歌与 seek 均走这条。
     /// 读取端只在下次读的时候按世代丢掉旧的存量，新写进来的采样照常交付。
     Flush,
     Shutdown,
@@ -55,11 +55,11 @@ pub enum RenderResponse {
     Configured {
         format: ExclusiveFormat,
         device_name: String,
-        /// 流真正落在哪台设备上（可能因选定设备已拔出而退回默认设备）。
+        /// 流实际落在哪台设备上，可能因选定设备已拔出而退回默认设备。
         device_endpoint: String,
     },
     Failed(String),
-    /// 已经建立的流中途失效（拔卡、驱动复位、写入失败）。控制线程据此退避重建。
+    /// 已建立的流中途失效，如拔卡、驱动复位、写入失败。控制线程据此退避重建。
     DeviceLost {
         message: String,
     },
@@ -68,20 +68,20 @@ pub enum RenderResponse {
 /// 渲染线程与控制线程共享的几个标志。
 #[derive(Clone)]
 pub struct RenderShared {
-    /// 推送线程的世代号。每次换手（`rebuild`）加一，初值 1 表示「还没有任何一代」。
+    /// 推送线程的世代号。每次换手即 `rebuild` 时加一；初值 1 表示尚无任何一代。
     producer_epoch: Arc<AtomicU64>,
     /// 已经写完的那一代。它等于 [`Self::producer_epoch`] 才算「这一代写完了」。
-    /// 换手不作废旧标志：上一代晚到的「写完了」记的是旧号，作不了新一代的数。
+    /// 换手不作废旧标志。上一代晚到的「写完了」记的是旧号，作不了新一代的数。
     producer_done_epoch: Arc<AtomicU64>,
     /// 已写进设备的样本数，控制线程据此算播放位置。
     pub written: Arc<AtomicU64>,
     /// 整首自然放完。
     pub finished: Arc<AtomicBool>,
-    /// 累计欠载采样数：环里没货、只能拿静音顶上去的那部分。
-    /// 只在推送线程还没报完工时计 —— 曲尾按 `DRAIN_LINGER` 故意补的静音不算。
+    /// 累计欠载采样数，即环内无数据、只能以静音填充的那部分。
+    /// 仅在推送线程尚未报告完工时计入；曲尾按 `DRAIN_LINGER` 有意补齐的静音不计。
     pub starved: Arc<AtomicU64>,
-    /// 流起播过几次。同一台设备上切歌不该让它涨 —— 涨了就是流被停掉又起了，
-    /// 重新抢占设备与锁时钟在独占下听得见。
+    /// 流起播次数。同一台设备上切歌不应使其增长；一旦增长即表示流被停止后重新启动，
+    /// 而重新抢占设备与锁定时钟在独占模式下可以听出。
     pub stream_starts: Arc<AtomicU64>,
 }
 
@@ -102,7 +102,7 @@ impl RenderShared {
         self.producer_epoch.fetch_add(1, Ordering::AcqRel) + 1
     }
 
-    /// 交给推送线程的完工标志；它写进去的是自己那一代的世代号。
+    /// 交给推送线程的完工标志；其中写入的是该线程所属世代的编号。
     pub fn done_flag(&self) -> Arc<AtomicU64> {
         Arc::clone(&self.producer_done_epoch)
     }
@@ -121,7 +121,7 @@ impl Default for RenderShared {
 }
 
 /// 渲染线程主体。返回时独占流已经关掉。
-/// 两个通道按值收：线程主体要长期持有它们。
+/// 两个通道按值收，线程主体要长期持有它们。
 #[allow(clippy::needless_pass_by_value)]
 pub fn run(
     commands: Receiver<RenderCommand>,
@@ -187,7 +187,7 @@ struct Renderer {
     playing: bool,
     /// 环已排空、正在等设备缓冲播完的时刻。
     drain_deadline: Option<Instant>,
-    /// 已上报放完、独占流还留着的截止时刻。到点还没有新曲子就把设备放掉。
+    /// 已上报放完、独占流仍在保留的截止时刻。到点仍无新曲目则释放设备。
     release_deadline: Option<Instant>,
     shared: RenderShared,
     samples: Vec<f32>,
@@ -203,8 +203,8 @@ impl Renderer {
             RenderCommand::Shutdown => {}
 
             RenderCommand::Configure { device, preferred } => {
-                // 独占是排他的：不先把手上的流放掉，新的那条永远开不起来 —— 设备已经被自己占住了。
-                // 顺序错了表现为「初始化超时」，而不是什么好懂的报错。
+                // 独占具有排他性，不先释放现有流，新的流永远无法开启，因设备已被本进程占用。
+                // 顺序错误表现为「初始化超时」，而非明确的错误信息。
                 self.stop_stream();
                 self.stream = None;
                 self.drain_deadline = None;
@@ -218,7 +218,7 @@ impl Renderer {
                         let device_endpoint = stream.device_endpoint().to_owned();
                         self.format = Some(format);
                         self.stream = Some(stream);
-                        // 新设备上重新起播时从头淡入，别带着上一台的增益
+                        // 新设备上重新起播时从头淡入，别带着上一台的增益。
                         self.fade = Fade::idle();
                         self.playing = false;
                         RenderResponse::Configured {
@@ -258,7 +258,7 @@ impl Renderer {
     }
 
     fn start(&mut self) {
-        // 新曲子来了：宽限作废，这一首接在还开着的那条流上（若上一首刚放完，流还没放掉）
+        // 新曲目到来，宽限作废，该曲接在仍开着的那条流上，此时上一首刚放完而流尚未释放。
         self.release_deadline = None;
         if self.playing {
             return;
@@ -274,11 +274,11 @@ impl Renderer {
         self.shared.stream_starts.fetch_add(1, Ordering::Relaxed);
         self.playing = true;
         self.drain_deadline = None;
-        // 从当前增益淡入到 1.0（暂停后恢复就从 0 爬起来）
+        // 从当前增益淡入到 1.0，暂停后恢复则由 0 起始。
         self.fade.to(1.0, FadeThen::Nothing);
     }
 
-    /// 放完之后的空转宽限到了：把独占流关掉，别再占着设备。
+    /// 播放结束后的空闲宽限期已满，关闭独占流，不再占用设备。
     fn release_if_idle(&mut self) {
         let Some(deadline) = self.release_deadline else {
             return;
@@ -313,7 +313,7 @@ impl Renderer {
         self.playing = false;
     }
 
-    /// 设备操作失败：停掉这条流并让控制线程知道。
+    /// 设备操作失败时停掉这条流，并让控制线程知道。
     /// `playing` 必须同步置假，否则外层循环会立刻再次 `pump`，在死设备上空转。
     fn fail_stream(&mut self, message: String) {
         log::warn!("独占输出中断：{message}");
@@ -334,7 +334,7 @@ impl Renderer {
             return;
         }
 
-        // 先区分「等到超时」和「设备报错」：超时是正常轮询，不能当成流失效
+        // 先区分「等到超时」和「设备报错」。超时是正常轮询，不能当成流失效。
         let waited = self
             .stream
             .as_ref()
@@ -368,9 +368,9 @@ impl Renderer {
         self.samples.resize(needed, 0.0);
         let filled = self.reader.read(&mut self.samples);
         if filled < needed {
-            // 环里暂时没货：剩下的保持静音（欠载），绝不能在这里阻塞实时线程
+            // 环内暂无数据。其余部分保持静音，即欠载状态；此处不得阻塞实时线程。
             let missing = needed - filled;
-            // 曲尾推送线程已经收工，那段静音是故意补的，不算欠载
+            // 曲尾推送线程已结束，该段静音为有意补齐，不计入欠载。
             if !self.shared.producer_done() {
                 self.shared
                     .starved
@@ -388,7 +388,7 @@ impl Renderer {
 
         let written = {
             let payload: &[u8] = if format.samples == PcmFormat::F32 {
-                // 零拷贝：f32 的内存布局就是设备要的字节布局
+                // 可直接零拷贝，f32 的内存布局正是设备要的字节布局。
                 lyre_audio_simd::f32_as_bytes(&self.samples)
             } else {
                 lyre_audio_simd::write(&self.samples, format.samples, &mut self.bytes);
@@ -406,8 +406,8 @@ impl Renderer {
             }
             None => return,
         }
-        // 只把有效音频算进播放位置：收工后写进去的是撑住设备的静音，
-        // 跟着它跑会让拿不到时长的曲目（Matroska 之类）放完后进度条继续爬。
+        // 仅将有效音频计入播放位置。结束后写入的是维持设备的静音，
+        // 随其计算会使无法取得时长的曲目，如 Matroska 等容器，播放完毕后进度条继续增长。
         let progress = if self.shared.producer_done() {
             filled as u64
         } else {
@@ -418,8 +418,8 @@ impl Renderer {
         self.check_drained();
     }
 
-    /// 推送已结束且环已排空：整首放完了，如实上报，但先别停流 ——
-    /// 宽限到点还没有新曲子，才交给 [`Self::release_if_idle`] 把设备放掉。
+    /// 推送已结束且环已排空。整首放完了，如实上报，但先别停流。
+    /// 宽限到点仍无新曲目时，才交给 [`Self::release_if_idle`] 释放设备。
     fn check_drained(&mut self) {
         if !self.shared.producer_done() {
             return;
@@ -429,7 +429,7 @@ impl Renderer {
             return;
         }
 
-        // 环空了不代表设备缓冲里那点内容已经播完，再写一小会儿静音等它走完
+        // 环空了不代表设备缓冲里那点内容已经播完，再写一小会儿静音等它走完。
         let deadline = *self
             .drain_deadline
             .get_or_insert_with(|| Instant::now() + DRAIN_LINGER);
@@ -496,7 +496,7 @@ impl Fade {
         self.duration = Duration::ZERO;
     }
 
-    /// 推进到当前时刻，返回这一步要执行的动作（只返回一次）。
+    /// 推进到当前时刻，返回这一步要执行的动作；该动作只返回一次。
     fn advance(&mut self) -> FadeThen {
         if self.factor != self.target {
             let elapsed = self.start.elapsed();
@@ -505,11 +505,11 @@ impl Fade {
                 self.factor = ease(self.from, self.target, progress);
                 return FadeThen::Nothing;
             }
-            // 走完了：落点严格等于目标，不做浮点外推
+            // 走完了，落点严格等于目标，不做浮点外推。
             self.factor = self.target;
         }
 
-        // 到位了。挂起的动作只执行一次 —— 纯淡入（then 为 Nothing）也走这里，返回 Nothing
+        // 已到位。挂起的动作只执行一次；纯淡入即 `then` 为 Nothing 时也走这里，返回 Nothing。
         let then = self.then;
         self.then = FadeThen::Nothing;
         then
@@ -704,7 +704,7 @@ mod tests {
             Ok(RenderResponse::DeviceLost { .. })
         ));
 
-        // 设备回来了：重新协商并起播，样本要重新往设备里写
+        // 设备回来了，重新协商并起播，样本要重新往设备里写。
         renderer.handle(RenderCommand::Configure {
             device: None,
             preferred: None,
@@ -763,7 +763,7 @@ mod tests {
             Ok(RenderResponse::DeviceLost { .. })
         ));
 
-        // 设备已经死了，这一段时间里不该再有任何设备操作
+        // 设备已经死了，这一段时间里不该再有任何设备操作。
         std::thread::sleep(Duration::from_millis(120));
         assert_eq!(
             control(&controls, 0).wait_calls.load(Ordering::Relaxed),
@@ -782,7 +782,7 @@ mod tests {
         let mut fade = Fade::idle();
         fade.to(0.0, FadeThen::Stop);
 
-        // 时长清零即「立刻走完」，不必在用例里真的等 30ms
+        // 时长清零即「立刻走完」，不必在用例里真的等 30ms。
         fade.duration = Duration::ZERO;
         assert_eq!(fade.advance(), FadeThen::Stop);
         assert_eq!(fade.factor, 0.0, "落点必须严格等于目标");
@@ -819,7 +819,7 @@ mod tests {
         assert_eq!(ease(0.0, 1.0, 0.0), 0.0);
         assert_eq!(ease(0.0, 1.0, 0.5), 0.5);
         assert_eq!(ease(0.0, 1.0, 1.0), 1.0);
-        // 进度越界也要夹住
+        // 进度越界也要夹住。
         assert_eq!(ease(0.0, 1.0, 2.0), 1.0);
         assert_eq!(ease(0.0, 1.0, -1.0), 0.0);
         assert_eq!(ease(1.0, 0.0, 0.25), 0.75);
@@ -834,7 +834,7 @@ mod tests {
         assert_eq!(fade.factor, 1.0);
     }
 
-    /// 完工按世代判定：换手之后上一代的「写完了」不替新一代作数，作废时不必清标志。
+    /// 完工按世代判定。换手之后上一代的「写完了」不替新一代作数，作废时不必清标志。
     #[test]
     fn completion_belongs_to_a_generation_not_to_a_boolean() {
         let shared = RenderShared::new();
@@ -845,11 +845,11 @@ mod tests {
         shared.done_flag().store(first, Ordering::Release);
         assert!(shared.producer_done(), "它写完就该报完工");
 
-        // 换手：上一代的完工标志不能替新一代作数
+        // 换手时，上一代的完工标志不能替新一代作数。
         let second = shared.begin_producer();
         assert!(!shared.producer_done(), "新一代还没写完，不能算完工");
 
-        // 上一代晚到的「写完了」记的是旧号，也不该把新一代顶成完工
+        // 上一代晚到的「写完了」记的是旧号，也不该把新一代顶成完工。
         shared.done_flag().store(first, Ordering::Release);
         assert!(!shared.producer_done(), "上一代的完工标志不该替新一代作数");
 

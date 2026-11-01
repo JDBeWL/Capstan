@@ -1,4 +1,4 @@
-//! 专辑 / 艺术家的惰性分组缓存：分组是整库 O(n log n) 扫描，只在读时重算。
+//! 专辑与艺术家的惰性分组缓存。分组是整库 O(n log n) 扫描，只在读时重算。
 
 use std::rc::Rc;
 
@@ -7,7 +7,7 @@ use lyre_core::{AlbumGroup, ArtistGroup, group_by_album, group_by_artist};
 use super::LibraryEntity;
 
 impl LibraryEntity {
-    /// 专辑分组，带缓存：侧栏计数与网格每帧都要它，而 `group_by_album` 要遍历整库。
+    /// 专辑分组，带缓存。侧栏计数与网格每帧都要它，而 `group_by_album` 要遍历整库。
     /// 返回 `Rc` 是因为调用方要把它带进 `'static` 的点击闭包，借不出来。
     pub fn albums(&mut self) -> Rc<Vec<AlbumGroup>> {
         if let Some(cached) = &self.album_groups {
@@ -30,7 +30,7 @@ impl LibraryEntity {
     }
 
     pub fn album_count(&self) -> usize {
-        // 没算过就回 0，不为一个计数遍历整库
+        // 没算过就回 0，不为一个计数遍历整库。
         self.album_groups.as_ref().map_or(0, |g| g.len())
     }
 

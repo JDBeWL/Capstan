@@ -1,5 +1,5 @@
-//! 进度条 —— 全项目唯一按 10Hz 重绘的组件，单独成 `Entity` 自己 observe 播放实体，把重绘隔离在这条上。
-//! 拖动期间只显示本地预览值，松手才下发一次 `Seek`：seek 会重建解码链，拖动过程中连续下发会卡顿并爆音。
+//! 进度条。全项目唯一按 10Hz 重绘的组件，单独成 `Entity` 自行 observe 播放实体，将重绘隔离于此。
+//! 拖动期间只显示本地预览值，松手才下发一次 `Seek`。seek 会重建解码链，拖动过程中连续下发会卡顿并爆音。
 
 use std::time::Duration;
 
@@ -11,14 +11,14 @@ use crate::theme;
 
 const TRACK_H: f32 = 3.0;
 const TRACK_H_ACTIVE: f32 = 6.0;
-/// 命中区高度：不能高到盖住底栏里上下的其它元素。
+/// 命中区高度，不能高到盖住底栏里上下的其它元素。
 const HIT_H: f32 = 22.0;
 
 pub struct SeekBar {
     playback: Entity<PlaybackEntity>,
     /// 拖动中的预览比例；`Some` 表示用户正按着。
     drag: Option<f32>,
-    /// 只用来显示滑柄 / 加粗轨道，不参与进度预览。
+    /// 只用来显示滑柄与加粗轨道，不参与进度预览。
     hovered: bool,
     /// 轨道在窗口中的绝对几何，由 `canvas` 的 prepaint 捕获。
     track_bounds: Option<Bounds<Pixels>>,
@@ -49,7 +49,7 @@ impl SeekBar {
     }
 
     /// 结束拖动并把预览位置真正下发。条内松手和条外松手都走这里，两条路径必须等价。
-    /// `drag` 为 `None` 时什么都不做：`on_mouse_up_out` 会被窗口里任何一次无关点击触发。
+    /// `drag` 为 `None` 时什么都不做，`on_mouse_up_out` 会被窗口里任何一次无关点击触发。
     fn commit_drag(&mut self, cx: &mut Context<Self>) {
         if let Some(preview) = self.drag.take() {
             let duration = self.playback.read(cx).duration();
@@ -134,7 +134,7 @@ impl Render for SeekBar {
                             this.commit_drag(cx);
                         }),
                     )
-                    // 条外松手也要结束拖动：`on_mouse_up` 要求松手时元素仍被命中，
+                    // 条外松手也要结束拖动。`on_mouse_up` 要求松手时元素仍被命中，
                     // 甩出这条 22px 命中区再松手就收不到，`drag` 会一直留着、进度显示冻结在预览值。
                     .on_mouse_up_out(
                         MouseButton::Left,
@@ -164,7 +164,7 @@ impl Render for SeekBar {
                                     .bg(theme::control()),
                             )
                             .child(
-                                // 当前位置用一枚黄色小方块标出；静止时不显示，悬停 / 拖动才出现。
+                                // 当前位置用一枚黄色小方块标出；静止时不显示，悬停与拖动才出现。
                                 div()
                                     .absolute()
                                     .top(relative(0.5))
@@ -193,7 +193,7 @@ impl Render for SeekBar {
 }
 
 fn time_label(value: Duration, color: Rgba, align_right: bool) -> impl IntoElement {
-    // 固定宽度：时间字符串长度会变（`9:59` ↔ `1:00:00`），不固定会每秒把进度条左右推一下。
+    // 固定宽度。时间字符串长度会变（`9:59` ↔ `1:00:00`），不固定会每秒把进度条左右推一下。
     let label = div()
         .flex_none()
         .w(px(52.))

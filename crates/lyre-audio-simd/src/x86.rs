@@ -1,6 +1,6 @@
 //! `x86` / `x86_64` 的 PCM 内核，整个 crate 只有这里出现 `unsafe`。
-//! 与标量基准的舍入差别是刻意的：`cvtps` 就近取偶，标量 `.round()` 就近取远，最多差一个最低位。
-//! NaN 必须显式置零 —— 标量的 `as` 给出 0，而 SIMD `min`/`max` 折向另一侧操作数变成满刻度值；饱和值两条路径一致。
+//! 与标量基准的舍入差别是刻意的。`cvtps` 就近取偶，标量 `.round()` 就近取远，最多差一个最低位。
+//! NaN 必须显式置零。标量的 `as` 给出 0，而 SIMD `min`/`max` 折向另一侧操作数变成满刻度值；饱和值两条路径一致。
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::*;
@@ -9,7 +9,7 @@ use std::arch::x86_64::*;
 
 use std::sync::LazyLock;
 
-/// 向量宽度（样本数）：AVX2 八路，SSE2 四路。
+/// 向量宽度（样本数）。AVX2 八路，SSE2 四路。
 const AVX2_LANES: usize = 8;
 const SSE2_LANES: usize = 4;
 
@@ -38,7 +38,7 @@ pub(super) fn sse2_available() -> bool {
 
 /// 32 位整数，AVX2 八路。
 ///
-/// 约定：`samples.len()` 是 [`AVX2_LANES`] 的整数倍，字节追加写到 `out` 末尾。
+/// 约定。`samples.len()` 是 [`AVX2_LANES`] 的整数倍，字节追加写到 `out` 末尾。
 ///
 /// # Safety
 /// 调用方必须先用 [`avx2_available`] 确认 CPU 支持 AVX2。
@@ -62,11 +62,11 @@ pub(super) unsafe fn i32(samples: &[f32], out: &mut Vec<u8>) {
         let mut index = 0;
         while index < samples.len() {
             let raw = _mm256_loadu_ps(samples.as_ptr().add(index));
-            // min/max 遇 NaN 会折成满刻度，先置零
+            // min/max 遇 NaN 会折成满刻度，先置零。
             let raw = _mm256_andnot_ps(_mm256_cmp_ps::<{ _CMP_UNORD_Q }>(raw, raw), raw);
             let clamped = _mm256_min_ps(_mm256_max_ps(raw, negative), positive);
             let scaled = _mm256_mul_ps(clamped, scale);
-            // +1.0 正好算到 2^31，越界时 cvtps 给的是 INT_MIN，必须补成 INT_MAX
+            // +1.0 正好算到 2^31，越界时 cvtps 给的是 INT_MIN，必须补成 INT_MAX。
             let overflow = _mm256_cmp_ps::<{ _CMP_GE_OQ }>(scaled, scale);
             let converted = _mm256_cvtps_epi32(scaled);
             let fixed = _mm256_blendv_epi8(converted, ceiling, _mm256_castps_si256(overflow));
@@ -99,7 +99,7 @@ pub(super) unsafe fn i16(samples: &[f32], out: &mut Vec<u8>) {
         let mut index = 0;
         while index < samples.len() {
             let raw = _mm256_loadu_ps(samples.as_ptr().add(index));
-            // min/max 遇 NaN 会折成满刻度，先置零
+            // min/max 遇 NaN 会折成满刻度，先置零。
             let raw = _mm256_andnot_ps(_mm256_cmp_ps::<{ _CMP_UNORD_Q }>(raw, raw), raw);
             let clamped = _mm256_min_ps(_mm256_max_ps(raw, negative), positive);
             let converted = _mm256_cvtps_epi32(_mm256_mul_ps(clamped, scale));
@@ -140,12 +140,12 @@ pub(super) unsafe fn i32_sse2(samples: &[f32], out: &mut Vec<u8>) {
         let mut index = 0;
         while index < samples.len() {
             let raw = _mm_loadu_ps(samples.as_ptr().add(index));
-            // min/max 遇 NaN 会折成满刻度，先置零
+            // min/max 遇 NaN 会折成满刻度，先置零。
             let raw = _mm_andnot_ps(_mm_cmpunord_ps(raw, raw), raw);
             let clamped = _mm_min_ps(_mm_max_ps(raw, negative), positive);
             let scaled = _mm_mul_ps(clamped, scale);
             let converted = _mm_cvtps_epi32(scaled);
-            // SSE2 没有 blendv，用掩码位运算做选择
+            // SSE2 没有 blendv，用掩码位运算做选择。
             let overflow = _mm_castps_si128(_mm_cmpge_ps(scaled, scale));
             let fixed = _mm_or_si128(
                 _mm_and_si128(overflow, ceiling),
@@ -180,12 +180,12 @@ pub(super) unsafe fn i16_sse2(samples: &[f32], out: &mut Vec<u8>) {
         let mut index = 0;
         while index < samples.len() {
             let raw = _mm_loadu_ps(samples.as_ptr().add(index));
-            // min/max 遇 NaN 会折成满刻度，先置零
+            // min/max 遇 NaN 会折成满刻度，先置零。
             let raw = _mm_andnot_ps(_mm_cmpunord_ps(raw, raw), raw);
             let clamped = _mm_min_ps(_mm_max_ps(raw, negative), positive);
             let converted = _mm_cvtps_epi32(_mm_mul_ps(clamped, scale));
 
-            // packs 自带饱和：8 个 i16 里前 4 个就是结果，低 64 位直接存
+            // packs 自带饱和。8 个 i16 里前 4 个就是结果，低 64 位直接存。
             let packed = _mm_packs_epi32(converted, converted);
             _mm_storel_epi64(dst.add(index * 2).cast::<__m128i>(), packed);
             index += SSE2_LANES;

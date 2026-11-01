@@ -1,4 +1,4 @@
-//! 实体层：应用状态的宿主。
+//! 实体层，应用状态的宿主。
 
 pub mod filter;
 mod library;

@@ -1,4 +1,4 @@
-//! 三种空状态：曲库本来就是空的、作用域里没有曲目、搜索没有匹配。
+//! 三种空状态，即曲库本来就是空的、作用域里没有曲目与搜索没有匹配。
 
 use crate::common::button::{ButtonKind, text_button_animated};
 use crate::entities::LibraryEntity;
@@ -41,7 +41,7 @@ fn empty_hint(text: impl Into<SharedString>) -> impl IntoElement {
         .child(text.into())
 }
 
-/// 首屏加载中：窗口已经出来，曲库还在后台读盘与核对文件。
+/// 首屏加载中。窗口已经出来，曲库还在后台读盘与核对文件。
 pub(super) fn loading_library() -> impl IntoElement {
     empty_frame()
         .child(empty_title("正在读取曲库…"))
@@ -49,7 +49,7 @@ pub(super) fn loading_library() -> impl IntoElement {
         .child(crate::common::anim::unknown_progress())
 }
 
-/// 空状态：曲库本来就是空的。
+/// 空状态，曲库本来就是空的。
 pub(super) fn empty_library(
     library: Entity<LibraryEntity>,
     window: &mut Window,
@@ -82,7 +82,7 @@ pub(super) fn empty_scope(
     cx: &mut App,
 ) -> impl IntoElement {
     let name = scope.unwrap_or_else(|| "这里".to_owned());
-    // 「可能已被移除」只对专辑 / 艺术家成立：歌单的成员不会随曲库消失，新歌单从来没装过东西
+    // 「可能已被移除」只对专辑与艺术家成立。歌单的成员不会随曲库消失，新歌单从来没装过东西。
     let (title, hint) = if from_list {
         (
             format!("「{name}」还没有曲目"),

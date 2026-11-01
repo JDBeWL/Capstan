@@ -1,5 +1,5 @@
 //! 曲库列表，用虚拟列表渲染。
-//! 曲库页工具条固定、只滚行；专辑 / 艺人详情与搜索结果把页头并进同一个滚动区，
+//! 曲库页工具条固定、只滚行；专辑或艺人详情与搜索结果把页头并进同一个滚动区，
 //! 这样整页一起滚，滚动条从内容区顶部贯穿到底部。
 
 mod batch;
@@ -27,16 +27,16 @@ use super::SearchPage;
 use super::detail::{self, HeroInfo};
 
 const INDEX_W: f32 = crate::theme::ROW_INDEX_W;
-/// 拖拽手柄列宽：只在歌单作用域出现。
+/// 拖拽手柄列宽，只在歌单作用域出现。
 const HANDLE_W: f32 = 26.0;
-/// 勾选列宽：只在多选模式出现。
+/// 勾选列宽，只在多选模式出现。
 const CHECK_W: f32 = 32.0;
 const CHECK_BOX: f32 = 18.0;
 /// 标题行首的封面缩略图边长（舒适密度）。
 const THUMB: f32 = 40.0;
-/// 紧凑密度下的封面边长：40px 行高塞不下 40px 封面 + 文字。
+/// 紧凑密度下的封面边长，40px 行高塞不下 40px 封面 + 文字。
 const THUMB_COMPACT: f32 = 32.0;
-/// 双行阈值：行高 >= 它才画两行，缩略图也用大号。必须落在两档行高（40 / 52）之间。
+/// 双行阈值。行高 >= 它才画两行，缩略图也用大号。必须落在两档行高（40 / 52）之间。
 const TWO_LINE_MIN: f32 = 48.0;
 /// 专辑列宽，窄窗口下整列隐藏。
 const ALBUM_W: f32 = 220.0;
@@ -45,23 +45,23 @@ const DURATION_W: f32 = 60.0;
 /// 三颗 28px 按钮 + 两道 4px 间隙；列头共用同一个常量。
 const ACTIONS_W: f32 = 92.0;
 
-/// 列表向上层汇报的事件。用事件而不是回调字段：列表不持有 `RootView`。
+/// 列表向上层汇报的事件。用事件而不是回调字段，列表不持有 `RootView`。
 #[derive(Clone, Debug, PartialEq)]
 pub enum TrackListEvent {
     /// 移除了一首，附原曲目与原行号（撤销要用）
     Removed(Track, usize),
-    /// 清空了曲库，附原来的全部曲目
+    /// 清空了曲库，附原来的全部曲目。
     Cleared(Vec<Track>),
-    /// 即将进入专辑 / 艺术家详情。落点由 `RootView` 持有；不发这一句，页头不会出现返回按钮。
+    /// 即将进入专辑与艺术家详情。落点由 `RootView` 持有；不发这一句，页头不会出现返回按钮。
     RecordFromTrack,
 }
 
-/// 页头与列表合成一页时的页头标识。换了页头（换艺人 / 进出搜索）整表重置。
+/// 页头与列表合成一页时的页头标识。换了页头（换艺人或进出搜索）整表重置。
 #[derive(Clone, PartialEq, Eq)]
 enum PageHead {
-    /// 搜索结果页：摘要就是 [`SearchPage`] 这一块。
+    /// 搜索结果页，摘要就是 [`SearchPage`] 这一块。
     Search,
-    /// 专辑 / 艺人详情页：头图从作用域现算。
+    /// 专辑与艺人详情页，头图从作用域现算。
     Scope(Scope),
 }
 
@@ -73,7 +73,7 @@ pub struct TrackList {
     /// 搜索结果页的摘要，合成页时作为列表项 0 的一部分出现在页头里。
     search_page: Entity<SearchPage>,
     scroll: UniformListScrollHandle,
-    /// 页头并入滚动区时用的列表：项 0 是页头，之后才是曲目行。
+    /// 页头并入滚动区时用的列表。项 0 是页头，之后才是曲目行。
     page: ListState,
     /// 当前合成页的页头；`None` 表示纯列表模式（工具条固定）。
     page_head: Option<PageHead>,
@@ -82,12 +82,12 @@ pub struct TrackList {
     /// 页头高度依赖查询、多选开关与断点，变化时让页头重新量。
     page_query: String,
     page_breakpoint: Breakpoint,
-    /// 搜索页头还随可用宽度换列 / 换行，宽度变了也要重新量。
+    /// 搜索页头还随可用宽度换列与换行，宽度变了也要重新量。
     page_center_width: f32,
     page_selecting: bool,
-    /// 多选模式开关：开着才画勾选列，点标题也从「播放」变成「选中」。
+    /// 多选模式开关。开着才画勾选列，点标题也从「播放」变成「选中」。
     selecting: bool,
-    /// 已选中的曲目。包一层 `Rc`：交给列表闭包的拷贝在整库勾选时是 O(n)，每帧一次。
+    /// 已选中的曲目。包一层 `Rc`。交给列表闭包的拷贝在整库勾选时是 O(n)，每帧一次。
     selected: Rc<HashSet<TrackId>>,
     /// 最近一次点中的行号，Shift 连选从这里起算。
     anchor: Option<usize>,
@@ -123,15 +123,15 @@ impl TrackList {
     ) -> Self {
         let observe = cx.observe(&library, |_, _, cx| cx.notify());
         let observe_shell = cx.observe(&shell, |_, _, cx| cx.notify());
-        // 封面解码完成时要重绘，否则行首占位图一直挂着
+        // 封面解码完成时要重绘，否则行首占位图一直挂着。
         let observe_covers = cx.observe(&covers, |_, _, cx| cx.notify());
 
-        // 键盘光标移动时滚动跟随。用 `Nearest`：`Center` 每次按方向键都大幅跳动
+        // 键盘光标移动时滚动跟随。用 `Nearest`，`Center` 每次按方向键都大幅跳动。
         let scroll = UniformListScrollHandle::default();
         let follow = cx.subscribe(&library, move |this, _, event: &LibraryEvent, cx| {
             if let LibraryEvent::FocusMoved(index) = event {
                 if this.page_head.is_some() {
-                    // 合成页的项 0 是页头，行号要顺延一个
+                    // 合成页的项 0 是页头，行号要顺延一个。
                     this.page.scroll_to_reveal_item(index + 1);
                     cx.notify();
                 } else {
@@ -168,7 +168,7 @@ impl TrackList {
         }
     }
 
-    /// 删除先播 200ms 退出动画：这期间行仍留在数据里，下面的行先向上补位；
+    /// 删除先播 200ms 退出动画。这期间行仍留在数据里，下面的行先向上补位；
     /// 动画结束才真正从曲库移除，视觉上正好接住。
     #[allow(clippy::used_underscore_binding)]
     pub(super) fn begin_remove(&mut self, id: TrackId, index: usize, cx: &mut Context<Self>) {
@@ -195,7 +195,7 @@ impl TrackList {
                 }
                 this.removing = None;
                 let removed = library.update(cx, |library, cx| library.remove(id, cx));
-                // 这一轮是删除自己触发的投影换代，不再排队一次错开入场。
+                // 本轮为删除操作自身触发的投影换代，不再额外排队一次错开入场。
                 this.stagger_generation = library.read(cx).visible_generation();
                 this.stagger_started = None;
                 this._stagger_task = None;
@@ -229,7 +229,7 @@ impl TrackList {
 
 impl Render for TrackList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 查询 / 作用域 / 删歌都会让可见投影换代；只有这时才需要清掉看不见的勾选。
+        // 查询、作用域、删歌都会让可见投影换代；只有这时才需要清掉看不见的勾选。
         let generation = self.library.read(cx).visible_generation();
         if generation != self.selection_generation {
             self.selection_generation = generation;
@@ -244,7 +244,7 @@ impl Render for TrackList {
                 .then_some(self.stagger_seq)
         });
 
-        // 删除动画：一次渲染只采样一次，所有行共用同一个进度。
+        // 删除动画。一次渲染只采样一次，所有行共用同一个进度。
         let removal = self.removing;
         let remove_progress = removal.map_or(0.0, |row| {
             motion::transition(
@@ -277,13 +277,13 @@ impl Render for TrackList {
             (
                 library.visible_len(),
                 library.len(),
-                // 用 `now_playing` 而不是队列光标 `current_id`：后者导入完成时
-                // 就指向第一首，会把第 1 行误标成播放中
+                // 用 `now_playing` 而不是队列光标 `current_id`，后者导入完成时
+                // 就指向第一首，会把第 1 行误标成播放中。
                 library.now_playing(),
-                // 光标的值一直在（`Enter` / `Delete` 要它），底色只在键盘真的动过之后才画
+                // 光标的值一直在（`Enter` / `Delete` 要它），底色只在键盘真的动过之后才画。
                 library.focus().filter(|_| library.shows_cursor()),
-                // 用 `has_query()` 而不是 `is_filtering()`：后者在「只进了一张
-                // 专辑、没搜索」时也是 `true`
+                // 用 `has_query()` 而不是 `is_filtering()`，后者在「只进了一张
+                // 专辑、没搜索」时也是 `true`。
                 library.has_query(),
                 library.sort_key(),
                 library.scanning(),
@@ -306,7 +306,7 @@ impl Render for TrackList {
         };
         let reorderable = toolbar::can_reorder(collection.is_some(), filtering, count);
 
-        // `in_search` 判的是「停在搜索页」而不是「有搜索词」：曲库页用顶栏过滤时仍算曲库页
+        // `in_search` 判的是「停在搜索页」而不是「有搜索词」，曲库页用顶栏过滤时仍算曲库页。
         let in_search = self.shell.read(cx).nav_section() == crate::shell::NavSection::Search;
         let headed_elsewhere = scoped || in_search;
 
@@ -326,7 +326,7 @@ impl Render for TrackList {
             selectable: selecting,
         };
 
-        // 页头并入滚动区只发生在两种页面：搜索结果、专辑 / 艺人详情。
+        // 页头并入滚动区只发生在两种页面，即搜索结果与专辑或艺人详情。
         // 曲库页没有页头，工具条固定、只滚行。
         let current_scope = self.library.read(cx).scope().clone();
         let hero: Option<HeroInfo> = if self.shell.read(cx).nav_section() == NavSection::Tracks {
@@ -369,20 +369,20 @@ impl Render for TrackList {
             if self.page_head.as_ref() == Some(&head) {
                 if count != self.page_rows {
                     self.page.splice(1..self.page_rows + 1, count);
-                    // 新行给统一高度提示：否则滚到没渲染过的区域时滚动条长度会缩水
+                    // 新行给统一高度提示，否则滚到没渲染过的区域时滚动条长度会缩水。
                     self.page = self
                         .page
                         .clone()
                         .with_uniform_item_height(px(env.row_height));
                     self.page_rows = count;
                     if head == PageHead::Search {
-                        // 搜索结果增减会让分组的显隐变化，页头高度跟着变
+                        // 搜索结果增减会让分组的显隐变化，页头高度跟着变。
                         self.page.remeasure_items(0..1);
                     }
                 }
                 if query != self.page_query {
                     if head == PageHead::Search {
-                        // 结果摘要的高度随命中项变化，页头要重新量
+                        // 结果摘要的高度随命中项变化，页头要重新量。
                         self.page.remeasure_items(0..1);
                     }
                     self.page.scroll_to(ListOffset {
@@ -392,18 +392,18 @@ impl Render for TrackList {
                     self.page_query.clone_from(&query);
                 }
                 if breakpoint != self.page_breakpoint {
-                    // 断点变化后页头会重排；保留旧高度当提示，等它可见时重新量
+                    // 断点变化后页头会重排；保留旧高度当提示，等它可见时重新量。
                     self.page.remeasure_items(0..1);
                     self.page_breakpoint = breakpoint;
                 }
                 if head == PageHead::Search && (center_width - self.page_center_width).abs() >= 0.5
                 {
-                    // 面板开合 / 拖窗口会换分组列数或并排方式，页头高度必须重新量
+                    // 面板开合与拖动窗口会换分组列数或并排方式，页头高度必须重新量。
                     self.page.remeasure_items(0..1);
                     self.page_center_width = center_width;
                 }
                 if selecting != self.page_selecting {
-                    // 批量操作条出现 / 消失会改变页头高度
+                    // 批量操作条出现与消失会改变页头高度。
                     self.page.remeasure_items(0..1);
                     self.page_selecting = selecting;
                 }
@@ -549,7 +549,7 @@ impl Render for TrackList {
             let covers = self.covers.clone();
             let list = Self::weak(cx);
             uniform_list("track-list", count, move |range, window, cx| {
-                // 走可见投影而不是曲库本体，只拷可视区那几首
+                // 走可见投影而不是曲库本体，只拷可视区那几首。
                 let tracks = library.read(cx).visible_tracks(range.clone());
                 tracks
                     .into_iter()
@@ -671,7 +671,7 @@ fn row_motion(
     }
 }
 
-/// 本轮逐行入场的延迟：只照顾首屏前 `STAGGER_ROWS` 行，延迟按行号累加但不超过 6 行。
+/// 本轮逐行入场的延迟。只照顾首屏前 `STAGGER_ROWS` 行，延迟按行号累加但不超过 6 行。
 fn stagger_enter(seq: u64, index: usize) -> Option<(u64, u64)> {
     (index < anim::STAGGER_ROWS).then_some((seq, (index.min(6) as u64) * anim::STAGGER_ROW_MS))
 }
@@ -679,18 +679,18 @@ fn stagger_enter(seq: u64, index: usize) -> Option<(u64, u64)> {
 /// 行与列头共用的布局与作用域参数。
 #[derive(Clone, Copy)]
 struct RowEnv {
-    /// 行高，来自密度设置；`uniform_list` 用它算每一项的位置
+    /// 行高，来自密度设置；`uniform_list` 用它算每一项的位置。
     row_height: f32,
     show_album: bool,
-    /// 作用域种类，决定副标题省哪段、列头第二段写谁
+    /// 作用域种类，决定副标题省哪段、列头第二段写谁。
     kind: ScopeKind,
-    /// 行首拖拽手柄 + 行内落点区
+    /// 行首拖拽手柄 + 行内落点区。
     reorderable: bool,
     selectable: bool,
 }
 
 impl RowEnv {
-    /// 与 `cells::title_cell` 同一判据：列头据此让出缩略图的宽度。
+    /// 与 `cells::title_cell` 同一判据，列头据此让出缩略图的宽度。
     fn two_lines(self) -> bool {
         self.row_height >= TWO_LINE_MIN
     }

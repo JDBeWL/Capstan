@@ -16,8 +16,8 @@ pub struct Cover {
     pub mime: Option<String>,
 }
 
-/// 读一首曲目。没有同目录上下文时走这条：目录提示仍然生效（它只依赖路径），
-/// 但拿不到「同目录里谁在重复」这条信号。
+/// 读一首曲目。没有同目录上下文时走这条。目录提示仍然生效（它只依赖路径），
+/// 但无法取得「同目录内哪一侧重复」这一信号。
 pub fn read_track(path: &Path) -> Result<Track> {
     read_track_in(path, &FolderContext::default())
 }
@@ -36,7 +36,7 @@ pub fn read_track_in(path: &Path, folder: &FolderContext<'_>) -> Result<Track> {
             source,
         })?;
 
-    // 采样规格来自容器 / 流头而不是标签。`> 0` 的过滤是把「库返回 0」当成「没读到」。
+    // 采样规格来自容器与流头而不是标签。`> 0` 的过滤是把「库返回 0」当成「没读到」。
     let props = tagged.properties();
     let duration: Duration = props.duration();
     let audio = AudioInfo {
@@ -46,7 +46,7 @@ pub fn read_track_in(path: &Path, folder: &FolderContext<'_>) -> Result<Track> {
     };
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
 
-    // 路径与文件名能给的先全填上，再用标签覆盖 —— 标签缺哪一项，兜底值就留在哪一项上。
+    // 路径与文件名能给的先全填上，再用标签覆盖。标签缺哪一项，兜底值就留在哪一项上。
     let mut track = infer(path, folder);
 
     if let Some(title) = clean(tag.and_then(Accessor::title)) {
@@ -70,7 +70,7 @@ pub fn read_track_in(path: &Path, folder: &FolderContext<'_>) -> Result<Track> {
 }
 
 /// 完全不读文件内容，只按路径与文件名造一条曲目。
-/// 两条路会用到它：标签读失败（坏 ID3、整块标签缺失），以及 [`read_track_in`] 的兜底底稿。
+/// 两条路会用到它。标签读失败（坏 ID3、整块标签缺失），以及 [`read_track_in`] 的兜底底稿。
 pub fn infer(path: &Path, folder: &FolderContext<'_>) -> Track {
     let dirs = filename::hints_for(path);
     let stem = stem_of(path);
@@ -147,7 +147,7 @@ pub fn read_cover(path: &Path) -> Result<Option<Cover>> {
     }))
 }
 
-/// 标签值归一：去首尾空白，空的当没有 —— 一个全空格的标题不该压住文件名带来的推断。
+/// 标签值归一。去首尾空白，空的当没有。一个全空格的标题不该压住文件名带来的推断。
 fn clean(value: Option<std::borrow::Cow<'_, str>>) -> Option<String> {
     value
         .map(|text| text.trim().to_owned())

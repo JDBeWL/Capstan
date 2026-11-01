@@ -1,10 +1,10 @@
-//! 矢量图标：描边类用 Lucide 路径（SVG 数据在 `icon_data.rs`，由脚本批量生成），
-//! 填充类（运输控件、窗口控件）手写 —— Lucide 的 2px 描边缩到 10–16px 几乎看不见。
+//! 矢量图标。描边类用 Lucide 路径（SVG 数据在 `icon_data.rs`，由脚本批量生成），
+//! 填充类（运输控件、窗口控件）手写，因为 Lucide 的 2px 描边缩到 10–16px 几乎看不见。
 
 use crate::icon_data::stroke_svg;
 use crate::platform::*;
 
-/// 填充类图标的 SVG 外壳。字符串里不能出现 `#` —— `r#"..."#` 遇到 `"#` 会提前结束。
+/// 填充类图标的 SVG 外壳。字符串里不能出现 `#`。`r#"..."#` 遇到 `"#` 会提前结束。
 macro_rules! filled {
     ($($inner:literal),+ $(,)?) => {
         concat!(
@@ -17,7 +17,7 @@ macro_rules! filled {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Glyph {
-    // 填充类：运输控件
+    // 填充类图标，用于运输控件。
     Play,
     Pause,
     SkipBack,
@@ -25,7 +25,7 @@ pub enum Glyph {
     Stop,
     HeartFilled,
 
-    // 描边类：见 icon_data.rs
+    // 描边类图标，见 icon_data.rs。
     Search,
     Shuffle,
     RepeatAll,
@@ -59,7 +59,7 @@ pub enum Glyph {
     Plus,
     Sort,
     Music,
-    /// 拖拽手柄（两列圆点）。写成实心点：Lucide 的 `grip-vertical` 是描边圆，缩到 14px 会糊成一片。
+    /// 拖拽手柄（两列圆点）。写成实心点。Lucide 的 `grip-vertical` 是描边圆，缩到 14px 会糊成一片。
     Grip,
 
     Bell,
@@ -69,10 +69,10 @@ pub enum Glyph {
     Devices,
     Fullscreen,
     PanelRight,
-    /// 明暗主题：半实心圆。
+    /// 明暗主题，半实心圆。
     Appearance,
 
-    // 窗口控件：手写的填充类，不在生成的那批里
+    // 窗口控件。手写的填充类，不在生成的那批里。
     WindowMinimize,
     WindowMaximize,
     WindowRestore,
@@ -146,7 +146,7 @@ pub fn icon(glyph: Glyph, size: f32, color: Rgba) -> impl IntoElement {
         .text_color(color)
 }
 
-/// 颜色继承父级的图标：不设色时 `Icon` 回退到 `window.text_style().color`，
+/// 颜色继承父级的图标。不设色时 `Icon` 回退到 `window.text_style().color`，
 /// 因此能跟随 `.hover(|s| s.text_color(..))`；[`icon`] 设了色就烘死在子元素上。
 pub fn icon_inherit(glyph: Glyph, size: f32) -> impl IntoElement {
     Icon::default()
@@ -183,12 +183,12 @@ fn svg_source(glyph: Glyph) -> &'static str {
         Glyph::HeartFilled => filled!(
             r#"<path d="M12 21.1l-1.38-1.26C5.5 15.24 2.2 12.24 2.2 8.55 2.2 5.55 4.55 3.2 7.55 3.2c1.7 0 3.33.79 4.45 2.04 1.12-1.25 2.75-2.04 4.45-2.04 3 0 5.35 2.35 5.35 5.35 0 3.69-3.3 6.69-8.42 11.29L12 21.1z"/>"#
         ),
-        // 半实心圆：外圈描边 + 右半实心，缩到 14px 仍看得出明暗两半。
+        // 半实心圆。外圈描边 + 右半实心，缩到 14px 仍看得出明暗两半。
         Glyph::Appearance => filled!(
             r#"<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/>"#,
             r#"<path d="M12 3a9 9 0 0 1 0 18Z"/>"#
         ),
-        // 窗口控件手写：几何按 24 视框的标准边界画，16px 下描边约 1.3px，接近设置齿轮。
+        // 窗口控件手写。几何按 24 视框的标准边界画，16px 下描边约 1.3px，接近设置齿轮。
         Glyph::WindowMinimize => filled!(r#"<rect x="3.5" y="11" width="17" height="2"/>"#),
         Glyph::WindowMaximize => filled!(
             r#"<rect x="3.5" y="3.5" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"/>"#

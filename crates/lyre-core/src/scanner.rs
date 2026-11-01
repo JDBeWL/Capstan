@@ -13,15 +13,15 @@ pub const AUDIO_EXTENSIONS: &[&str] = &[
     "alac", "wma", "mka", "ape", "wv",
 ];
 
-/// 引擎解不出声的扩展名：标签、时长、采样率都读得到，但没有解码器，入库后点播放只会报错。
+/// 引擎解不出声的扩展名。标签、时长、采样率都读得到，但没有解码器，入库后点播放只会报错。
 /// 只剩 wma；APE / `WavPack` / Opus 已有专门解码器（`lyre-audio` 的 `decode` 模块）。
 pub const UNSUPPORTED_EXTENSIONS: &[&str] = &["wma"];
 
-/// 判魔数要读的字节数。最长签名是 Ogg 偏移 28 处的 `OpusHead`，要装得下就得 ≥ 36；
-/// 32 会把它截成 4 个字节的前缀，永远匹配不上。
+/// 判定魔数需读取的字节数。最长签名为 Ogg 偏移 28 处的 `OpusHead`，需容纳至此，故 ≥ 36；
+/// 32 会将其截断为 4 字节前缀，永远无法匹配。
 pub const SIGNATURE_PROBE_LEN: usize = 40;
 
-/// Ogg 首页里数据包起始的偏移：27 字节的页头 + 1 字节的段表。
+/// Ogg 首页里数据包起始的偏移，27 字节的页头 + 1 字节的段表。
 const OGG_FIRST_PACKET_OFFSET: usize = 28;
 
 /// ASF（WMA 的容器）的文件头 GUID。
@@ -63,7 +63,7 @@ pub fn signature_of(head: &[u8]) -> Option<Signature> {
     if head.starts_with(&ASF_HEADER_GUID) {
         return Some(Signature::Wma);
     }
-    // 容器是 Ogg 且包体是 OpusHead 才判 Opus：单看 `OpusHead` 会误伤 Ogg 里的 Vorbis / FLAC。
+    // 容器是 Ogg 且包体是 OpusHead 才判 Opus，单看 `OpusHead` 会误伤 Ogg 里的 Vorbis / FLAC。
     let opus_packet = head
         .get(OGG_FIRST_PACKET_OFFSET..)
         .is_some_and(|packet| packet.starts_with(b"OpusHead"));
@@ -82,7 +82,7 @@ pub fn is_audio_extension(ext: &str) -> bool {
     has_extension(ext, AUDIO_EXTENSIONS)
 }
 
-/// 扩展名对应的编码引擎解不解得出来。不认识的扩展名按「能解」算 ——
+/// 扩展名对应的编码引擎解不解得出来。不认识的扩展名按「能解」算。
 /// 能进曲库的都已经被 [`AUDIO_EXTENSIONS`] 筛过一遍，这里只负责挑出已知解不了的那几个。
 pub fn is_decodable_extension(ext: &str) -> bool {
     !has_extension(ext, UNSUPPORTED_EXTENSIONS)
@@ -94,21 +94,21 @@ pub fn is_audio_file(path: &Path) -> bool {
         .is_some_and(is_audio_extension)
 }
 
-/// 折成绝对且词法规范的路径。必须做在入库之前：`TrackId` 是路径哈希，相对路径落盘之后
+/// 折成绝对且词法规范的路径。必须做在入库之前。`TrackId` 是路径哈希，相对路径落盘之后
 /// 换个目录启动会把整个曲库当成失效剔掉。规范失败退回原值。
 fn absolute(path: &Path) -> PathBuf {
     std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// 把选中的路径摊平成音频文件列表：目录递归展开，结果排序去重，扫描顺序稳定。
+/// 把选中的路径摊平成音频文件列表。目录递归展开，结果排序去重，扫描顺序稳定。
 pub fn collect_audio_paths(inputs: &[PathBuf]) -> Vec<PathBuf> {
     collect_audio_paths_with(inputs, true)
 }
 
-/// 可选不递归：导入「待整理」目录时只收直接子项，不带子目录。
+/// 可选不递归。导入「待整理」目录时只收直接子项，不带子目录。
 pub fn collect_audio_paths_with(inputs: &[PathBuf], recursive: bool) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    // `WalkDir` 的深度是 0 基：0 = 输入目录自己（被下面的 `is_file()` 挡掉），1 = 它的直接子项
+    // `WalkDir` 的深度以 0 为基。0 表示输入目录本身（由下文 `is_file()` 排除），1 表示其直接子项。
     let depth = if recursive { usize::MAX } else { 1 };
 
     for input in inputs {
@@ -152,7 +152,7 @@ pub struct ScanContext<'a> {
     pub cached: Option<&'a HashMap<TrackId, FileStamp>>,
 }
 
-/// 见 [`scan_into_tracks`]。返回的是**真正读了几首**：被 [`ScanContext::cached`] 跳过的
+/// 见 [`scan_into_tracks`]。返回的是**真正读了几首**，被 [`ScanContext::cached`] 跳过的
 /// 和扫描到的文件数不是一回事。
 #[allow(clippy::implicit_hasher)]
 pub fn scan_into_tracks_with<F>(
@@ -172,8 +172,8 @@ where
     let mut total = 0;
 
     for path in paths {
-        // 文件一个字节都没变时，标签解析整段可以省掉 —— 一次 stat 换一次完整的容器解析。
-        // 指纹缺失（旧版本落的盘、或 stat 失败）一律当「变了」，宁可多读一遍。
+        // 文件一个字节都没变时，标签解析整段可以省掉。一次 stat 换一次完整的容器解析。
+        // 指纹缺失（旧版本写入的存档，或 stat 失败）一律视为「已变更」，宁可多读一遍。
         let untouched = scan
             .cached
             .and_then(|cached| cached.get(&TrackId::from_path(&path)))
@@ -203,7 +203,7 @@ where
     total
 }
 
-/// 按父目录分组，算出每个目录里「首段 / 次段」的重复情况，供文件名推断定方向。
+/// 按父目录分组，算出每个目录里「首段与次段」的重复情况，供文件名推断定方向。
 fn parent_of(path: &Path) -> &Path {
     path.parent().unwrap_or_else(|| Path::new(""))
 }
@@ -235,7 +235,7 @@ mod tests {
         assert!(!is_audio_file(Path::new("/a/b/noextension")));
     }
 
-    /// 解不了的格式仍然是音频文件：要能进库、出现在列表里（置灰），只是不能播。
+    /// 解不了的格式仍然是音频文件。要能进库、出现在列表里（置灰），只是不能播。
     #[test]
     fn unsupported_formats_are_still_audio_files() {
         for ext in UNSUPPORTED_EXTENSIONS {
@@ -284,7 +284,7 @@ mod tests {
         );
     }
 
-    /// 魔数表要认全四类，少认一类就等于放过改了名的文件 ——
+    /// 魔数表要认全四类，少认一类就等于放过改了名的文件。
     /// 它们会被通用引擎的探测当成能播，结果不是报错，是噪声。
     #[test]
     fn the_signature_table_covers_every_format_we_special_case() {
@@ -395,7 +395,7 @@ mod tests {
             .map(|name| dir.join(format!("{name}.flac")))
             .collect();
 
-        // 分成三批：目录统计要在分批之前算完，否则每批只有一首，看不出谁在重复
+        // 分三批处理。目录统计必须在分批之前完成，否则每批仅有一个文件，无法判定哪一侧重复。
         scan_into_tracks(paths, 1, |chunk| tracks.extend(chunk));
 
         for track in &tracks {
@@ -425,7 +425,7 @@ mod tests {
         assert_eq!(tracks[0].title, "七里香");
     }
 
-    /// 文件一个字节都没变时，整段标签解析都该省掉 —— 这是重导一个大目录不卡的关键。
+    /// 文件一个字节都没变时，整段标签解析都该省掉。这是重导一个大目录不卡的关键。
     #[test]
     fn 指纹没变的文件不再读标签() {
         let dir = std::env::temp_dir().join(format!("mp-scan-stamp-{}", std::process::id()));
@@ -433,7 +433,7 @@ mod tests {
         let file = dir.join("a.flac");
         std::fs::write(&file, b"not really audio").expect("建临时文件");
 
-        // 第一次读：内容不是音频，会退化成按路径推断，但指纹照样记得下来
+        // 第一次读。内容不是音频，会退化成按路径推断，但指纹照样记得下来。
         let mut first = Vec::new();
         scan_into_tracks(vec![file.clone()], 8, |chunk| first.extend(chunk));
         assert_eq!(first.len(), 1);
@@ -445,7 +445,7 @@ mod tests {
             "文件在就应当记下时间戳"
         );
 
-        // 第二次：指纹没变，一首都不该读
+        // 第二次。指纹没变，一首都不该读。
         let context = ScanContext {
             known_artists: None,
             cached: Some(&cached),
@@ -456,12 +456,12 @@ mod tests {
         assert_eq!(total, 0, "指纹没变却还是把标签读了一遍");
         assert!(second.is_empty());
 
-        // 内容变了：必须重读
+        // 内容变了，必须重读。
         std::fs::write(&file, b"definitely not the same bytes").expect("改写临时文件");
         let total = scan_into_tracks_with(vec![file.clone()], 8, context, |_| {});
         assert_eq!(total, 1, "文件变了却没重读");
 
-        // 不传指纹（=「重读全部标签」）时，即使文件没动过也要读
+        // 不传指纹（=「重读全部标签」）时，即使文件没动过也要读。
         let forced = ScanContext {
             known_artists: None,
             cached: None,

@@ -1,8 +1,8 @@
-//! 顶部栏，兼任自绘的窗口标题栏：导航 + 居中搜索 + 设置入口 + 窗口控件。
-//! 左右两组各取 `flex_1` 且都不写 `min_w_0`：一边定宽搜索框就不在正中，塌成 0 会把关闭键推出窗口。
+//! 顶部栏，兼任自绘的窗口标题栏，含导航、居中搜索、设置入口与窗口控件。
+//! 左右两组各取 `flex_1` 且均不设 `min_w_0`。一侧定宽会使搜索框偏离正中，塌缩为 0 则会把关闭键挤出窗口。
 //!
-//! 拖拽热区一律做可点击元素的**兄弟**：命中测试取第一个命中的条目，把按钮包进去，
-//! 点它就会变成拖窗口。真要包，被包的那个得自己 `.occlude()` 把命中测试挡在那儿。
+//! 拖拽热区一律作为可点击元素的**兄弟**。命中测试取首个命中条目，若将按钮包裹其中，
+//! 点击即会变为拖动窗口。确需包裹时，被包裹者必须自行调用 `.occlude()` 在该处拦截命中测试。
 
 use crate::components::search_box::SearchBox;
 use crate::components::window_controls;
@@ -41,7 +41,7 @@ impl Render for TopBar {
             let shell = self.shell.read(cx);
             (shell.can_go_back(), shell.can_go_forward())
         };
-        // 侧栏折叠进图标态 / 隐藏态后，侧栏内那颗开关就不画了；这颗常驻是唯一的展开入口。
+        // 侧栏折叠进图标态与隐藏态后，侧栏内那颗开关就不画了；这颗常驻是唯一的展开入口。
         let sidebar_expanded = self.shell.read(cx).sidebar() == SidebarState::Expanded;
         let settings_active = self.shell.read(cx).nav_section() == NavSection::Settings;
         let side = side_min();
@@ -83,7 +83,7 @@ impl Render for TopBar {
                             }
                         }) as NavClick),
                     ))
-                    // 后退 / 前进两颗常驻可见（禁用只让图标变淡）：按钮出现/消失会让搜索框横跳。
+                    // 后退与前进两颗常驻可见（禁用只让图标变淡），按钮出现/消失会让搜索框横跳。
                     .child(nav_button(
                         "top-back",
                         Glyph::ArrowLeft,
@@ -110,10 +110,10 @@ impl Render for TopBar {
                     ))
                     .child(drag_area()),
             )
-            // 中组：搜索框居中，左右余量各是一条拖拽区。搜索框定宽 280，窗口一拉宽
-            // 两侧就空出上百像素 —— 看着是标题栏，落上去却拖不动窗口。
-            // 两条都是搜索框的**兄弟**节点：拖拽区不能包住它，否则点搜索框会变成拖窗口。
-            // 搜索框照旧 `w_full` + `max_w`：窄窗口下它吃满整条，两条拖拽区自然收成 0 宽。
+            // 中组。搜索框居中，左右余量各是一条拖拽区。搜索框定宽 280，窗口一拉宽
+            // 两侧就空出上百像素。看着是标题栏，落上去却拖不动窗口。
+            // 两条都是搜索框的**兄弟**节点。拖拽区不能包住它，否则点搜索框会变成拖窗口。
+            // 搜索框照旧 `w_full` + `max_w`。窄窗口下它吃满整条，两条拖拽区自然收成 0 宽。
             .child(
                 div()
                     .flex_1()
@@ -147,8 +147,8 @@ impl Render for TopBar {
     }
 }
 
-/// 拖拽区：只登记命中盒、不绑监听器。
-/// 双击留给 `DefWindowProc` 做最大化 ⇄ 还原；自己接 `zoom_window` 只最大化、不切换，会和系统打架。
+/// 拖拽区只登记命中盒，不绑监听器。
+/// 双击交由 `DefWindowProc` 执行最大化与还原切换；若自行接管 `zoom_window`，则只最大化而不切换，与系统行为冲突。
 fn drag_area() -> impl IntoElement {
     div()
         .flex_1()
@@ -158,7 +158,7 @@ fn drag_area() -> impl IntoElement {
 }
 
 /// 顶栏的导航圆按钮。
-/// `on_click` 用 `Option` 而不是 `enabled` 标志：禁用态要真的解绑点击，只改颜色会留下按不动的按钮。
+/// `on_click` 用 `Option` 而不是 `enabled` 标志。禁用态要真的解绑点击，只改颜色会留下按不动的按钮。
 fn nav_button(
     id: &'static str,
     glyph: Glyph,
@@ -240,17 +240,17 @@ fn settings_button(
 const TOP_NAV_BTN: f32 = 32.0;
 /// 设置入口与窗口控件的圆按钮直径。
 const TRIGGER_PX: f32 = 32.0;
-/// 左组的内容宽：三颗导航圆按钮 + 两道间距 + 左内边距。
+/// 左组的内容宽，三颗导航圆按钮 + 两道间距 + 左内边距。
 const LEFT_MIN: f32 = 3.0 * TOP_NAV_BTN + 2.0 * theme::GAP_SM + theme::GAP_LG;
-/// 窗口控件的内容宽：最小化 / 最大化 / 关闭三颗加两道间距。
+/// 窗口控件的内容宽，即最小化、最大化、关闭三颗加两道间距。
 const WINDOW_CTRLS_W: f32 = 3.0 * TRIGGER_PX + 2.0 * theme::GAP_XS;
-/// 右组的内容宽：设置入口 + 窗口控件 + 与拖拽区之间的两道间距 + 右内边距。
+/// 右组的内容宽，设置入口 + 窗口控件 + 与拖拽区之间的两道间距 + 右内边距。
 fn right_min() -> f32 {
     TRIGGER_PX + WINDOW_CTRLS_W + 2.0 * theme::GAP_SM + theme::GAP_LG
 }
 
 /// 顶栏左右两组各自至少要多宽；两组等宽，中间的搜索框才落在正中。
-/// 右组没有「放不下就收掉一颗」的退路：最小化 / 最大化 / 关闭必须永远点得到。
+/// 右组没有「放不下就收掉一颗」的退路。最小化、最大化、关闭必须永远点得到。
 pub(crate) fn side_min() -> f32 {
     right_min().max(LEFT_MIN)
 }
@@ -288,7 +288,7 @@ mod tests {
         );
     }
 
-    /// 留位按更宽的一组：右组一旦比左组窄，三颗导航按钮会被挤到搜索框那边。
+    /// 留位按更宽的一组。右组一旦比左组窄，三颗导航按钮会被挤到搜索框那边。
     #[test]
     fn 留位按的是右组() {
         assert!(

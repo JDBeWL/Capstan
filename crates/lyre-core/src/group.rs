@@ -1,5 +1,5 @@
-//! 按专辑 / 艺术家聚合成分组视图，纯函数 `&[Track] -> Vec<AlbumGroup>`。
-//! 专辑只按专辑名分组，不按 `(专辑名, 艺术家)`：真实曲库里 feat. 会把一张专辑拆成十几张。
+//! 按专辑与艺术家聚合成分组视图，纯函数 `&[Track] -> Vec<AlbumGroup>`。
+//! 专辑只按专辑名分组，不按 `(专辑名, 艺术家)`，真实曲库里 feat. 会把一张专辑拆成十几张。
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -14,11 +14,11 @@ pub const VARIOUS_ARTISTS: &str = "群星";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AlbumGroup {
-    /// 专辑名，永远非空 —— 无标签曲目归入 [`UNKNOWN_ALBUM`]。
+    /// 专辑名，永远非空。无标签曲目归入 [`UNKNOWN_ALBUM`]。
     pub title: String,
     /// 组内出现过的艺术家，去重后按首次出现顺序排列。
     pub artists: Vec<String>,
-    /// 组内曲目 id，顺序与输入一致（`Track` 没有唱片序号字段）。
+    /// 组内曲目 id，顺序与输入一致，因 `Track` 没有唱片序号字段。
     pub tracks: Vec<TrackId>,
     /// 用来取封面的那首曲目，曲目不为空时必有值。
     pub representative: TrackId,
@@ -31,7 +31,7 @@ pub struct AlbumGroup {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ArtistGroup {
-    /// 艺术家名，永远非空，且永远是拆分后的单个人（见 [`artist_keys`]）。
+    /// 艺术家名，永远非空，且永远是拆分后的单个人，见 [`artist_keys`]。
     pub name: String,
     /// 名下专辑名，去重后按首次出现顺序排列。
     pub albums: Vec<String>,
@@ -43,7 +43,7 @@ pub struct ArtistGroup {
 }
 
 impl AlbumGroup {
-    /// 艺术家显示口径：0 位 → 空串，1 位 → 原名，多位 → [`VARIOUS_ARTISTS`]。
+    /// 艺术家显示口径。0 位 → 空串，1 位 → 原名，多位 → [`VARIOUS_ARTISTS`]。
     pub fn display_artist(&self) -> String {
         match self.artists.as_slice() {
             [] => String::new(),
@@ -56,7 +56,7 @@ impl AlbumGroup {
         self.tracks.len()
     }
 
-    /// 组内总时长：只有每首时长都已知才返回 `Some`，偏小的和会被 UI 当成精确值显示。
+    /// 组内总时长。只有每首时长都已知才返回 `Some`，偏小的和会被 UI 当成精确值显示。
     pub fn total_duration(&self) -> Option<Duration> {
         if self.all_durations_known {
             Some(self.total)
@@ -88,7 +88,7 @@ impl ArtistGroup {
 /// 线性比较比哈希更便宜；合辑、高产艺术家这种成百上千的组才需要换，否则是平方复杂度。
 const LINEAR_DEDUP_LIMIT: usize = 16;
 
-/// 每收到一首曲目要做的三件事（两个分组结构体同构）：累计时长、选出封面代表、收集曲目 id。
+/// 每收到一首曲目要做的三件事，两个分组结构体同构，即累计时长、选出封面代表、收集曲目 id。
 struct Accumulator<'a> {
     tracks: &'a mut Vec<TrackId>,
     representative: &'a mut TrackId,
@@ -101,7 +101,7 @@ trait Accumulate {
     /// 借出那五个字段。两个结构体的字段同名同型，各自的实现只需一一对应地借出来。
     fn accumulator(&mut self) -> Accumulator<'_>;
 
-    /// 收下一首曲目。不会重复收到同一首 —— 调用方是按分组键循环的。
+    /// 收下一首曲目。不会重复收到同一首。调用方是按分组键循环的。
     fn absorb(&mut self, track: &Track) {
         let Accumulator {
             tracks,
@@ -116,7 +116,7 @@ trait Accumulate {
             None => *all_durations_known = false,
         }
 
-        // 组内第一首带封面的曲目胜过不带封面的；一首都不带时退回第一首
+        // 组内第一首带封面的曲目胜过不带封面的；一首都不带时退回第一首。
         if tracks.is_empty() || (track.has_cover && !*rep_has_cover) {
             *representative = track.id;
             *rep_has_cover = track.has_cover;
@@ -154,7 +154,7 @@ impl Accumulate for ArtistGroup {
 pub fn group_by_album(tracks: &[Track]) -> Vec<AlbumGroup> {
     let mut order: Vec<String> = Vec::new();
     let mut groups: HashMap<String, AlbumGroup> = HashMap::new();
-    // 只在组内名字超过阈值后才建：合辑里艺术家一多，线性去重就退化成平方。
+    // 只在组内名字超过阈值后才建。合辑里艺术家一多，线性去重就退化成平方。
     // 键与名字都借自 `tracks`，不额外复制；值里的 `String` 只在大组才存在。
     let mut wide_artists: HashMap<&str, HashSet<String>> = HashMap::new();
 
@@ -201,7 +201,7 @@ pub fn group_by_album(tracks: &[Track]) -> Vec<AlbumGroup> {
 }
 
 /// 按艺术家聚合，结果升序，[`UNKNOWN_ARTIST`] 永远在最后。
-/// 一首合作曲进每一位名家的组（见 [`artist_keys`]），所以各组曲目数之和大于曲库总数。
+/// 一首合作曲进入每一位名家的组，见 [`artist_keys`]，故各组曲目数之和大于曲库总数。
 pub fn group_by_artist(tracks: &[Track]) -> Vec<ArtistGroup> {
     let mut order: Vec<String> = Vec::new();
     let mut groups: HashMap<String, ArtistGroup> = HashMap::new();
@@ -248,7 +248,7 @@ pub fn group_by_artist(tracks: &[Track]) -> Vec<ArtistGroup> {
     result
 }
 
-/// `Some(s)` 当且仅当 `s` trim 后非空 —— 标签里有字段但全是空格是常见脏数据。
+/// `Some(s)` 当且仅当 `s` trim 后非空。标签里有字段但全是空格是常见脏数据。
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|s| !s.is_empty())
 }
@@ -258,21 +258,21 @@ pub fn album_key(track: &Track) -> &str {
     album_key_str(track.album.as_deref())
 }
 
-/// 单个专辑名字段的分组键，判定与 [`album_key`] 一致（UI 手上只有字段而非整首曲目时用）。
+/// 单个专辑名字段的分组键，判定与 [`album_key`] 一致；供 UI 仅持有字段而非整首曲目时使用。
 pub fn album_key_str(album: Option<&str>) -> &str {
     non_empty(album).unwrap_or(UNKNOWN_ALBUM)
 }
 
-/// 一个艺术家字段里的多人分隔符。不含顿号与全角逗号：`25時、ナイトコードで。` 是一个组合的正式名字。
+/// 一个艺术家字段里的多人分隔符。不含顿号与全角逗号，因为 `25時、ナイトコードで。` 是一个组合的正式名字。
 pub const ARTIST_SEPARATORS: [char; 2] = ['/', ','];
 
-/// 这首曲目名下的每一位艺术家，至少一位（全空退成 [`UNKNOWN_ARTIST`]）。
+/// 这首曲目名下的每一位艺术家，至少一位；全空时退化为 [`UNKNOWN_ARTIST`]。
 /// 分组与「点进某位艺术家」的筛选都必须走这里。
 pub fn artist_keys(track: &Track) -> Vec<&str> {
     artist_keys_str(track.artist.as_deref())
 }
 
-/// 见 [`artist_keys`]。字段值是 `Option<String>` 的场合（列表行、菜单）直接用它。
+/// 见 [`artist_keys`]。字段值为 `Option<String>` 的场合，如列表行与菜单，直接使用它。
 pub fn artist_keys_str(artist: Option<&str>) -> Vec<&str> {
     let mut keys: Vec<&str> = non_empty(artist)
         .unwrap_or("")
@@ -297,7 +297,7 @@ pub fn artist_key_str(artist: Option<&str>) -> &str {
         .unwrap_or(UNKNOWN_ARTIST)
 }
 
-/// 排序：`unknown` 压到最后，其余按 `key` 升序。
+/// 排序。`unknown` 压到最后，其余按 `key` 升序。
 /// 忽略 ASCII 大小写，与曲目列表同口径；非 ASCII 仍按码位序。
 fn sort_unknown_last<T, F>(groups: &mut [T], key: F, unknown: &str)
 where
@@ -315,7 +315,7 @@ where
                     .chars()
                     .flat_map(char::to_lowercase)
                     .cmp(b_key.chars().flat_map(char::to_lowercase));
-                // 只有大小写不同的两个名字（「Aika」与「AIKA」）折叠后相等，
+                // 两个名字仅大小写不同时，如「Aika」与「AIKA」，折叠后相等，
                 // 再按原样比一次定序，否则每帧重排都会互换位置。
                 folded.then_with(|| a_key.cmp(b_key))
             }
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn groups_sort_by_unicode_codepoint_not_pinyin() {
-        // 已知限制：中文按 Unicode 码点排序，不是拼音序；拼音序要付 ICU 级排序表的成本
+        // 已知限制。中文按 Unicode 码点排序，不是拼音序；拼音序要付 ICU 级排序表的成本。
         let tracks = vec![
             with("a", Some("陈屿"), Some("城市漫游")),
             with("b", Some("低苦艾"), Some("兰州兰州")),
@@ -431,7 +431,7 @@ mod tests {
 
     #[test]
     fn same_album_title_with_different_artists_stays_one_group() {
-        // 专辑名相同、艺术家不同必须合并，否则 feat. 会把一张专辑拆成十几张
+        // 专辑名相同、艺术家不同必须合并，否则 feat. 会把一张专辑拆成十几张。
         let tracks = vec![
             with("a", Some("陈屿"), Some("群星合辑")),
             with("b", Some("低苦艾"), Some("群星合辑")),
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn untagged_tracks_land_in_unknown_album_at_the_end() {
-        // 无标签的排在最后，否则淹没正常专辑
+        // 无标签的排在最后，否则淹没正常专辑。
         let tracks = vec![
             with("z", None, None),
             with("a", Some("陈屿"), Some("阿波罗")),
@@ -564,7 +564,7 @@ mod tests {
 
     #[test]
     fn grouping_keys_agree_with_the_group_titles() {
-        // UI 用 album_key 筛选组内曲目，两侧一旦漂移就表现为「少了几首」而不是报错
+        // UI 用 album_key 筛选组内曲目，两侧一旦漂移就表现为「少了几首」而不是报错。
         let mut tracks = vec![
             with("a", Some("陈屿"), Some("城市漫游")),
             with("b", Some("陈屿"), Some("  城市漫游  ")), // 标签脏：前后空格
@@ -629,7 +629,7 @@ mod tests {
 
     #[test]
     fn ascii_comma_splits_too_but_the_ideographic_comma_does_not() {
-        // `25時、ナイトコードで。` 是一个组合的正式名字，按顿号切会劈出「25時」这种假艺术家
+        // `25時、ナイトコードで。` 是一个组合的正式名字，按顿号切会劈出「25時」这种假艺术家。
         let tracks = vec![
             with("a", Some("初星学園, SHiNTA"), Some("x")),
             with(
@@ -659,7 +659,7 @@ mod tests {
         assert_eq!(artist_keys_str(Some(" 甲 / 乙 ,, 丙 ")), ["甲", "乙", "丙"]);
         assert_eq!(artist_keys_str(Some("///")), [UNKNOWN_ARTIST]);
         assert_eq!(artist_keys_str(None), [UNKNOWN_ARTIST]);
-        // 「有没有艺术家」看的是拆分后的第一位，而不是整串
+        // 「有没有艺术家」看的是拆分后的第一位，而不是整串。
         assert_eq!(artist_key_str(Some("甲/乙")), "甲");
         assert_eq!(artist_key_str(Some("  / ")), UNKNOWN_ARTIST);
     }

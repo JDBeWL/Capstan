@@ -6,10 +6,10 @@ use crate::device::AudioDeviceInfo;
 /// 播放状态。`as_u8` / `from_u8` 的数值映射会存进原子量。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum PlaybackState {
-    /// 还没有装载任何曲目或音频设备不可用
+    /// 还没有装载任何曲目或音频设备不可用。
     #[default]
     Idle,
-    /// 已装载但停在开头
+    /// 已装载但停在开头。
     Paused,
     Playing,
     Stopped,

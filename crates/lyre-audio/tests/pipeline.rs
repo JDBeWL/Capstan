@@ -1,6 +1,7 @@
-//! 音频链路集成测试：`AudioHandle::spawn_with` 注入假后端，不需要声卡。
-//! 完整验证「命令 → 线程 → 事件 / 快照」，包括只在真机偶发的时序问题（切歌瞬间误报结束）。
-//! `clippy.toml` 的 `allow-*-in-tests` 覆盖不到 `tests/` 下的集成测试 crate，故在顶部显式允许 unwrap/expect。
+//! 音频链路集成测试。`AudioHandle::spawn_with` 注入假后端，不需要声卡。
+//! 完整验证「命令 → 线程 → 事件与快照」，包括只在真机偶发的时序问题（切歌瞬间误报结束）。
+//! `clippy.toml` 的 `allow-*-in-tests` 覆盖不到 `tests/` 下的集成测试 crate，
+//! 故在顶部显式允许 unwrap 与 expect。
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::path::{Path, PathBuf};
@@ -205,7 +206,7 @@ fn seek_is_reflected_in_snapshot_immediately() {
 
     handle.send(PlayerCommand::Seek(Duration::from_secs(75)));
 
-    // 快照走的是无锁原子量，不等事件、不等下一次 tick 就该跟手
+    // 快照走的是无锁原子量，不等事件、不等下一次 tick 就该跟手。
     let deadline = Instant::now() + Duration::from_secs(2);
     while handle.position() != Duration::from_secs(75) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
@@ -239,7 +240,7 @@ fn a_volume_set_before_the_device_opens_still_reaches_the_backend() {
     wait_for(&rx, |e| matches!(e, PlayerEvent::Volume(_))).expect("应当收到音量事件");
     assert_eq!(state.volume_bits.load(Relaxed), 0, "调音量本身不该去开设备");
 
-    // 真正装载时才开设备，此时必须把当前音量补发给新后端，否则第一首会以满音量出声
+    // 真正装载时才开设备，此时必须把当前音量补发给新后端，否则第一首会以满音量出声。
     handle.send(PlayerCommand::Load {
         path: PathBuf::from("/music/夢我夢中.flac"),
         autoplay: true,
@@ -267,7 +268,7 @@ fn natural_end_is_reported_exactly_once() {
     });
     wait_for(&rx, |e| matches!(e, PlayerEvent::Loaded { .. }));
 
-    // 先播一会儿：线程要看到过一次「未播空」，之后 empty() 的结论才被采信（防切歌瞬间误报）
+    // 先播一会儿。线程要看到过一次「未播空」，之后 empty() 的结论才被采信（防切歌瞬间误报）
     std::thread::sleep(Duration::from_millis(150));
 
     state.finished.store(true, Relaxed);
@@ -287,7 +288,7 @@ fn natural_end_is_reported_exactly_once() {
 #[test]
 fn freshly_loaded_track_does_not_falsely_report_end() {
     let (handle, rx, state) = harness();
-    // 模拟「刚 append、音频还没被消费」的窗口期：empty() 暂时为 true
+    // 模拟「刚 append、音频还没被消费」的窗口期，empty() 暂时为 true。
     state.finished.store(true, Relaxed);
 
     handle.send(PlayerCommand::Load {
@@ -340,7 +341,7 @@ fn undecodable_device_does_not_prevent_commands_from_returning() {
         _ => unreachable!(),
     }
 
-    // 关键：设备不可用时后续命令不能 panic，程序要能继续跑
+    // 关键。设备不可用时后续命令不能 panic，程序要能继续跑。
     handle.send(PlayerCommand::SetVolume(0.5));
     handle.send(PlayerCommand::Seek(Duration::from_secs(10)));
     handle.send(PlayerCommand::Pause);
@@ -374,7 +375,7 @@ fn enumerate_devices_reports_a_list() {
 
     let event = wait_for(&rx, |e| matches!(e, PlayerEvent::Devices(_))).expect("应当收到设备列表");
     match event {
-        // 没声卡的机器上拿到空列表也是正常结果，这里只要求列表本身可用
+        // 没声卡的机器上拿到空列表也是正常结果，这里只要求列表本身可用。
         PlayerEvent::Devices(devices) => {
             assert!(devices.iter().all(|device| !device.id.is_empty()));
         }
@@ -390,7 +391,7 @@ fn selecting_a_device_gets_an_acknowledgement() {
 
     let event = wait_for(&rx, |e| matches!(e, PlayerEvent::DeviceChanged { .. }))
         .expect("切换设备应当有回执");
-    // `None` 表示跟随系统默认，回执里的 name 是那一刻默认设备的友好名
+    // `None` 表示跟随系统默认，回执里的 name 是那一刻默认设备的友好名。
     assert!(matches!(event, PlayerEvent::DeviceChanged { id: None, .. }));
 }
 
@@ -403,10 +404,10 @@ fn switching_device_mid_playback_does_not_report_the_track_as_ended() {
         autoplay: true,
     });
     wait_for(&rx, |e| matches!(e, PlayerEvent::Loaded { .. }));
-    // 先让它播一会儿，`seen_content` 才会置真 —— 之后 empty() 的结论才被采信
+    // 先让它播一会儿，`seen_content` 才会置真。之后 empty() 的结论才被采信。
     std::thread::sleep(Duration::from_millis(150));
 
-    // 换流的那一瞬间新音源还没出声，empty() 会短暂为 true
+    // 换流的那一瞬间新音源还没出声，empty() 会短暂为 true。
     state.finished.store(true, Relaxed);
     handle.send(PlayerCommand::SetDevice { id: None });
 
@@ -428,7 +429,7 @@ fn smooth_switch_setting_does_not_disturb_playback() {
     });
     wait_for(&rx, |e| matches!(e, PlayerEvent::Loaded { .. }));
 
-    // 假后端走 trait 的默认空实现：这里要的是「这个开关既不改状态也不挡后面的命令」
+    // 假后端走 trait 的默认空实现，这里要的是「这个开关既不改状态也不挡后面的命令」
     handle.send(PlayerCommand::SetSmoothSwitch(true));
     handle.send(PlayerCommand::SetSmoothSwitch(false));
     handle.send(PlayerCommand::SetVolume(0.5));
@@ -453,7 +454,7 @@ fn asking_for_exclusive_without_a_backend_falls_back_and_says_so() {
     });
     wait_for(&rx, |e| matches!(e, PlayerEvent::Loaded { .. }));
 
-    // 注入式假后端没有独占实现：要独占必须如实退回共享，而不是让开关看起来生效了。
+    // 注入式假后端没有独占实现。要独占必须如实退回共享，而不是让开关看起来生效了。
     // 两条事件按「先报原因、再报结果」的顺序发出，所以这里也按同样的顺序收。
     handle.send(PlayerCommand::SetOutputMode { exclusive: true });
 
@@ -472,7 +473,7 @@ fn asking_for_exclusive_without_a_backend_falls_back_and_says_so() {
         _ => unreachable!(),
     }
 
-    // 关键：正在播的那条流不能因为一次失败的切换就断掉
+    // 关键点在于，正在播的那条流不能因为一次失败的切换就断掉。
     assert_eq!(handle.snapshot().state(), PlaybackState::Playing);
 }
 
@@ -488,7 +489,7 @@ fn dropping_one_clone_keeps_the_audio_thread_running() {
     let clone = handle.clone();
     drop(handle);
 
-    // 克隆还在：命令必须照常被处理，不能被析构时顺带发的 Shutdown 提前关掉
+    // 克隆还在。命令必须照常被处理，不能被析构时顺带发的 Shutdown 提前关掉。
     clone.send(PlayerCommand::Pause);
     wait_for(&rx, |e| {
         matches!(e, PlayerEvent::State(PlaybackState::Paused))
@@ -502,7 +503,7 @@ fn dropping_one_clone_keeps_the_audio_thread_running() {
 
     drop(clone);
 
-    // 最后一个句柄走了，线程才收工、事件发送端才关闭
+    // 最后一个句柄释放后，线程才结束、事件发送端才关闭。
     let deadline = Instant::now() + Duration::from_secs(3);
     let mut disconnected = false;
     while Instant::now() < deadline {
@@ -546,7 +547,7 @@ fn dropping_the_handle_shuts_the_thread_down() {
 fn a_device_that_is_not_present_falls_back_instead_of_pretending() {
     let (handle, rx, state) = harness();
 
-    // 先把后端建起来 —— 真实的插拔总是发生在流已经开着的时候
+    // 先把后端建起来。真实的插拔总是发生在流已经开着的时候。
     handle.send(PlayerCommand::Load {
         path: PathBuf::from("/music/夢我夢中.flac"),
         autoplay: true,
@@ -588,7 +589,7 @@ fn the_backend_output_detail_is_announced_after_every_load() {
     wait_for(&rx, |e| matches!(e, PlayerEvent::OutputModeChanged { .. }))
         .expect("创建后端时应当报一次输出模式");
 
-    // 模拟一次重新协商：独占会按新曲目的声源口径重开流，报出来的口径跟着变。
+    // 模拟一次重新协商。独占会按新曲目的声源口径重开流，报出来的口径跟着变。
     // 只在创建后端时报一次的话，界面上会一直停在第一首的口径上，看着像「切歌没重新协商」。
     *state.reported.lock().unwrap() = "44100 Hz / 2 声道 / 32-bit int".to_owned();
     handle.send(PlayerCommand::Load {

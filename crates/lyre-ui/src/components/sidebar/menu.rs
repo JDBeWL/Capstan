@@ -1,4 +1,4 @@
-//! 自建歌单的右键菜单与重命名 / 删除对话框。
+//! 自建歌单的右键菜单，以及重命名与删除对话框。
 
 use lyre_core::CollectionId;
 
@@ -29,7 +29,7 @@ pub(crate) fn collection_menu(
     }
 }
 
-/// 组件库的 `Dialog` 不自己画按钮（`footer` 默认 `None`），所以底部用项目自己的 `text_button`。
+/// 组件库的 `Dialog` 不自行绘制按钮（`footer` 默认 `None`），故底部采用项目自身的 `text_button`。
 fn dialog_footer(
     cancel_id: &'static str,
     ok_id: &'static str,
@@ -67,7 +67,7 @@ fn commit_rename(
     true
 }
 
-/// 重命名对话框。输入框在开窗之前建：内容构建器会被反复调用，
+/// 重命名对话框。输入框在开窗之前建。内容构建器会被反复调用，
 /// 在里面建实体等于每重绘一次就把用户正在打的字清空。
 fn open_rename_dialog(
     library: Entity<LibraryEntity>,
@@ -77,7 +77,7 @@ fn open_rename_dialog(
     cx: &mut App,
 ) {
     let input = cx.new(|cx| InputState::new(window, cx).default_value(current));
-    // 打开即聚焦并全选：目的是改名，不是往旧名后面追加。
+    // 打开即聚焦并全选。目的是改名，不是往旧名后面追加。
     input.update(cx, |state, cx| {
         state.select_all(window, cx);
         state.focus(window, cx);
@@ -99,7 +99,7 @@ fn open_rename_dialog(
                     }
                 },
             ))
-            // 回车走这条：与「确定」同一函数，只是关窗由对话框自己按返回值决定
+            // 回车经由这条路径。与「确定」同一函数，仅关窗动作由对话框按返回值决定。
             .on_ok(move |_, _window, cx| commit_rename(&enter_library, id, &enter_input, cx))
     });
 }

@@ -1,4 +1,4 @@
-//! 搜索过滤与可见行投影：`visible` 存可见曲目在 `playlist.tracks()` 里的下标，无过滤时为 `None`。
+//! 搜索过滤与可见行投影。`visible` 存可见曲目在 `playlist.tracks()` 里的下标，无过滤时为 `None`。
 //! 改变曲目集合或作用域的地方都要调 [`LibraryEntity::recompute_visible`]。
 
 use std::rc::Rc;
@@ -11,13 +11,13 @@ use crate::platform::*;
 use super::LibraryEntity;
 use super::scope::Scope;
 
-/// 把请求区间夹进可见行数以内：投影可能在列表取数据之前刚收窄，两端都要夹。
+/// 把请求区间夹进可见行数以内。投影可能在列表取数据之前刚收窄，两端都要夹。
 fn clamp_rows(range: std::ops::Range<usize>, len: usize) -> std::ops::Range<usize> {
     let end = range.end.min(len);
     range.start.min(end)..end
 }
 
-/// 这个查询串算不算「用户在搜索」。纯空白不算：`parse_query` 拆出空词表、等价于没搜，两边口径要一致。
+/// 这个查询串算不算「用户在搜索」。纯空白不算。`parse_query` 拆出空词表、等价于没搜，两边口径要一致。
 pub fn searching(query: &str) -> bool {
     !query.trim().is_empty()
 }
@@ -32,7 +32,7 @@ impl LibraryEntity {
         self.visible.is_some()
     }
 
-    /// 用户是否输入了搜索词：判据是 `query` 而非 `visible`，只进了一张专辑时为 `false`。
+    /// 用户是否输入了搜索词。判据是 `query` 而非 `visible`，只进了一张专辑时为 `false`。
     pub fn has_query(&self) -> bool {
         searching(&self.query)
     }
@@ -189,7 +189,7 @@ impl LibraryEntity {
             if let Some(id) = next {
                 self.set_focus(id, cx);
             }
-            // 系统替用户落的座（换作用域 / 改过滤），不是键盘走出来的。
+            // 系统替用户落的座（换作用域与改过滤），不是键盘走出来的。
             self.cursor_visible = false;
         }
     }
@@ -225,7 +225,7 @@ impl LibraryEntity {
                     .filter_map(|track| self.playlist.index_of(*track))
                     .collect(),
             ),
-            // 收藏没有自己的顺序，按曲库当前顺序显示
+            // 收藏无自身顺序，按曲库当前顺序展示。
             Scope::Favorites => Some(
                 self.playlist
                     .tracks()
@@ -245,7 +245,7 @@ impl LibraryEntity {
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：`crate::platform::*` 带进来的 gpui `test` 宏会遮蔽内置 `#[test]`
+    // 不写 `use super::*`，`crate::platform::*` 带进来的 gpui `test` 宏会遮蔽内置 `#[test]`。
     use super::{clamp_rows, searching};
 
     #[test]

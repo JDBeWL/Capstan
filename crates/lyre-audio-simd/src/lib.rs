@@ -1,6 +1,6 @@
 //! 交错 f32 采样 → 声卡要的 PCM 字节，独占渲染链路上最费 CPU 的一段。
 //! `F32` 走零拷贝视图，整数格式走 AVX2 / SSE2 内核，标量既兜底也是基准（差不得超过 1 LSB）。
-//! 只有 SIMD 内核需要 `unsafe`：`[lints]` 在本 crate 局部放开，其余 crate 仍继承 forbid。
+//! 只有 SIMD 内核需要 `unsafe`。`[lints]` 在本 crate 局部放开，其余 crate 仍继承 forbid。
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod x86;
@@ -39,7 +39,8 @@ impl PcmFormat {
     }
 }
 
-/// 把交错采样按目标格式写进 `out`：先清空，再写满。
+/// 把交错采样按目标格式写进 `out`。`out` 由调用方复用，必须先清空：
+/// 残留的字节会拼在这批数据前面，调用方看不到任何异常。
 pub fn write(samples: &[f32], format: PcmFormat, out: &mut Vec<u8>) {
     out.clear();
     out.reserve(samples.len() * format.bytes_per_sample());
@@ -52,7 +53,7 @@ pub fn write(samples: &[f32], format: PcmFormat, out: &mut Vec<u8>) {
     }
 }
 
-/// `F32` 的零拷贝视图：布局与小端平台上 WASAPI 要的交错 32 位浮点完全一致，整条转换链省掉。
+/// `F32` 的零拷贝视图。布局与小端平台上 WASAPI 要的交错 32 位浮点完全一致，整条转换链省掉。
 pub fn f32_as_bytes(samples: &[f32]) -> &[u8] {
     let len = std::mem::size_of_val(samples);
     // SAFETY: `f32` 对齐不低于 `u8`，长度由切片长度乘以 4 得出不会越界；
@@ -66,7 +67,7 @@ fn int32(samples: &[f32], out: &mut Vec<u8>) {
         if x86::avx2_available() {
             let head = x86::head_len(samples.len(), x86::avx2_lanes());
             if head > 0 {
-                // SAFETY: 上面已确认 CPU 支持 AVX2，且 head 是 8 的整数倍
+                // SAFETY: 上面已确认 CPU 支持 AVX2，且 head 是 8 的整数倍。
                 unsafe { x86::i32(&samples[..head], out) };
                 scalar::i32(&samples[head..], out);
                 return;
@@ -75,7 +76,7 @@ fn int32(samples: &[f32], out: &mut Vec<u8>) {
         if x86::sse2_available() {
             let head = x86::head_len(samples.len(), x86::sse2_lanes());
             if head > 0 {
-                // SAFETY: 上面已确认 CPU 支持 SSE2，且 head 是 4 的整数倍
+                // SAFETY: 上面已确认 CPU 支持 SSE2，且 head 是 4 的整数倍。
                 unsafe { x86::i32_sse2(&samples[..head], out) };
                 scalar::i32(&samples[head..], out);
                 return;
@@ -91,7 +92,7 @@ fn int16(samples: &[f32], out: &mut Vec<u8>) {
         if x86::avx2_available() {
             let head = x86::head_len(samples.len(), x86::avx2_lanes());
             if head > 0 {
-                // SAFETY: 同上，head 是 8 的整数倍
+                // SAFETY: 同上，head 是 8 的整数倍。
                 unsafe { x86::i16(&samples[..head], out) };
                 scalar::i16(&samples[head..], out);
                 return;
@@ -100,7 +101,7 @@ fn int16(samples: &[f32], out: &mut Vec<u8>) {
         if x86::sse2_available() {
             let head = x86::head_len(samples.len(), x86::sse2_lanes());
             if head > 0 {
-                // SAFETY: 同上，head 是 4 的整数倍
+                // SAFETY: 同上，head 是 4 的整数倍。
                 unsafe { x86::i16_sse2(&samples[..head], out) };
                 scalar::i16(&samples[head..], out);
                 return;
@@ -110,7 +111,7 @@ fn int16(samples: &[f32], out: &mut Vec<u8>) {
     scalar::i16(samples, out);
 }
 
-/// 标量实现：所有平台的兜底，也是 SIMD 内核的测试基准。
+/// 标量实现。所有平台的兜底，也是 SIMD 内核的测试基准。
 /// 满刻度先乘 2^(n-1) 再饱和转整，与 cpal 的 f32 → 整数取法一致，两种模式不会打架。
 mod scalar {
     use super::PcmFormat;
@@ -134,7 +135,7 @@ mod scalar {
         let scale = PcmFormat::I24.full_scale();
         for &sample in samples {
             let scaled = (sample.clamp(-1.0, 1.0) * scale).round() as i32;
-            // 24 位有符号的上界是 2^23 − 1，而 +1.0 正好算到 2^23
+            // 24 位有符号的上界是 2^23 − 1，而 +1.0 正好算到 2^23。
             let value = scaled.clamp(-8_388_608, 8_388_607);
             out.extend_from_slice(&value.to_le_bytes()[..3]);
         }
@@ -186,7 +187,7 @@ mod tests {
             PcmFormat::I24 => {
                 let start = index * 3;
                 let raw = i32::from_le_bytes([bytes[start], bytes[start + 1], bytes[start + 2], 0]);
-                // 3 字节小端有符号：最高位是符号位
+                // 3 字节小端有符号，最高位是符号位。
                 i64::from(raw << 8 >> 8)
             }
             PcmFormat::I32 => {
@@ -293,7 +294,7 @@ mod tests {
         assert_eq!(f32_as_bytes(&[]), []);
     }
 
-    /// 容差 1 LSB：SIMD 就近取偶、标量就近取远，差只出现在半整数上。
+    /// 容差 1 LSB。SIMD 就近取偶、标量就近取远，差只出现在半整数上。
     #[test]
     fn simd_kernels_agree_with_the_scalar_reference() {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]

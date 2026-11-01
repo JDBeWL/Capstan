@@ -1,5 +1,5 @@
-//! `WavPack` 解码：symphonia 0.6 没有它的格式读取器，改用无 unsafe 实现的 `oxideav-wavpack`。
-//! 音频块后挂的 `APEv2` 标签要按块链截掉：块迭代器走到标签处报 `InvalidMagic` 而不是当流结束。
+//! `WavPack` 解码。symphonia 0.6 没有它的格式读取器，改用无 unsafe 实现的 `oxideav-wavpack`。
+//! 音频块后挂的 `APEv2` 标签要按块链截掉，块迭代器走到标签处报 `InvalidMagic` 而不是当流结束。
 
 use std::fs::File;
 use std::io::Read;
@@ -11,17 +11,17 @@ use oxideav_wavpack::{StreamIndex, decode_range};
 
 use crate::error::{AudioError, Result};
 
-/// 块头里 `ck_size` 的位置与长度：`wvpk` 之后紧跟 4 字节小端。
+/// 块头里 `ck_size` 的位置与长度，`wvpk` 之后紧跟 4 字节小端。
 const MAGIC: &[u8; 4] = b"wvpk";
 const HEADER_LEN: usize = 8;
 
-/// 按组解码：`StreamIndex` 只走块头、不解码，播放时按成员组一组一组解。
+/// 按组解码。`StreamIndex` 只走块头、不解码，播放时按成员组一组一组解。
 /// 整首解进内存（24bit 5.1）是每五分钟 500MB；独占后端拿 `open` 做格式协商，全解要白等一秒多。
 pub struct WavPackSource {
     /// 整个文件读进来并按块链截掉尾部标签。压缩数据比解出的 PCM 小得多，
     /// 而按组跳转要能随机访问，所以留整份。跨 seek 复用同一份（见 [`load_package`]）。
     audio: Arc<Vec<u8>>,
-    /// 只走块头的索引：每组的帧数、声道数、字节范围都在里面。
+    /// 只走块头的索引，每组的帧数、声道数、字节范围都在里面。
     index: Arc<StreamIndex>,
     /// 当前这一组解出的交错样本，取值是容器位宽的整数。
     frame: Vec<i32>,
@@ -50,7 +50,7 @@ struct CachedPackage {
     package: Arc<Package>,
 }
 
-/// 只留一格：正常播放/拖动都在同一首上，切歌后再回来重读一次是可以接受的。
+/// 只留一格。正常播放/拖动都在同一首上，切歌后再回来重读一次是可以接受的。
 static CACHE: OnceLock<Mutex<Option<CachedPackage>>> = OnceLock::new();
 
 fn cache() -> MutexGuard<'static, Option<CachedPackage>> {
@@ -88,7 +88,7 @@ fn load_package(path: &Path) -> Result<Arc<Package>> {
         return Err(AudioError::Decode("不是 WavPack 文件".to_owned()));
     }
 
-    // 采样率与位宽在第一个音频块的块头里，只解析这一块，不解码
+    // 采样率与位宽在第一个音频块的块头里，只解析这一块，不解码。
     let (rate, bytes_per_sample) = {
         let block = oxideav_wavpack::first_audio_block(&bytes)
             .map_err(|err| AudioError::Decode(format!("{err:?}")))?
@@ -109,7 +109,7 @@ fn load_package(path: &Path) -> Result<Arc<Package>> {
         return Err(AudioError::NoAudioData);
     }
 
-    // 16 位留在 16 位槽；24/32 位解码出来是 32 位槽的值（实测与 ffmpeg 的 s32le 逐样本相同）
+    // 16 位留在 16 位槽；24/32 位解码后落在 32 位槽，与 ffmpeg 的 s32le 逐样本一致。
     let scale = if bytes_per_sample <= 2 {
         32_768.0
     } else {
@@ -142,7 +142,7 @@ impl WavPackSource {
             index: Arc::clone(&package.index),
             frame: Vec::new(),
             pos: 0,
-            // 游标用**绝对**帧号：流的首帧未必是 0，索引给出的区间端点也是绝对的
+            // 游标用绝对帧号。流的首帧未必是 0，索引给出的区间端点也是绝对的。
             next_frame: first_frame,
             channels: package.channels,
             rate: package.rate,
@@ -192,7 +192,7 @@ impl WavPackSource {
         Ok(())
     }
 
-    /// 只移动游标，真正的解码留到下一次取样本 —— 跳转因此是零成本的。
+    /// 只移动游标，真正的解码留到下一次取样本，因此跳转是零成本的。
     #[allow(clippy::unnecessary_wraps)] // 签名对齐其它解码器，由 TrackDecoder 统一派发
     pub fn seek(&mut self, time: Duration) -> Result<()> {
         let offset = (time.as_secs_f64() * f64::from(self.rate)) as u64;
@@ -208,7 +208,7 @@ impl WavPackSource {
         if self.pos < self.frame.len() {
             return Ok(true);
         }
-        // 游标落在哪一组里，以及从游标到该组末尾还有多少帧
+        // 游标落在哪一组里，以及从游标到该组末尾还有多少帧。
         let (start, count) = match self.index.set_for_frame(self.next_frame) {
             Some(set) => {
                 let start = self.next_frame.max(u64::from(set.first_frame));
@@ -220,7 +220,7 @@ impl WavPackSource {
             return Ok(false);
         }
 
-        // 多声道拆成组成员块，`decode_range` 按组输出；逐块解再拼会破坏交错顺序
+        // 多声道拆成组成员块，`decode_range` 按组输出；逐块解再拼会破坏交错顺序。
         let pcm = decode_range(self.audio.as_slice(), &self.index, start, count)
             .map_err(|err| AudioError::Decode(format!("{err:?}")))?;
         let frames = pcm.len() / self.channels;
@@ -242,7 +242,7 @@ impl Iterator for WavPackSource {
         while self.pos >= self.frame.len() {
             match self.pump() {
                 Ok(true) => {}
-                // 整首解完会得到 `false`
+                // 整首解完会得到 `false`。
                 Ok(false) => return None,
                 Err(err) => {
                     log::warn!("WavPack 解码中断：{err}");
@@ -256,8 +256,8 @@ impl Iterator for WavPackSource {
     }
 }
 
-/// 按 `ck_size` 走块链，返回只含音频块的那一段：块 = `wvpk` + 4 字节长度 + 内容。
-/// 魔数不是 `wvpk` 就停：后面是 `APEv2` 标签，解码器遇到会报错而不是当流结束。
+/// 按 `ck_size` 走块链，返回只含音频块的那一段，块 = `wvpk` + 4 字节长度 + 内容。
+/// 魔数不是 `wvpk` 就停。后面是 `APEv2` 标签，解码器遇到会报错而不是当流结束。
 fn trim_trailing_tag(bytes: &[u8]) -> &[u8] {
     let mut offset = 0usize;
     while offset + HEADER_LEN <= bytes.len() {
@@ -300,7 +300,7 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// 写一个真实的 `WavPack` 文件：3 秒 44.1kHz 立体声，值域在 16 位内。
+    /// 写一个真实的 `WavPack` 文件。3 秒 44.1kHz 立体声，值域在 16 位内。
     fn fixture(path: &std::path::Path, seconds: u32) {
         let frames = 44_100 * seconds as usize;
         let pcm: Vec<i32> = (0..frames * 2)
@@ -310,7 +310,7 @@ mod tests {
         std::fs::write(path, &bytes).expect("写测试文件");
     }
 
-    /// 打开同一文件时复用压缩数据与索引：共享播放后端每次 seek 都会重建音源。
+    /// 打开同一文件时复用压缩数据与索引，共享播放后端每次 seek 都会重建音源。
     #[test]
     fn reopening_the_same_file_reuses_the_scanned_package() {
         let _guard = cache_lock();
@@ -363,7 +363,7 @@ mod tests {
         assert!(!old.shares_package_with(&new), "文件状态变了就不能复用");
     }
 
-    /// 性能基准：第二次打开应只剩一次 stat，而不是再读一遍整份文件。
+    /// 性能基准。第二次打开应只剩一次 stat，而不是再读一遍整份文件。
     #[test]
     #[ignore = "性能基准，手动运行"]
     fn a_cached_reopen_is_much_faster_than_the_first() {
@@ -391,7 +391,7 @@ mod tests {
         );
     }
 
-    /// 造一个块：`wvpk` + 4 字节 `ck_size` + `ck_size` 字节内容。
+    /// 造一个块，`wvpk` + 4 字节 `ck_size` + `ck_size` 字节内容。
     fn block(payload: usize) -> Vec<u8> {
         let mut bytes = b"wvpk".to_vec();
         bytes.extend_from_slice(&(payload as u32).to_le_bytes());
@@ -399,7 +399,7 @@ mod tests {
         bytes
     }
 
-    /// 尾部挂 `APEv2` 标签是 `WavPack` 的常态，必须按块链截掉 ——
+    /// 尾部挂 `APEv2` 标签是 `WavPack` 的常态，必须按块链截掉。
     /// 块迭代器走到标签处会报 `InvalidMagic` 而不是当流结束。
     #[test]
     fn a_trailing_apev2_tag_is_trimmed_off() {
@@ -423,7 +423,7 @@ mod tests {
         assert_eq!(trim_trailing_tag(&bytes).len(), audio_len);
     }
 
-    /// 声明了长度却没有后续字节：这一块是残的，连同它一起截掉。
+    /// 声明了长度却没有后续字节。这一块是残的，连同它一起截掉。
     #[test]
     fn a_truncated_block_is_not_counted() {
         let mut bytes = block(10);
@@ -434,7 +434,7 @@ mod tests {
         assert_eq!(trim_trailing_tag(&bytes), &bytes[..audio_len]);
     }
 
-    /// 开头就不是 `wvpk`：什么都留不下，交给上层按「不是 WavPack」报错。
+    /// 开头就不是 `wvpk`。什么都留不下，交给上层按「不是 WavPack」报错。
     #[test]
     fn a_non_wavpack_head_leaves_nothing() {
         assert!(trim_trailing_tag(b"RIFF....WAVEfmt ").is_empty());

@@ -1,4 +1,4 @@
-//! 音量控制。轨道几何由 `canvas` 捕获换算比例，拖动中实时下发 —— 调音量不重建解码链。
+//! 音量控制。轨道几何由 `canvas` 捕获换算比例，拖动中实时下发。调音量不重建解码链。
 
 use crate::components::settings_panel::SettingsEntity;
 use crate::entities::{PlaybackEntity, PlaybackEvent};
@@ -48,7 +48,7 @@ impl VolumeControl {
         settings: Entity<SettingsEntity>,
         cx: &mut Context<Self>,
     ) -> Self {
-        // subscribe 而不是 observe：音量不跟随进度，observe 会让它每 100ms 白重绘一次
+        // subscribe 而不是 observe。音量不跟随进度，observe 会让它每 100ms 白重绘一次。
         let subscription = cx.subscribe(&playback, |_, _, event: &PlaybackEvent, cx| {
             if matches!(event, PlaybackEvent::VolumeChanged) {
                 cx.notify();
@@ -89,8 +89,8 @@ impl VolumeControl {
         }
     }
 
-    /// 落盘的是「用户要的音量」而不是此刻的增益：静音时 `muted_from` 记着前者。
-    /// 只在一次操作结束时调用 —— 跟着拖动每帧写会把 `settings.json` 刷爆。
+    /// 落盘的是「用户要的音量」而不是此刻的增益，静音时 `muted_from` 记着前者。
+    /// 只在一次操作结束时调用。跟着拖动每帧写会把 `settings.json` 刷爆。
     fn persist(&self, cx: &mut Context<Self>) {
         let muted = self.muted_from.is_some();
         let volume = self
@@ -116,7 +116,7 @@ impl VolumeControl {
         cx.notify();
     }
 
-    /// 静音 / 取消静音。`M` 键与点击喇叭都走这里。
+    /// 静音或取消静音。`M` 键与点击喇叭都走这里。
     pub fn toggle_mute(&mut self, cx: &mut Context<Self>) {
         if let Some(previous) = self.muted_from.take() {
             // 原音量本身就是 0（拖到底再静音）时给一个可听的默认值，否则取消静音没反应。
@@ -222,7 +222,7 @@ impl Render for VolumeControl {
                     this.end_drag(cx);
                 }),
             )
-            // 条外松手也要结束拖动：`on_mouse_up` 要求松手时元素仍被命中，横着甩出去就收不到，
+            // 条外松手也要结束拖动。`on_mouse_up` 要求松手时元素仍被命中，横着甩出去就收不到，
             // 那样 `drag` 一直留着，轨道和滑块卡在「正在拖」的样子上。
             .on_mouse_up_out(
                 MouseButton::Left,
@@ -289,7 +289,7 @@ impl Render for VolumeControl {
             );
 
         let bubble = self.drag.map(|value| {
-            // 跟着滑块中心走，但两端夹进轨道内：不然 0% / 100% 时气泡会探出底栏边缘。
+            // 跟着滑块中心走，但两端夹进轨道内，不然 0% / 100% 时气泡会探出底栏边缘。
             let center = THUMB_R + value * (BAR_W - 2.0 * THUMB_R);
             let left = (center - BUBBLE_W / 2.0).clamp(0.0, BAR_W - BUBBLE_W);
             div()
@@ -323,7 +323,7 @@ impl Render for VolumeControl {
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：`crate::platform::*` 带进来的 gpui `test` 宏会遮蔽内置 `#[test]`。
+    // 不写 `use super::*`，`crate::platform::*` 带进来的 gpui `test` 宏会遮蔽内置 `#[test]`。
     use super::{BAR_W, THUMB_R, ratio_in_track, snap};
 
     #[test]

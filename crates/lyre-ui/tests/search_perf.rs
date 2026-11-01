@@ -1,5 +1,5 @@
-//! 搜索与追加收窄的性能基准。默认不跑：10 万首的构建与多轮扫描会拖慢常规测试。
-//! 运行：cargo test -p lyre-ui --release --test `search_perf` -- --ignored --nocapture
+//! 搜索与追加收窄的性能基准。默认不跑，10 万首的构建与多轮扫描会拖慢常规测试。
+//! 用 `cargo test -p lyre-ui --release --test search_perf -- --ignored --nocapture` 运行。
 
 use std::hint::black_box;
 use std::path::PathBuf;
@@ -48,7 +48,7 @@ fn a_hundred_thousand_tracks_keeps_search_and_typing_latency_bounded() {
     let fields: Vec<SearchFields> = tracks.iter().map(SearchFields::new).collect();
     let full_terms = filter::parse_query("城市 夜");
 
-    // 预热：第一遍包含分配器与页表的冷启动。
+    // 预热，第一遍包含分配器与页表的冷启动。
     black_box(
         filter::project_in_fields(&fields, &full_terms, None)
             .unwrap()
@@ -63,7 +63,7 @@ fn a_hundred_thousand_tracks_keeps_search_and_typing_latency_bounded() {
         black_box(rows.len());
     }
 
-    // 模拟逐字输入：每一步只在上一步的结果里收窄。
+    // 模拟逐字输入，每一步只在上一步的结果里收窄。
     let mut incremental = Vec::with_capacity(ROUNDS * 4);
     for _ in 0..ROUNDS {
         let mut rows =

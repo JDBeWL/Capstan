@@ -1,6 +1,6 @@
-//! WASAPI 独占（位完美）输出后端：样本直接写进设备的硬件缓冲，中间没有系统混音器重采样。
-//! 格式协商优先要声源自己的采样率与声道数，要不到才退回标准档位并对声源重采样。
-//! 只在 Windows 上可编译；线程分工：控制线程协商、建链、下发命令，渲染线程持有独占流并搬样本，推送线程按水位灌环。
+//! WASAPI 独占输出后端，即位完美输出。样本直接写进设备的硬件缓冲，中间没有系统混音器重采样。
+//! 格式协商优先采用声源本身的采样率与声道数，不可得时退回标准档位并对声源重采样。
+//! 仅在 Windows 上可编译。线程分工。控制线程负责协商、建链与命令下发；渲染线程持有独占流并搬运样本；推送线程按水位写入采样环。
 
 mod backend;
 mod device;
@@ -64,7 +64,7 @@ mod hardware {
             .collect()
     }
 
-    /// 写一个全零的 16-bit PCM WAV —— 用例只验通路，不想真的发出声音。
+    /// 写一个全零的 16-bit PCM WAV。用例只验通路，不想真的发出声音。
     fn silent_wav(dir: &tempfile::TempDir, sample_rate: u32, channels: u16) -> std::path::PathBuf {
         silent_wav_frames(dir, sample_rate, channels, 4 * 8_000)
     }
@@ -104,7 +104,8 @@ mod hardware {
     }
 
     /// 真机会走完「协商独占格式 → 建链 → 推送 → 独占写设备」整条路。
-    /// 默认忽略：它会真的占住默认输出设备；需要时跑 `cargo test -p lyre-audio-exclusive -- --ignored --nocapture`。
+    /// 默认忽略，它会真的占住默认输出设备。
+    /// 需要时跑 `cargo test -p lyre-audio-exclusive -- --ignored --nocapture`。
     #[test]
     #[ignore = "需要真实声卡，会独占默认输出设备"]
     fn the_exclusive_stream_opens_and_plays_a_silent_track() {
@@ -119,7 +120,7 @@ mod hardware {
         let duration = backend.load(&path, true).expect("应当能装载");
         assert!(duration > Duration::ZERO, "时长不该为零");
 
-        // 素材是 44.1k 立体声：协商按优先级要声源自己的口径，要到了就是位完美直出
+        // 素材为 44.1k 立体声。协商按优先级请求声源本身的格式口径，成功即为位完美直出。
         let format = backend.format().expect("装载之后应当有格式");
         println!("装载后的独占格式：{}", backend.describe_output());
         assert!(
@@ -128,7 +129,7 @@ mod hardware {
             backend.describe_output()
         );
 
-        // 位置必须真的往前走：只有渲染线程在往设备写，它才会动
+        // 位置必须真的往前走，因为只有渲染线程在往设备写，它才会动。
         let mut advanced = false;
         for _ in 0..60 {
             std::thread::sleep(Duration::from_millis(20));
@@ -144,7 +145,8 @@ mod hardware {
         drop(backend);
     }
 
-    /// 独占的核心特征是这台设备被别人拿不走：独占期间用 cpal 再要一条共享流去碰同一台设备，要不到才说明声音绕开了系统混音器。
+    /// 独占的核心特征是这台设备被别人拿不走。独占期间用 cpal 再要一条共享流去碰同一台设备，
+    /// 要不到才说明声音绕开了系统混音器。
     /// 共享流打不开 ⟹ 音量合成器里看见的进程条目是系统保留的历史会话，不是我们的流。
     #[test]
     #[ignore = "需要真实声卡，会独占默认输出设备"]
@@ -181,13 +183,13 @@ mod hardware {
         );
         assert!(
             opened.is_err(),
-            "独占生效时共享流不该还能打开设备，实际却成功了 —— 说明这条流并没有真正独占"
+            "独占生效时共享流不该还能打开设备，实际却成功了。说明这条流并没有真正独占"
         );
 
         drop(backend);
     }
 
-    /// WASAPI 独占流自身也会注册音频会话：音量合成器列出这个应用，不能证明独占没生效。
+    /// WASAPI 独占流自身也会注册音频会话。音量合成器列出这个应用，不能证明独占没生效。
     /// 独占的证据是这条流开着时别的共享流打不开设备（见 [`an_exclusive_stream_keeps_shared_streams_out`]）。
     #[test]
     #[ignore = "需要真实声卡，会独占默认输出设备"]
@@ -198,7 +200,7 @@ mod hardware {
         backend.load(&path, true).expect("应当能装载");
         std::thread::sleep(Duration::from_millis(400));
 
-        // 不能断言「开流之前一个都没有」：同一进程里先跑过别的真机用例的话，那些流留下的
+        // 不能断言「开流之前一个都没有」。同一进程里先跑过别的真机用例的话，那些流留下的
         // 会话在进程退出前一直是 Inactive 的，这条对照就不成立了。看的是它确实注册了一个活的。
         let during = our_sessions("独占中");
         println!("本进程：独占中 {during:?}");
@@ -210,8 +212,8 @@ mod hardware {
         drop(backend);
     }
 
-    /// 挑一台现在能开独占的设备：先是系统默认，被别的程序占着就往下找。
-    /// 默认设备被占用是常态 —— 本应用自己开着的时候就是。
+    /// 挑选一台当前可开独占流的设备。先取系统默认，被其它程序占用时依次向下尝试。
+    /// 默认设备被占用属常态，本应用自身占用时即属此列。
     fn open_any_exclusive() -> ExclusiveBackend {
         let mut candidates: Vec<Option<String>> = vec![None];
         candidates.extend(
@@ -256,7 +258,7 @@ mod hardware {
         panic!("等了 {limit:?} 这一首还没放完");
     }
 
-    /// 独占下切歌不重开流：停流再起要重新抢占设备、锁时钟，接缝处听得见。
+    /// 独占下切歌不重开流。停流再起要重新抢占设备、锁时钟，接缝处听得见。
     /// 放完后留 `IDLE_GRACE` 宽限，下一首接在同一条流上；宽限过了没新曲，设备才让出去。
     #[test]
     #[ignore = "需要真实声卡，会独占默认输出设备"]
@@ -273,7 +275,7 @@ mod hardware {
         wait_finished(&mut backend, Duration::from_secs(5));
         // 真实链路里下一首是几十毫秒之后到的（音频线程一拍 + 界面一帧）
         backend.load(&second, true).expect("应当能装载");
-        // 留出渲染线程处理这条 Start 的时间：真重开了流，这一等就会把次数顶上去
+        // 留出渲染线程处理这条 Start 的时间。真重开了流，这一等就会把次数顶上去。
         std::thread::sleep(Duration::from_millis(200));
         assert_eq!(
             backend.stream_starts(),
@@ -291,7 +293,7 @@ mod hardware {
         std::thread::sleep(Duration::from_millis(200));
         assert!(backend.position() > Duration::ZERO, "第二首应当在往前走");
 
-        // 等第二首也放完，再过掉宽限期：这时候设备早该让出去了
+        // 等第二首也放完，再过掉宽限期，这时候设备早该让出去了。
         wait_finished(&mut backend, Duration::from_secs(5));
         std::thread::sleep(Duration::from_millis(1_400));
 
@@ -303,7 +305,7 @@ mod hardware {
     }
 
     /// 跳转之后必须马上接上新位置的声音，且不能把「播到哪了」和「整首放完」搞错。
-    /// 独占下的 seek 要重建整条链 —— 链得在旧的那条还在播的时候先备好，换手才只剩作废环那一瞬；
+    /// 独占下的 seek 要重建整条链。链得在旧的那条还在播的时候先备好，换手才只剩作废环那一瞬；
     /// 先停旧线程再去打开解码器、seek 的话，这段耗时就是实打实的断音。
     #[test]
     #[ignore = "需要真实声卡，会独占默认输出设备"]
@@ -345,7 +347,7 @@ mod hardware {
         drop(backend);
     }
 
-    /// 关掉独占流后它留下的会话会怎样 —— 这决定「不播放时把流放掉」能不能让音量合成器里的条目一并收掉。
+    /// 关掉独占流后它留下的会话会怎样。这决定「不播放时把流放掉」能不能让音量合成器里的条目一并收掉。
     #[test]
     #[ignore = "需要真实声卡，会独占默认输出设备"]
     fn what_happens_to_the_session_after_the_exclusive_stream_closes() {
@@ -385,7 +387,7 @@ mod hardware {
             "应当已经播了一段，实际 {before:?}"
         );
 
-        // 换一台不存在的设备：会退回默认设备、重建整条链路，进度必须接着走
+        // 换一台不存在的设备，会退回默认设备、重建整条链路，进度必须接着走。
         backend
             .set_device(Some("wasapi:{0.0.0.00000000}.{no-such-endpoint}"))
             .expect("切设备应当成功");
@@ -409,7 +411,7 @@ mod hardware {
     }
 }
 
-/// 注入式测试设施：假设备流 + 不碰声卡的 WAV 素材。真机用例仍走 `hardware`。
+/// 注入式测试设施，假设备流 + 不碰声卡的 WAV 素材。真机用例仍走 `hardware`。
 #[cfg(test)]
 pub(crate) mod test_support {
     use std::path::{Path, PathBuf};
@@ -515,7 +517,7 @@ pub(crate) mod test_support {
         }
     }
 
-    /// 44.1k / 2ch / 16-bit 全零 WAV。只用来喂真实解码器。
+    /// 44.1k / 2ch / 16-bit 全零 WAV，仅作为真实解码器的输入。
     pub fn silent_wav(dir: &Path, frames: usize) -> PathBuf {
         let sample_rate: u32 = 44_100;
         let channels: u16 = 2;

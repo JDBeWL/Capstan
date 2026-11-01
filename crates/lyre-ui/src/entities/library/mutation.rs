@@ -1,4 +1,4 @@
-//! 曲目集合的破坏性改动：删一首、清空、换排序键，以及它们的撤销。
+//! 曲目集合的破坏性改动。删一首、清空、换排序键，以及它们的撤销。
 //! 撤销就是把曲目插回原来的曲库下标，调用方手上的 `(Track, usize)` 是全部所需信息。
 
 use lyre_core::{SortKey, Track, TrackId};
@@ -10,7 +10,7 @@ use super::scope::Scope;
 
 impl LibraryEntity {
     /// 移除一首，返回被移除的曲目与它的曲库下标（撤销要用这两样，故在消失前克隆带出）。
-    /// 下标必须是曲库空间的：`insert_at` 作用在曲库上，带过滤时与可见行号不同。
+    /// 下标必须是曲库空间的。`insert_at` 作用在曲库上，带过滤时与可见行号不同。
     pub fn remove(&mut self, id: TrackId, cx: &mut Context<Self>) -> Option<(Track, usize)> {
         let index = self.playlist.index_of(id)?;
         let track = self.playlist.by_id(id)?.clone();
@@ -21,10 +21,10 @@ impl LibraryEntity {
         self.invalidate();
         self.persist();
 
-        // 投影基于曲库下标，不重算可见行就会指向错位的曲目
+        // 投影基于曲库下标，不重算可见行就会指向错位的曲目。
         self.recompute_visible(cx);
 
-        // 光标不能悬空：落到原位置的下一首，到队尾就落最后一首；走 `set_focus` 列表才会滚过去
+        // 光标不能悬空。落到原位置的下一首，到队尾就落最后一首；走 `set_focus` 列表才会滚过去。
         if self.focus == Some(id) {
             let len = self.playlist.len();
             let next = if len == 0 {
@@ -71,7 +71,7 @@ impl LibraryEntity {
         self.remove(id, cx)
     }
 
-    /// 撤销用的回插：把曲目放回原来的曲库位置，并把光标落在它上面。
+    /// 撤销用的回插。把曲目放回原来的曲库位置，并把光标落在它上面。
     pub fn restore(&mut self, track: &Track, index: usize, cx: &mut Context<Self>) {
         if self.playlist.insert_at(track.clone(), index) {
             self.invalidate();

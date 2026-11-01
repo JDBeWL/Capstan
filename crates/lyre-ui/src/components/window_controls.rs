@@ -1,6 +1,7 @@
-//! 自绘窗口控件：最小化 / 最大化 / 还原 / 关闭。
-//! Windows 上点击不走 GPUI 而是 `WM_NCHITTEST` → `DefWindowProc`，按钮因此自带系统级按下态；非 Windows 平台要 `on_click` 兜底。
-//! 这些按钮必须是拖拽区的兄弟节点 —— 命中测试取第一个命中的条目。
+//! 自绘窗口控件，含最小化、最大化、还原与关闭。
+//! Windows 上点击不经 GPUI，而走 `WM_NCHITTEST` → `DefWindowProc`，
+//! 按钮因此自带系统级按下态；其它平台需由 `on_click` 兜底。
+//! 这些按钮必须是拖拽区的兄弟节点。命中测试取第一个命中的条目。
 
 use crate::icon::{Glyph, icon_inherit};
 use crate::platform::*;
@@ -52,7 +53,8 @@ impl Control {
     }
 }
 
-/// 整个窗口控件组（最小化 / 最大化 / 关闭），最大化态取自 `window.is_maximized()`（GPUI 已缓存平台层状态，不必监听窗口事件）。
+/// 整个窗口控件组，含最小化、最大化与关闭。最大化态取自 `window.is_maximized()`：
+/// GPUI 已缓存平台层状态，不必监听窗口事件。
 pub fn window_controls(window: &Window) -> impl IntoElement {
     // macOS 的红绿灯由系统绘制。
     if cfg!(target_os = "macos") {
@@ -81,13 +83,13 @@ pub fn window_controls(window: &Window) -> impl IntoElement {
             Control::Maximize
         }));
     }
-    // 关闭不受 `supported` 限制：关掉窗口必须始终可达。
+    // 关闭不受 `supported` 限制，关掉窗口必须始终可达。
     row.child(control_button(Control::Close))
 }
 
 fn control_button(control: Control) -> impl IntoElement {
     let is_close = control == Control::Close;
-    // 每个按钮一个 group：符号是子元素，要靠 `group_hover` 才能感知整颗按钮的悬停。
+    // 每个按钮一个 group。符号是子元素，要靠 `group_hover` 才能感知整颗按钮的悬停。
     let group = SharedString::from(format!("winctl-{}", control.code()));
 
     div()
@@ -120,10 +122,11 @@ fn control_button(control: Control) -> impl IntoElement {
         .child(window_glyph(control, group))
 }
 
-/// 窗口符号。颜色必须显式给常态与悬停两次：gpui 把 SVG 渲成 alpha 蒙版，颜色只由 `text_color` 决定，而子元素不继承父级的 `text_color`。
+/// 窗口符号。颜色必须为常态与悬停各给一次。gpui 把 SVG 渲成 alpha 蒙版，
+/// 颜色只由 `text_color` 决定，而子元素不继承父级的 `text_color`。
 /// `icon_inherit` 返回的 `impl IntoElement` 已擦除链式方法，所以变色要靠这层 `div`。
 fn window_glyph(control: Control, group: SharedString) -> impl IntoElement {
-    // 关闭键悬停是红底：浅色用白叉，深色用深墨叉，统一取 `text_on_danger`。
+    // 关闭键悬停是红底。浅色用白叉，深色用深墨叉，统一取 `text_on_danger`。
     let idle = theme::text();
     let hovered = if control == Control::Close {
         theme::text_on_danger()

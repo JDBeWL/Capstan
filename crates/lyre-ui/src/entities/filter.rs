@@ -1,4 +1,4 @@
-//! 搜索匹配：查询按空白分词、曲目与名称的命中判断、可见行投影。
+//! 搜索匹配，含查询按空白分词、曲目与名称的命中判断，以及可见行投影。
 
 use lyre_core::Track;
 
@@ -19,7 +19,7 @@ impl SearchFields {
         }
     }
 
-    /// 全部词元命中（AND）。
+    /// 全部词元命中，即 AND 语义。
     pub fn matches(&self, terms: &[String]) -> bool {
         terms.iter().all(|term| self.matches_term(term))
     }
@@ -54,12 +54,12 @@ pub fn matches(track: &Track, terms: &[String]) -> bool {
     terms.iter().all(|term| matches_term(track, term))
 }
 
-/// 一个名称（专辑名 / 艺术家名）是否命中全部词元，规则与 [`fn@matches`] 一致。
+/// 一个名称，如专辑名或艺术家名，是否命中全部词元；规则与 [`fn@matches`] 一致。
 pub fn matches_name(name: &str, terms: &[String]) -> bool {
     terms.iter().all(|term| contains_ci(name, term))
 }
 
-/// 单个词元是否命中；检索范围是标题 / 艺术家 / 专辑，不含路径。
+/// 单个词元是否命中；检索范围是标题、艺术家、专辑，不含路径。
 fn matches_term(track: &Track, term: &str) -> bool {
     contains_ci(&track.title, term)
         || track
@@ -72,33 +72,33 @@ fn matches_term(track: &Track, term: &str) -> bool {
             .is_some_and(|album| contains_ci(album, term))
 }
 
-/// 大小写不敏感的包含判断，全程不分配：每敲一个字符都要过一遍全库三个字段。
+/// 大小写不敏感的包含判断，全程不分配，每敲一个字符都要过一遍全库三个字段。
 fn contains_ci(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return true;
     }
     if haystack.is_ascii() && needle.is_ascii() {
-        // `windows` 对「窗口比切片长」是直接 panic，不是返回空迭代器
+        // `windows` 对「窗口比切片长」是直接 panic，不是返回空迭代器。
         return needle.len() <= haystack.len()
             && haystack
                 .as_bytes()
                 .windows(needle.len())
                 .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()));
     }
-    // 含非 ASCII 时按字符边界滑：按字节推进会切进一个中日韩字符中间。
+    // 含非 ASCII 时按字符边界滑，按字节推进会切进一个中日韩字符中间。
     haystack
         .char_indices()
         .any(|(offset, _)| starts_with_ci(&haystack[offset..], needle))
 }
 
-/// `haystack` 的开头是否大小写不敏感地就是 `needle`（`needle` 非空）。
-/// 两侧都即时小写化；`flat_map(char::to_lowercase)` 不分配，且能处理一字多字符的小写化（`İ`）。
+/// `haystack` 的开头是否大小写不敏感地等于 `needle`，要求 `needle` 非空。
+/// 两侧都即时小写化；`flat_map(char::to_lowercase)` 不分配，且能处理一字多字符的小写化，如 `İ`。
 fn starts_with_ci(haystack: &str, needle: &str) -> bool {
     let mut left = haystack.chars().flat_map(char::to_lowercase);
     let mut right = needle.chars().flat_map(char::to_lowercase);
     loop {
         match (left.next(), right.next()) {
-            // 右端（needle）先走完就是命中；左端先走完与字符不等都落到最后一个分支
+            // 右端即 needle 先走完即为命中；左端先走完与字符不等都落到最后一个分支。
             (_, None) => return true,
             (Some(a), Some(b)) if a == b => {}
             _ => return false,
@@ -106,12 +106,12 @@ fn starts_with_ci(haystack: &str, needle: &str) -> bool {
     }
 }
 
-/// 计算可见投影。`None` 表示全部可见（调用方据此免分配）；`Some(rows)` 是命中曲目在 `tracks` 里的下标，保持原顺序。
+/// 计算可见投影。`None` 表示全部可见，调用方据此免分配；`Some(rows)` 为命中曲目在 `tracks` 里的下标，保持原顺序。
 pub fn project(tracks: &[Track], terms: &[String]) -> Option<Vec<usize>> {
     project_in(tracks, terms, None)
 }
 
-/// 在作用域 `base`（如「正在看哪张专辑」）上叠加词元过滤：两者取交集，不是互相覆盖。
+/// 在作用域 `base` 上叠加词元过滤，如「正在看哪张专辑」；两者取交集，而非互相覆盖。
 pub fn project_in(
     tracks: &[Track],
     terms: &[String],
@@ -121,7 +121,7 @@ pub fn project_in(
     project_in_fields(&fields, terms, base)
 }
 
-/// 已缓存检索字段的投影：生产路径走这条，避免每次查询重新小写整库。
+/// 已缓存检索字段的投影。生产路径走这条，避免每次查询重新小写整库。
 pub fn project_in_fields(
     fields: &[SearchFields],
     terms: &[String],
@@ -195,7 +195,7 @@ mod tests {
         assert!(contains_ci("a🎵b", "🎵b"));
     }
 
-    /// 词元比字段长必然不匹配：ASCII 分支的字节滑窗在这里会 panic。
+    /// 词元比字段长必然不匹配，ASCII 分支的字节滑窗在这里会 panic。
     #[test]
     fn a_needle_longer_than_the_haystack_never_matches() {
         assert!(!contains_ci("Neon", "neon drive"));

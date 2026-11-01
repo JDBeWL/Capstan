@@ -15,7 +15,7 @@ use super::{
     cells, drag,
 };
 
-/// 专辑列要不要画：断点允许，且专辑详情里永远不画（每行都是同一张专辑）。
+/// 专辑列要不要画。断点允许，且专辑详情里永远不画（每行都是同一张专辑）。
 pub(super) fn show_album_column(breakpoint_allows: bool, kind: ScopeKind) -> bool {
     breakpoint_allows && kind != ScopeKind::Album
 }
@@ -35,7 +35,7 @@ pub(super) fn column_header(env: &RowEnv) -> impl IntoElement {
         .text_size(px(theme::FONT_EYEBROW))
         .font_weight(theme::WEIGHT_BUTTON)
         .text_color(theme::text_faint())
-        // 勾选列与手柄列没有表头文字，但要占同样的宽：否则切换多选会在每行前面挖出一道错位。
+        // 勾选列与手柄列没有表头文字，但要占同样的宽，否则切换多选会在每行前面挖出一道错位。
         .when(env.selectable, |row| {
             row.child(div().flex_none().w(px(CHECK_W)))
         })
@@ -88,13 +88,13 @@ pub(super) enum RowState {
     Idle,
     /// 光标所在行（键盘操作的目标）
     Focused,
-    /// 正在播放
+    /// 正在播放。
     Playing,
-    /// 既在播放又是光标行
+    /// 既在播放又是光标行。
     PlayingFocused,
 }
 
-/// 删除动画传进每一行的位移：本行擦出、下方的行先向上补位。
+/// 删除动画传进每一行的位移，让本行擦出、下方的行先向上补位。
 #[derive(Clone, Copy, Default)]
 pub(super) struct RowMotion {
     pub(super) remove: f32,
@@ -120,15 +120,15 @@ impl RowState {
     }
 
     fn background(self) -> Rgba {
-        // 播放行靠行首黄块与粗体标出，不再整行铺淡黄：黄色面积要小。
+        // 播放行靠行首黄块与粗体标出，不再整行铺淡黄，黄色面积要小。
         match self {
             Self::Focused => theme::cursor(),
             Self::Playing | Self::PlayingFocused | Self::Idle => theme::transparent(),
         }
     }
 
-    /// 画不画行首那道竖条（= 键盘光标在哪）：两个播放态的底色与字色相同，只能靠它分开。
-    /// 竖条是绝对定位，不做 flex 子元素或 `border` —— 那两者参与布局，会把整表的列推歪。
+    /// 画不画行首那道竖条（= 键盘光标在哪）。两个播放态的底色与字色相同，只能靠它分开。
+    /// 竖条是绝对定位，不做 flex 子元素或 `border`。那两者参与布局，会把整表的列推歪。
     fn shows_cursor_bar(self) -> bool {
         self.is_focused()
     }
@@ -147,7 +147,7 @@ impl RowState {
     }
 }
 
-/// 行首黄块切角露出的底色：光标行是 chip 色，其余是白板。
+/// 行首黄块切角露出的底色。光标行是 chip 色，其余是白板。
 fn if_focused_backdrop(state: RowState) -> Rgba {
     if state.is_focused() {
         theme::cursor()
@@ -167,13 +167,13 @@ pub(super) fn row(
     list: &WeakEntity<TrackList>,
     covers: &Entity<CoverCache>,
     motion: RowMotion,
-    // `(世代, 延迟 ms)`：这一行属于本轮逐行入场。
+    // `(世代, 延迟 ms)`，这一行属于本轮逐行入场。
     enter: Option<(u64, u64)>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let track_id = track.id;
-    // 行高只从 `env.row_height` 来：`uniform_list` 按它算每一项的位置，这里另算一份就会错位
+    // 行高只从 `env.row_height` 来。`uniform_list` 按它算每一项的位置，这里另算一份就会错位。
     let row_height = env.row_height;
     let group: SharedString = format!("track-row-{index}").into();
     let hover_id = ElementId::from(("track-row", index));
@@ -184,11 +184,11 @@ pub(super) fn row(
     let mut element = div()
         .id(hover_id.clone())
         .group(group.clone())
-        // 落点区是绝对定位的，要有这个才钉在本行而不是钉在列表上
+        // 落点区是绝对定位的，要有这个才钉在本行而不是钉在列表上。
         .relative()
         .h(px(row_height))
         .w_full()
-        // `min_w_0` 与 `w_full` 配套：否则行收缩不到比内容更窄，长标题会把专辑列和时长列顶歪
+        // `min_w_0` 与 `w_full` 配套。否则行收缩不到比内容更窄，长标题会把专辑列和时长列顶歪。
         .min_w_0()
         .flex()
         .items_center()
@@ -217,7 +217,7 @@ pub(super) fn row(
             .bg(theme::trace()),
     );
 
-    // `left(0)` 相对行的 padding box，绝对定位不挤占任何一列
+    // `left(0)` 相对行的 padding box，绝对定位不挤占任何一列。
     if state.shows_cursor_bar() {
         element = element.child(
             div()
@@ -230,12 +230,12 @@ pub(super) fn row(
         );
     }
 
-    // 行首两列都定宽：切换多选或进出歌单不该让整表的列跳一下
+    // 行首两列都定宽，切换多选或进出歌单不该让整表的列跳一下。
     if env.selectable {
         element = element.child(cells::check_cell(index, track_id, picked, list.clone()));
     }
     if env.reorderable {
-        // 拖拽影像要的是标题：只有真能拖的时候才付一次 clone
+        // 拖拽影像要的是标题，只有真能拖的时候才付一次 clone。
         element = element.child(drag::handle_cell(index, track.title.clone(), group.clone()));
     }
 
@@ -270,7 +270,7 @@ pub(super) fn row(
             .into_any_element()
     } else {
         // 序号与悬停播放键重叠在同一格，用 `group_hover` 切换两层透明度。
-        // 不用父级 `hover` + 每行的 `hovered` 布尔：滑过一行就 notify 一次，滚动时每秒几十次重绘
+        // 不用父级 `hover` + 每行的 `hovered` 布尔。滑过一行就 notify 一次，滚动时每秒几十次重绘。
         let number_color = if state.is_focused() {
             theme::text_muted()
         } else {
@@ -287,7 +287,7 @@ pub(super) fn row(
             .justify_end()
             .pr(px(theme::ROW_INDEX_GAP))
             .cursor_pointer()
-            // 点序号 = 播放这一首，与点标题同走 `activate`
+            // 点序号 = 播放这一首，与点标题同走 `activate`。
             .on_click({
                 let library = library.clone();
                 move |_, _, cx| {
@@ -380,7 +380,7 @@ pub(super) fn row(
             menu(),
         ));
 
-    // 落点高亮用 `drag_over` 而不是视图状态：拖到行外松手不会留下残留高亮
+    // 落点高亮用 `drag_over` 而不是视图状态，拖到行外松手不会留下残留高亮。
     if env.reorderable {
         element = element
             .child(drag::drop_zone(
@@ -397,7 +397,7 @@ pub(super) fn row(
             ));
     }
 
-    // 换内容后的逐行亮起：从左滑入并淡入，延迟按行号错开。
+    // 换内容后的逐行亮起。从左滑入并淡入，延迟按行号错开。
     if let Some((generation, delay_ms)) = enter {
         let key = ElementId::named_usize(
             "row-enter",
@@ -422,7 +422,7 @@ pub(super) fn row(
             .tooltip(crate::common::tooltip::builder(reason));
     }
 
-    // 删除：本行向右擦出并变淡；它下面的行同步向上补位，等真正移除时正好接住。
+    // 删除。本行向右擦出并变淡；它下面的行同步向上补位，等真正移除时正好接住。
     if motion.shift != 0.0 {
         element = element.top(px(motion.shift));
     }

@@ -26,7 +26,7 @@ pub fn thousands(n: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：`crate::platform::*` 带进来的 gpui `test` 宏会遮蔽内置 `#[test]`。
+    // 不写 `use super::*`，`crate::platform::*` 带进来的 gpui `test` 宏会遮蔽内置 `#[test]`。
     #[test]
     fn thousands_groups_by_three() {
         assert_eq!(super::thousands(0), "0");

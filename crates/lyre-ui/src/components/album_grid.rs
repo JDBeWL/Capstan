@@ -1,4 +1,4 @@
-//! 封面网格：专辑 / 艺术家两种分组共用一套渲染，用 `uniform_list` 虚拟化。
+//! 封面网格。专辑与艺术家两种分组共用一套渲染，用 `uniform_list` 虚拟化。
 //! 每张卡都向 `CoverCache` 请求封面，一次性请求几百张会把 LRU 互相挤出、封面反复闪回占位。
 
 use std::rc::Rc;
@@ -20,7 +20,7 @@ const PAD: f32 = theme::PAGE_PAD;
 const COVER_H_MIN: f32 = 132.0;
 /// 封面区最大高度，等于 `CARD_MAX_W`，所以最宽的卡片正好是方形封面。
 const COVER_H_MAX: f32 = CARD_MAX_W;
-/// 卡片在封面之外还要的高度：上下内边距 + 两段间距 + 标题 / 副标题 / 字段三行。
+/// 卡片在封面之外还要的高度，由上下内边距、两段间距与标题、副标题、字段三行组成。
 /// 行高必须跟着实际封面高度走；按最大封面预留，窄卡下面会留出一条空带。
 const CARD_BODY_H: f32 = 90.0;
 
@@ -35,12 +35,12 @@ struct RowCtx<'a> {
 
 #[derive(Clone)]
 pub struct Card {
-    /// 用来取封面的曲目，不一定是第一首，见 `lyre_core::group` 的规则④
+    /// 用来取封面的曲目，不一定是第一首，见 `lyre_core::group` 的规则④。
     id: TrackId,
     title: String,
-    /// 副标题。艺术家卡留空 —— 否则总等于自己的标题。
+    /// 副标题。艺术家卡留空，否则恒等于其标题。
     subtitle: String,
-    /// 「12 首 │ 42:15」这类说明
+    /// 「12 首 │ 42:15」这类说明。
     meta: String,
     initial: Option<char>,
     kind: NavSection,
@@ -96,7 +96,7 @@ pub struct AlbumGrid {
     library: Entity<LibraryEntity>,
     shell: Entity<ShellEntity>,
     covers: Entity<CoverCache>,
-    /// 网格行的派生缓存。失效键只需分区、列数、分组代次三个 —— 卡片内容只由分组结果决定。
+    /// 网格行的派生缓存。失效键只需分区、列数、分组代次三个。卡片内容只由分组结果决定。
     rows_cache: Option<RowsCache>,
     /// 滚动偏移。句柄不挂时 `uniform_list` 每次从头算，进专辑再返回会跳回开头。
     scroll: UniformListScrollHandle,
@@ -198,7 +198,7 @@ impl Render for AlbumGrid {
                 .into_any_element();
         }
 
-        // `uniform_list` 要求行等高：封面高度只能取布局层算好的卡宽，自适应会让虚拟列表错位。
+        // `uniform_list` 要求行等高。封面高度只能取布局层算好的卡宽，自适应会让虚拟列表错位。
         let cover_h = cover_height(self.shell.read(cx).grid_card_width());
 
         let library = self.library.clone();
@@ -230,7 +230,7 @@ impl Render for AlbumGrid {
         .size_full()
         .pt(px(theme::GAP_LG))
         .px(px(PAD))
-        // 句柄必须挂上：滚动条读的就是它，不挂则偏移恒为 0。
+        // 句柄必须挂上。滚动条读的就是它，不挂则偏移恒为 0。
         .track_scroll(&self.scroll)
         .into_any_element();
 
@@ -246,7 +246,7 @@ impl Render for AlbumGrid {
     }
 }
 
-/// 所有行里的卡片总数 —— 页头报的是它，不是 `rows.len()`。
+/// 所有行里的卡片总数。页头报的是它，不是 `rows.len()`。
 fn total_items(rows: &[Vec<Card>]) -> usize {
     rows.iter().map(Vec::len).sum()
 }
@@ -348,12 +348,12 @@ fn card_item(
     let grid = grid.clone();
     let event = match card.kind {
         NavSection::Albums => GridEvent::OpenAlbum(title.clone()),
-        // `Tracks` 分支不可达，这里只是给个明确兜底
+        // `Tracks` 分支不可达，这里只是给个明确兜底。
         _ => GridEvent::OpenArtist(title.clone()),
     };
 
     let cover = cover_cell(covers, library, card, cover_h, cx);
-    // group 也用标题：重复的 group 会让同名分组的两张卡一起点亮悬停态
+    // group 也用标题，重复的 group 会让同名分组的两张卡一起点亮悬停态。
     let group = SharedString::from(format!("card-{}", card.title));
     let title_for_play = card.title.clone();
     let track_id = card.id;
@@ -364,18 +364,18 @@ fn card_item(
     };
 
     div()
-        // id 用标题而不是 `representative`：一首歌挂在多个艺术家下时，每个分组都选中同一首代表，
-        // 同一行就会冒出两个相同 id —— debug 构建直接 panic。
+        // id 用标题而不是 `representative`。一首歌挂在多个艺术家下时，每个分组都选中同一首代表，
+        // 同一行就会冒出两个相同 id。debug 构建直接 panic。
         .id(SharedString::from(format!("album-card-{}", card.title)))
         .group(group.clone())
         .flex_1()
         .min_w_0()
-        // 列数撞到 `MAX_GRID_COLUMNS` 后不再增长，宽屏上的卡宽靠这条截断
+        // 列数达到 `MAX_GRID_COLUMNS` 后不再增长，宽屏下的卡宽由这条截断。
         .max_w(px(CARD_MAX_W))
         .flex()
         .flex_col()
         .gap(px(theme::GAP_SM))
-        // 内边距必须常态就有：hover 时才加会让卡片在鼠标移入的瞬间抖一下
+        // 内边距必须常态就有，hover 时才加会让卡片在鼠标移入的瞬间抖一下。
         .p(px(theme::GAP_SM))
         .cursor_pointer()
         .tooltip(crate::common::tooltip::builder(tip))
@@ -385,7 +385,7 @@ fn card_item(
                 .flex_none()
                 .w_full()
                 .child(cover)
-                // 左上切角：封面本身可以点进去
+                // 左上切角，封面本身可以点进去。
                 .child(crate::common::ornament::cut_tl(12., theme::bg()))
                 .child(super::card_play_button(
                     ("card-play", track_id.0),
@@ -397,8 +397,8 @@ fn card_item(
                 )),
         )
         .child(
-            // `w_full` + `min_w_0` + `truncate` 缺一不可：flex 子项默认 `min-width: auto`，
-            // 会按文字固有宽度撑开整格，`truncate` 自己不会停止索取宽度
+            // `w_full` + `min_w_0` + `truncate` 缺一不可。flex 子项默认 `min-width: auto`，
+            // 会按文字固有宽度撑满整格，`truncate` 本身不会停止索取宽度。
             div()
                 .w_full()
                 .min_w_0()
@@ -474,8 +474,8 @@ fn cover_cell(
     cx: &mut App,
 ) -> impl IntoElement {
     let id = card.id;
-    // 取图按最宽那一档请求：这一格是 `w_full`，高度却被 `cover_height` 夹在 132 以上，
-    // 窄列时宽 > 高，按高度要图会横向放大
+    // 取图按最宽那一档请求。这一格是 `w_full`，高度却被 `cover_height` 夹在 132 以上，
+    // 窄列时宽 > 高，按高度要图会横向放大。
     let state = crate::common::cover::cover_state(covers, library, id, CARD_MAX_W, cx);
 
     let cell = div()
@@ -505,14 +505,14 @@ fn cover_cell(
             .border_color(theme::border())
             .child(monogram(card.initial))
             .into_any_element(),
-        // 还在解码：画骨架屏，别让首字色块闪一下再被真封面顶掉
+        // 还在解码。画骨架屏，别让首字色块闪一下再被真封面顶掉。
         crate::common::cover::Cover::Pending => cell
             .child(crate::common::cover::skeleton(height, theme::RADIUS_LG))
             .into_any_element(),
     }
 }
 
-/// 没有封面时的占位：标题首字 + 按字符标量值取模选出的色块，同一首字颜色恒定。
+/// 没有封面时的占位。标题首字 + 按字符标量值取模选出的色块，同一首字颜色恒定。
 fn monogram(initial: Option<char>) -> impl IntoElement {
     let Some(ch) = initial else {
         return div()
@@ -559,8 +559,8 @@ fn empty_grid() -> impl IntoElement {
 
 #[cfg(test)]
 mod tests {
-    // 不写 `use super::*`：`crate::platform::*` 会把 gpui 的 `test` 过程宏带进来，
-    // 遮蔽内置 `#[test]`，报递归上限
+    // 不写 `use super::*`。`crate::platform::*` 会把 gpui 的 `test` 过程宏带进来，
+    // 遮蔽内置 `#[test]`，报递归上限。
     use super::{COVER_H_MAX, COVER_H_MIN, cover_height, total_items};
     use crate::shell::{CARD_MAX_W, CARD_MIN_W, ShellEntity};
 
@@ -602,7 +602,7 @@ mod tests {
         assert_eq!(group_kind(NavSection::Tracks), GroupKind::Album);
     }
 
-    /// 真实卡宽 = `min(预测宽, CARD_MAX_W)`：`card_item` 上的 `max_w` 会截断布局层的预测值。
+    /// 真实卡宽 = `min(预测宽, CARD_MAX_W)`，`card_item` 上的 `max_w` 会截断布局层的预测值。
     fn real_card_width(predicted: f32) -> f32 {
         predicted.min(CARD_MAX_W)
     }
@@ -617,7 +617,7 @@ mod tests {
 
     #[test]
     fn cover_never_becomes_a_landscape_banner() {
-        // 范围刻意超过 `CARD_MAX_W`，那段正是 `max_w` 生效处
+        // 范围刻意超过 `CARD_MAX_W`，那段正是 `max_w` 生效处。
         let mut w = CARD_MIN_W - 40.0;
         while w <= CARD_MAX_W + 400.0 {
             let ratio = aspect_ratio(w);
@@ -632,7 +632,7 @@ mod tests {
 
     #[test]
     fn cover_is_never_stretched_beyond_square() {
-        // 下界取 `CARD_MIN_W`：布局层保证卡宽 ≥ 它，更窄只出现在尚未完成布局的时刻
+        // 下界取 `CARD_MIN_W`。布局层保证卡宽 ≥ 它，更窄只出现在尚未完成布局的时刻。
         let mut w = CARD_MIN_W;
         while w <= CARD_MAX_W {
             let ratio = aspect_ratio(w);
@@ -687,7 +687,7 @@ mod tests {
 
     #[test]
     fn layout_layer_and_cover_height_agree_on_every_width() {
-        // `ShellEntity` 预测的卡宽与 `cover_height` 的输入必须是同一个量
+        // `ShellEntity` 预测的卡宽与 `cover_height` 的输入必须是同一个量。
         for width in [560.0, 900.0, 1180.0, 1600.0, 2560.0] {
             let (columns, card_w) = ShellEntity::grid_metrics_for(width);
             assert!(columns >= 1, "宽 {width}px 得到 {columns} 列");
@@ -702,7 +702,7 @@ mod tests {
         }
     }
 
-    /// Windows 上真实造出来的文件名：中英混排、带冒号带括号，最容易在测量阶段漏算宽度。
+    /// Windows 上真实造出来的文件名。中英混排、带冒号带括号，最容易在测量阶段漏算宽度。
     const REPRO_TITLES: [&str; 4] = [
         "Deluxe Expanded Remastered Collection Volume Seven",
         "A",
@@ -732,7 +732,7 @@ mod tests {
 
         let (base_columns, base_card) = ShellEntity::grid_metrics_for(1920.0);
         for title in REPRO_TITLES {
-            // 文本测量产出的是绘制宽度，不进布局公式
+            // 文本测量产出的是绘制宽度，不进布局公式。
             let intrinsic = title.chars().count() as f32 * 8.0; // 粗略字宽
             let _drawn = intrinsic.min(CARD_MAX_W);
             let (columns, predicted) = ShellEntity::grid_metrics_for(1920.0);
