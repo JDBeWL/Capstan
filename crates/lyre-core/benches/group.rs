@@ -6,7 +6,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use lyre_core::{AudioInfo, Track, TrackId, group_by_album, group_by_artist};
+use lyre_core::{
+    AudioInfo, FieldSources, FileStamp, Track, TrackId, group_by_album, group_by_artist,
+};
 
 /// 铺一个像真曲库的集合：`albums` 张专辑 × `per_album` 首，艺术家按 97% 复用。
 fn synthetic_library(albums: usize, per_album: usize) -> Vec<Track> {
@@ -24,6 +26,8 @@ fn synthetic_library(albums: usize, per_album: usize) -> Vec<Track> {
                 // 每三首带一张封面：让「选封面代表」那条分支真的被走到
                 has_cover: n % 3 == 0,
                 audio: AudioInfo::default(),
+                sources: FieldSources::default(),
+                stamp: FileStamp::default(),
             });
         }
     }
@@ -58,6 +62,8 @@ fn wide_album(tracks: usize) -> Vec<Track> {
             duration: Some(Duration::from_secs(200)),
             has_cover: n % 3 == 0,
             audio: AudioInfo::default(),
+            sources: FieldSources::default(),
+            stamp: FileStamp::default(),
         })
         .collect()
 }
@@ -74,6 +80,8 @@ fn many_albums_by_one_artist(albums: usize) -> Vec<Track> {
             duration: Some(Duration::from_secs(200)),
             has_cover: n % 3 == 0,
             audio: AudioInfo::default(),
+            sources: FieldSources::default(),
+            stamp: FileStamp::default(),
         })
         .collect()
 }

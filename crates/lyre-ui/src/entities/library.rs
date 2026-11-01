@@ -48,6 +48,12 @@ pub enum LibraryEvent {
     },
     /// 启动时的曲库缓存已经读完并合并。续播要等它，才不会在空曲库里把 resume.json 清掉。
     Loaded,
+    /// 一次「重读全部标签」跑完了。与 [`Self::Imported`] 分开：
+    /// 那是扫描目录的结果，这是用户明确点的一次刷新，文案不该说「已在曲库里」。
+    Refreshed {
+        /// 真正重读了几首。
+        count: usize,
+    },
     /// 一次操作没能完成，附带的文案直接给用户看（底部提示）。
     Failed(String),
 }
@@ -104,6 +110,9 @@ pub struct LibraryEntity {
     load_task: Option<Task<()>>,
     /// 后台扫描任务，只写不读：留着它是为了 Drop 时取消扫描 —— `Task` 一 drop 就中止。
     _scan: Option<Task<()>>,
+    /// 启动后回后台核对文件是否还在的任务，只写不读：同样靠 drop 中止。
+    #[allow(dead_code)]
+    verify_task: Option<Task<()>>,
 }
 
 impl EventEmitter<LibraryEvent> for LibraryEntity {}
@@ -140,6 +149,7 @@ impl LibraryEntity {
             loading: true,
             load_task: None,
             _scan: None,
+            verify_task: None,
         };
 
         let executor = cx.background_executor().clone();
@@ -177,11 +187,63 @@ impl LibraryEntity {
         }
         cx.emit(LibraryEvent::Loaded);
         cx.notify();
+        // 缓存先当真画出来，核对文件还在不在放到后台单独跑。慢盘上几千次 stat 是启动路径
+        // 上最贵的一段，而它只决定「哪几行是幽灵」，不决定「曲库长什么样」。
+        self.verify_files(cx);
         // 上次退出之后新加进这些文件夹的歌，在这里补进来；
         // 排在 `Loaded` 之后，续播先按旧曲库装好位置，补扫只往后追加。
         if !self.roots.is_empty() {
             self.rescan_quietly(cx);
         }
+    }
+
+    /// 后台核对缓存里的文件是否还在。核完才剔 —— 剔之前那几行就是幽灵。
+    fn verify_files(&mut self, cx: &mut Context<Self>) {
+        let entries: Vec<(TrackId, std::path::PathBuf)> = self
+            .playlist
+            .tracks()
+            .iter()
+            .map(|track| (track.id, track.path.clone()))
+            .collect();
+        if entries.is_empty() {
+            return;
+        }
+
+        let executor = cx.background_executor().clone();
+        let verify = cx.spawn(async move |this, cx| {
+            let vanished = executor
+                .spawn(async move { crate::library_store::gone(&entries) })
+                .await;
+            if vanished.is_empty() {
+                return;
+            }
+            this.update(cx, |this, cx| this.drop_vanished(&vanished, cx))
+                .ok();
+        });
+        self.verify_task = Some(verify);
+    }
+
+    /// 批量剔掉已经不在磁盘上的曲目。整趟只落盘一次、只重算一次投影 ——
+    /// 逐条走 [`Self::remove`] 会把库重写 N 遍。
+    fn drop_vanished(&mut self, ids: &[TrackId], cx: &mut Context<Self>) {
+        let mut removed = 0usize;
+        for id in ids {
+            removed += usize::from(self.playlist.remove(*id));
+        }
+        if removed == 0 {
+            return;
+        }
+        // 光标不能悬空：它指着的那一行可能刚被剔掉
+        if self
+            .focus
+            .is_some_and(|id| self.playlist.by_id(id).is_none())
+        {
+            self.focus = None;
+        }
+        self.invalidate();
+        self.persist();
+        self.recompute_visible(cx);
+        cx.notify();
     }
 
     /// 把曲库按导入顺序写盘。曲目集合变化的每个出口都要调一次；排序与播放模式不落盘。

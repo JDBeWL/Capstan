@@ -781,7 +781,7 @@ fn roots_block(
     window: &mut Window,
     cx: &mut Context<SettingsPanel>,
 ) -> Div {
-    let (roots, counts, scanning) = {
+    let (roots, counts, scanning, has_tracks) = {
         let state = library.read(cx);
         let roots = state.roots().to_vec();
         let mut counts = vec![0usize; roots.len()];
@@ -790,7 +790,12 @@ fn roots_block(
                 counts[index] += 1;
             }
         }
-        (roots, counts, state.scanning().is_some())
+        (
+            roots,
+            counts,
+            state.scanning().is_some(),
+            !state.tracks().is_empty(),
+        )
     };
 
     let mut list = div().flex().flex_col().gap(px(theme::GAP_SM));
@@ -902,6 +907,37 @@ fn roots_block(
                     },
                 )),
         )
+        // 与上面两颗不是一回事：那两颗管「文件夹里多了什么」，这颗管「文件里写了什么」。
+        // 混在一行里容易被当成同一个动作的强弱版。曲库空着时它没有意义，索性不画。
+        .when(has_tracks, |block| {
+            block.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(theme::GAP_MD))
+                    .child(text_button_animated(
+                        "root-refresh-tags",
+                        "重读全部标签",
+                        ButtonKind::Secondary,
+                        window,
+                        cx,
+                        {
+                            let library = library.clone();
+                            move |_, _, cx| {
+                                library.update(cx, LibraryEntity::refresh_tags);
+                            }
+                        },
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(theme::FONT_MICRO))
+                            .text_color(theme::text_muted())
+                            .child("标签如果修改了没有显示使用这个按钮"),
+                    ),
+            )
+        })
 }
 
 fn pretty_keys(raw: &str) -> String {

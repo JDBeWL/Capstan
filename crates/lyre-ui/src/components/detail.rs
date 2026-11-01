@@ -589,6 +589,8 @@ mod tests {
             duration: secs.map(Duration::from_secs),
             has_cover: false,
             audio: lyre_core::AudioInfo::default(),
+            sources: lyre_core::FieldSources::default(),
+            stamp: lyre_core::FileStamp::default(),
         }
     }
 

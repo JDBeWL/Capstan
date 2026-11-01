@@ -229,6 +229,16 @@ impl RootView {
                     this.toast
                         .update(cx, |toast, cx| toast.show_plain(message, cx));
                 }
+                // 用户主动点的「重读全部标签」跑完了
+                LibraryEvent::Refreshed { count } => {
+                    let message = if *count == 0 {
+                        "没有可刷新的曲目".to_owned()
+                    } else {
+                        format!("刷新了 {count} 首的标签")
+                    };
+                    this.toast
+                        .update(cx, |toast, cx| toast.show_plain(message, cx));
+                }
                 // 导入链路的失败：对话框开不了 / 扫描线程起不来
                 LibraryEvent::Failed(message) => {
                     let message = message.clone();

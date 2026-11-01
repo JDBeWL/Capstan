@@ -133,6 +133,8 @@ mod tests {
             duration: None,
             has_cover: false,
             audio: lyre_core::AudioInfo::default(),
+            sources: lyre_core::FieldSources::default(),
+            stamp: lyre_core::FileStamp::default(),
         }
     }
 

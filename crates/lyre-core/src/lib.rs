@@ -3,6 +3,7 @@
 
 pub mod collections;
 pub mod error;
+pub mod filename;
 pub mod group;
 pub mod lyrics;
 pub mod metadata;
@@ -13,6 +14,9 @@ pub mod track;
 
 pub use collections::{Collection, CollectionId, Collections};
 pub use error::{CoreError, Result};
+pub use filename::{
+    DirHints, FolderContext, Guess, Siblings, artist_key, guess, guess_folder, hints_for,
+};
 pub use group::{
     ARTIST_SEPARATORS, AlbumGroup, ArtistGroup, UNKNOWN_ALBUM, UNKNOWN_ARTIST, VARIOUS_ARTISTS,
     album_key, album_key_str, artist_key_str, artist_keys, artist_keys_str, group_by_album,
@@ -21,12 +25,14 @@ pub use group::{
 pub use lyrics::{
     LyricLine, LyricWord, Lyrics, load_for_audio as load_lyrics_for_audio, sidecar_path,
 };
-pub use metadata::{Cover, read_cover, read_track};
+pub use metadata::{Cover, infer, read_cover, read_track, read_track_in};
 pub use playlist::{Advance, PlayMode, Playlist, SortKey};
 pub use roots::Roots;
 pub use scanner::{
-    AUDIO_EXTENSIONS, SIGNATURE_PROBE_LEN, Signature, UNSUPPORTED_EXTENSIONS, collect_audio_paths,
-    collect_audio_paths_with, is_audio_extension, is_audio_file, is_decodable_extension,
-    scan_into_tracks, signature_of,
+    AUDIO_EXTENSIONS, SIGNATURE_PROBE_LEN, ScanContext, Signature, UNSUPPORTED_EXTENSIONS,
+    collect_audio_paths, collect_audio_paths_with, is_audio_extension, is_audio_file,
+    is_decodable_extension, scan_into_tracks, scan_into_tracks_with, signature_of,
 };
-pub use track::{AudioInfo, Quality, Track, TrackId, format_duration};
+pub use track::{
+    AudioInfo, FieldSource, FieldSources, FileStamp, Quality, Track, TrackId, format_duration,
+};

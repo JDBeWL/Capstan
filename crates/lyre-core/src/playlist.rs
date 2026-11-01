@@ -212,11 +212,15 @@ impl Playlist {
 
     /// 并入曲目，返回新增的数量。同 id（同路径）不重复入库，但会用刚读到的标签原地替换旧条目：
     /// 曲库落盘之后，「重新导入这个文件夹」就是刷新标签的唯一入口。替换不动位置。
+    ///
+    /// 手改过的字段不参与替换，见 [`Track::keep_manual`]。
     pub fn push(&mut self, incoming: impl IntoIterator<Item = Track>) -> usize {
         let mut added = 0;
         for track in incoming {
             let existing = self.index.get(&track.id).copied();
             if let Some(index) = existing {
+                let mut track = track;
+                track.keep_manual(&self.tracks[index]);
                 self.tracks[index] = track;
             } else {
                 self.index.insert(track.id, self.tracks.len());
@@ -1017,6 +1021,46 @@ mod tests {
         assert_eq!(p.push(vec![track(1), track(2)]), 2);
         assert_eq!(p.push(vec![track(1), track(3)]), 1, "重复路径应被跳过");
         assert_eq!(p.len(), 3);
+    }
+
+    /// 重读标签会原地替换条目，但手改过的那几项不能被抹掉 ——
+    /// 否则每跑一次重扫，用户改的名字就被磁盘上的旧标签顶回去一次。
+    #[test]
+    fn 手改过的字段逃得过重读标签() {
+        use crate::track::{FieldSource, FieldSources};
+
+        let mut manual = track(1);
+        manual.title = "我改过的标题".to_owned();
+        manual.artist = Some("我改过的歌手".to_owned());
+        manual.sources = FieldSources {
+            title: FieldSource::Manual,
+            artist: FieldSource::Manual,
+            album: FieldSource::Tag,
+        };
+
+        let mut p = Playlist::new();
+        p.push([manual]);
+
+        // 磁盘上读回来的这一版：三个字段都来自标签，且都和手改的不一样
+        let mut fresh = track(1);
+        fresh.title = "文件里的标题".to_owned();
+        fresh.artist = Some("文件里的歌手".to_owned());
+        fresh.album = Some("文件里的专辑".to_owned());
+        fresh.sources = FieldSources {
+            title: FieldSource::Tag,
+            artist: FieldSource::Tag,
+            album: FieldSource::Tag,
+        };
+
+        assert_eq!(p.push([fresh]), 0, "同 id 不是新增");
+
+        let kept = p.by_id(track(1).id).expect("还在库里");
+        assert_eq!(kept.title, "我改过的标题", "手改的标题被覆盖了");
+        assert_eq!(kept.artist.as_deref(), Some("我改过的歌手"));
+        assert_eq!(kept.sources.title, FieldSource::Manual);
+        // 没手改过的那一项照常跟着文件走
+        assert_eq!(kept.album.as_deref(), Some("文件里的专辑"));
+        assert_eq!(kept.sources.album, FieldSource::Tag);
     }
 
     #[test]

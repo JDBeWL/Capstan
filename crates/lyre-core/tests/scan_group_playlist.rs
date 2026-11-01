@@ -7,8 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use lyre_core::{
-    PlayMode, Playlist, SortKey, Track, UNKNOWN_ALBUM, UNKNOWN_ARTIST, collect_audio_paths_with,
-    group_by_album, group_by_artist, scan_into_tracks,
+    PlayMode, Playlist, SortKey, Track, collect_audio_paths_with, group_by_album, group_by_artist,
+    scan_into_tracks,
 };
 
 /// 铺一棵曲库树：`a.mp3`、`B.FLAC`（扩展名大小写不敏感）、`notes.txt`（非音频，须忽略）、`sub/c.wav`。
@@ -42,7 +42,7 @@ fn file_names(paths: &[PathBuf]) -> Vec<String> {
     names
 }
 
-/// 扫出的曲目（用 fallback 标题 = 文件名去扩展名）。
+/// 扫出的曲目。文件里没有真标签，标题来自文件名、专辑 / 艺术家来自目录名。
 fn scanned(root: &Path) -> Vec<Track> {
     let paths = collect_audio_paths_with(&[root.to_path_buf()], true);
     let mut tracks = Vec::new();
@@ -123,20 +123,34 @@ fn the_scanned_tracks_flow_through_queue_grouping_and_undo() {
     assert_eq!(playlist.len(), 3);
     assert_eq!(playlist.order().len(), 3);
 
-    // 分组直接吃 `tracks()`：都没有专辑 / 艺术家标签，应当各自归一到「未知」那一组
+    // 分组直接吃 `tracks()`。这三首都没有标签，专辑名会退化到父目录名：
+    // 顶层两首归一组，`sub/` 里的那首自成一组。临时目录起了什么名字不在本用例的契约里，
+    // 这里只钉落点与「一首都不丢」。
     let albums = group_by_album(playlist.tracks());
-    assert_eq!(albums.len(), 1);
-    assert_eq!(albums[0].title, UNKNOWN_ALBUM);
-    assert_eq!(albums[0].track_count(), 3);
+    let titles: Vec<&str> = albums.iter().map(|album| album.title.as_str()).collect();
+    assert_eq!(albums.len(), 2, "两个目录 = 两张专辑：{titles:?}");
     assert!(
-        albums[0].display_artist().is_empty(),
-        "组里没有任何艺术家名"
+        titles.contains(&"sub"),
+        "子目录名应当成为专辑名：{titles:?}"
+    );
+    assert_eq!(
+        albums
+            .iter()
+            .map(lyre_core::AlbumGroup::track_count)
+            .sum::<usize>(),
+        3,
+        "分组不该丢曲目"
     );
 
     let artists = group_by_artist(playlist.tracks());
-    assert_eq!(artists.len(), 1);
-    assert_eq!(artists[0].name, UNKNOWN_ARTIST);
-    assert_eq!(artists[0].album_count(), 0, "没标签就没有专辑名可记");
+    assert_eq!(
+        artists
+            .iter()
+            .map(lyre_core::ArtistGroup::track_count)
+            .sum::<usize>(),
+        3,
+        "分组不该丢曲目"
+    );
 
     // 换排序键不该丢曲目，只该换顺序
     playlist.sort_by(SortKey::Title);

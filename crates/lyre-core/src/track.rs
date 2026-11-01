@@ -56,6 +56,66 @@ const LOSSLESS_FORMATS: [&str; 5] = ["flac", "wav", "ape", "alac", "aiff"];
 const HIRES_BITS: u8 = 24;
 const HIRES_RATE: u32 = 96_000;
 
+/// 一个字段的值是从哪来的。落盘，用来保护手改、也用来在界面上说明「这是推断的，不是标签里写着的」。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FieldSource {
+    /// 音频标签里有。
+    #[default]
+    Tag,
+    /// 目录名给的（父目录当专辑、祖父目录当艺术家）。
+    Folder,
+    /// 文件名推断的。
+    Filename,
+    /// 用户手动改的。任何自动推断都不许覆盖它。
+    Manual,
+}
+
+/// 三个文本字段各自的来源。老 `library.json` 里没有这一段，缺省按 [`FieldSource::Tag`] 读 ——
+/// 那些条目的标题确实来自标签，只有读标签失败的那几条会被说成来自标签，无伤大雅。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldSources {
+    pub title: FieldSource,
+    pub artist: FieldSource,
+    pub album: FieldSource,
+}
+
+/// 文件的时间戳与大小，用来判断「重扫时这一首还要不要重读标签」。
+///
+/// 两项都可能是 `None`（读不到、或旧版本落盘的条目里根本没有这一段）。
+/// 任一边拿不准就一律当「变了」—— 多读一次标签只是慢，漏读会让旧标签永远留在库里。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileStamp {
+    /// 修改时间，Unix 毫秒。
+    pub modified: Option<u64>,
+    /// 字节数。
+    pub size: Option<u64>,
+}
+
+impl FileStamp {
+    /// 读一次文件的元数据。失败就给全 `None`，不影响入库。
+    pub fn of(path: &Path) -> Self {
+        let Ok(meta) = std::fs::metadata(path) else {
+            return Self::default();
+        };
+        Self {
+            modified: meta
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|since| since.as_millis() as u64),
+            size: Some(meta.len()),
+        }
+    }
+
+    /// 是不是同一份文件。自己这一边没读到时间戳时恒为 `false`。
+    ///
+    /// 只看修改时间不够：某些文件系统的时间精度是两秒，同一秒内覆盖的文件会漏判；
+    /// 加上大小能把这一类挡住大半。
+    pub fn matches(&self, other: &Self) -> bool {
+        self.modified.is_some() && self.modified == other.modified && self.size == other.size
+    }
+}
+
 /// 一首曲目的元信息。封面字节不在里面，只记 `has_cover`，按需走 [`crate::metadata::read_cover`]。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Track {
@@ -68,10 +128,17 @@ pub struct Track {
     pub has_cover: bool,
     #[serde(default)]
     pub audio: AudioInfo,
+    #[serde(default)]
+    pub sources: FieldSources,
+    /// 读这一首时的文件指纹。重扫拿它和磁盘上的现值比，一样就跳过整段标签解析。
+    #[serde(default)]
+    pub stamp: FileStamp,
 }
 
 impl Track {
-    /// 标签读取失败时的兜底：文件名当标题，其余留空 —— 不因一个坏 ID3 标签丢掉整个文件。
+    /// 什么都读不到时的兜底：文件名当标题，其余留空 —— 不因一个坏 ID3 标签丢掉整个文件。
+    /// 这一版不做任何推断（它就是「什么都不知道」的构造器），带目录上下文的推断走
+    /// [`crate::metadata::read_track`]。
     pub fn fallback(path: &Path) -> Self {
         let title = path.file_stem().map_or_else(
             || path.to_string_lossy().into_owned(),
@@ -87,6 +154,32 @@ impl Track {
             duration: None,
             has_cover: false,
             audio: AudioInfo::default(),
+            sources: FieldSources {
+                title: FieldSource::Filename,
+                artist: FieldSource::Filename,
+                album: FieldSource::Filename,
+            },
+            stamp: FileStamp::of(path),
+        }
+    }
+
+    /// 把上一版里手改过的字段搬回来。
+    ///
+    /// 重读标签会用磁盘上的值原地替换条目，但用户手改过的那几项必须留着 ——
+    /// 重扫是自动的、重读全部标签是用户主动点的，哪一种都不该把人的修正抹掉。
+    /// 目前还没有编辑标签的界面，这条护栏是给那一天先留好的座位。
+    pub fn keep_manual(&mut self, previous: &Self) {
+        if previous.sources.title == FieldSource::Manual {
+            self.title.clone_from(&previous.title);
+            self.sources.title = FieldSource::Manual;
+        }
+        if previous.sources.artist == FieldSource::Manual {
+            self.artist.clone_from(&previous.artist);
+            self.sources.artist = FieldSource::Manual;
+        }
+        if previous.sources.album == FieldSource::Manual {
+            self.album.clone_from(&previous.album);
+            self.sources.album = FieldSource::Manual;
         }
     }
 
@@ -403,5 +496,35 @@ mod tests {
 
         assert!(AudioInfo::default().is_empty());
         assert!(AudioInfo::default().details().is_empty());
+    }
+
+    /// 指纹只回答一个问题：这两次读到的还是同一份文件吗。
+    #[test]
+    fn 指纹只认同一次读取() {
+        let dir = std::env::temp_dir().join(format!("mp-stamp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        let file = dir.join("a.flac");
+        std::fs::write(&file, b"abc").expect("写临时文件");
+
+        let first = FileStamp::of(&file);
+        assert!(first.modified.is_some(), "文件在就应当读到时间戳");
+        assert_eq!(first.size, Some(3));
+        assert!(
+            first.matches(&FileStamp::of(&file)),
+            "没动过的文件两次读到的一样"
+        );
+
+        std::fs::write(&file, b"abcdef").expect("改写临时文件");
+        assert!(
+            !first.matches(&FileStamp::of(&file)),
+            "大小变了必须认出来：只比时间戳会被同秒覆写骗过去"
+        );
+
+        // 没读到的一律当「变了」：宁可多读一遍标签，也不能让旧标签永远留在库里
+        assert!(!first.matches(&FileStamp::default()));
+        assert!(!FileStamp::default().matches(&first));
+        assert!(!FileStamp::default().matches(&FileStamp::default()));
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

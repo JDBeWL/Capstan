@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 rust-version = "1.99.1"
 license = "MIT OR Apache-2.0"
@@ -40,7 +40,6 @@ elided_lifetimes_in_paths = "allow"
 unused_lifetimes = "warn"
 
 [workspace.lints.clippy]
-# 分组给负 priority，下面的单条规则才覆盖得住它们
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 unwrap_used = "warn"
@@ -64,7 +63,7 @@ return_self_not_must_use = "allow"
 assert_is_empty = "allow"
 
 # GPUI 的渲染管线在纯 debug 下交互明显发滞，依赖统一开 opt-level=2；依赖不生成调试信息，
-# 冷编译的时间和 rustc 峰值内存有相当一部分花在调试信息上，自己的 crate 仍保留。
+# 冷编译的时间和 rustc 峰值内存有相当一部分花在调试信息上。
 [profile.dev.package."*"]
 opt-level = 2
 debug = false

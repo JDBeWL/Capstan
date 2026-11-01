@@ -2,14 +2,17 @@
 //! 扫描在后台线程跑，主线程每 `SCAN_FLUSH_INTERVAL` 收一批、每拍只 `notify` 一次。
 //! 补扫走同一条路，只是先按库里已有的 id 筛一遍，已有的曲目不再读标签。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender, TryRecvError};
 use std::time::Duration;
 
-use lyre_core::{Track, TrackId, collect_audio_paths_with, scan_into_tracks};
+use lyre_core::{
+    FileStamp, ScanContext, Track, TrackId, artist_key, collect_audio_paths_with,
+    scan_into_tracks_with,
+};
 
 use crate::platform::*;
 
@@ -38,6 +41,9 @@ struct ScanRequest {
     inputs: Vec<PathBuf>,
     /// 只读库里没有的文件。补扫用：已经入库的不再读一遍标签。
     fresh_only: bool,
+    /// 不看文件指纹，每一首都重读。只由「重读全部标签」置位 ——
+    /// 文件没动但标签被外部编辑器改过时，只有这条路能把改动带回来。
+    force: bool,
     /// 启动补扫：没有新增就不打扰用户。
     quiet: bool,
 }
@@ -103,6 +109,39 @@ impl LibraryEntity {
             ScanRequest {
                 inputs,
                 fresh_only: false,
+                force: false,
+                quiet: false,
+            },
+            cx,
+        );
+    }
+
+    /// 重读全部曲目的标签。
+    ///
+    /// 和 [`Self::rescan`] 是两件事：那个只把新文件补进来，已经在库的一首都不碰；
+    /// 这个不看指纹、不在乎文件有没有变，每一首都重新开容器解析。标签是在 Lyre 之外被改过
+    /// （别的编辑器、脚本、重新下的版本）时，只有这里能把改动带回来。
+    ///
+    /// 手改过的字段不受影响，见 [`lyre_core::Track::keep_manual`]。
+    pub fn refresh_tags(&mut self, cx: &mut Context<Self>) {
+        // 首屏还在后台读盘时曲库是空的，这时候刷新等于什么都没做
+        if self.loading {
+            return;
+        }
+        let paths: Vec<PathBuf> = self
+            .playlist
+            .tracks()
+            .iter()
+            .map(|track| track.path.clone())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        self.start_scan(
+            ScanRequest {
+                inputs: paths,
+                fresh_only: false,
+                force: true,
                 quiet: false,
             },
             cx,
@@ -142,6 +181,7 @@ impl LibraryEntity {
             ScanRequest {
                 inputs: self.roots.items().to_vec(),
                 fresh_only: true,
+                force: false,
                 quiet,
             },
             cx,
@@ -173,16 +213,25 @@ impl LibraryEntity {
         self.scanning = Some(ScanProgress::default());
         cx.notify();
 
+        // 已在库的曲目连同文件指纹一起带走：补扫拿它当「别读」，整目录重导拿它当
+        // 「文件没动过就别再读一遍标签」。指纹和 id 同出一源，一次遍历就够了。
+        let cached: HashMap<TrackId, FileStamp> = self
+            .playlist
+            .tracks()
+            .iter()
+            .map(|track| (track.id, track.stamp))
+            .collect();
         // 补扫要知道「哪些已经在库里」。这份快照在后台线程里用，所以带走一份 id 集合。
         let known: HashSet<TrackId> = if request.fresh_only {
-            self.playlist
-                .tracks()
-                .iter()
-                .map(|track| track.id)
-                .collect()
+            cached.keys().copied().collect()
         } else {
             HashSet::new()
         };
+        // 「重读全部标签」故意不带指纹：带了就等于什么都没做
+        let cached = (!request.force).then_some(cached);
+
+        // 库里已有的艺术家名单：文件名推断拿它定方向。首次导入时是空的，只能靠目录结构。
+        let artists = known_artists(self.playlist.tracks());
 
         let (tx, rx) = mpsc::channel::<ScanTick>();
         // `background_executor()` 返回借用，要 clone 出所有权值才能带进 'static 任务
@@ -196,7 +245,17 @@ impl LibraryEntity {
         // 用专用 OS 线程而不是 `executor.spawn`：整段阻塞、没有一个 `await`，会长时间占住共享池里的一个 worker。
         let scan = std::thread::Builder::new()
             .name("mp-scan".to_owned())
-            .spawn(move || run_scan(request.inputs, recursive, known, cancel, tx));
+            .spawn(move || {
+                run_scan(
+                    request.inputs,
+                    recursive,
+                    known,
+                    artists,
+                    cached,
+                    cancel,
+                    tx,
+                );
+            });
 
         if let Err(err) = scan {
             // 线程起不来（资源耗尽）：必须清掉 `scanning`，否则界面永远停在「正在扫描」；还要发 `Failed`，否则点了导入毫无反应。
@@ -209,6 +268,7 @@ impl LibraryEntity {
         }
 
         let quiet = request.quiet;
+        let refresh = request.force;
         let task = cx.spawn(async move |this, cx| {
             // 三个计数各有用处：`scanned` 是扫到的文件数（含已在库的），`added` 是新入库的，
             // `refreshed` 是重读过标签的。只报 `added` 的话，空文件夹和「全都已在库」都是 0。
@@ -248,8 +308,9 @@ impl LibraryEntity {
                             if let Some(progress) = this.scanning.as_mut() {
                                 progress.found += read;
                             }
-                            // 带过滤条件时新曲目也要按条件进投影，否则导入时列表看着毫无变化
-                            if added > 0 && this.is_filtering() {
+                            // 带过滤条件时新曲目也要按条件进投影，否则导入时列表看着毫无变化；
+                            // 刷新标签改了标题同理 —— 命中集合会变。
+                            if this.is_filtering() {
                                 this.recompute_visible(cx);
                             }
                         }
@@ -260,12 +321,17 @@ impl LibraryEntity {
                                 this.persist();
                             }
                             // 进度条消失是唯一的结束信号，空文件夹时更是全程无反馈，所以这里必须发事件。
-                            cx.emit(LibraryEvent::Imported {
-                                scanned,
-                                added,
-                                refreshed,
-                                quiet,
-                            });
+                            if refresh {
+                                // 用户主动点的一次刷新，文案不该说「已在曲库里」
+                                cx.emit(LibraryEvent::Refreshed { count: refreshed });
+                            } else {
+                                cx.emit(LibraryEvent::Imported {
+                                    scanned,
+                                    added,
+                                    refreshed,
+                                    quiet,
+                                });
+                            }
                         }
                         cx.notify();
                     })
@@ -288,6 +354,8 @@ fn run_scan(
     inputs: Vec<PathBuf>,
     recursive: bool,
     known: HashSet<TrackId>,
+    artists: HashSet<String>,
+    cached: Option<HashMap<TrackId, FileStamp>>,
     cancel: Arc<AtomicBool>,
     tx: Sender<ScanTick>,
 ) {
@@ -298,16 +366,32 @@ fn run_scan(
     }
 
     let fresh = fresh_paths(files, &known);
+    let context = ScanContext {
+        known_artists: Some(&artists),
+        cached: cached.as_ref(),
+    };
 
     // 分片读：每片之间看一眼停止标志。换扫描目标时，剩下的标签不必再读完。
     for slice in fresh.chunks(SCAN_CHUNK) {
         if cancel.load(Ordering::Relaxed) {
             return;
         }
-        scan_into_tracks(slice.to_vec(), SCAN_CHUNK, |chunk| {
+        scan_into_tracks_with(slice.to_vec(), SCAN_CHUNK, context, |chunk| {
             let _ = tx.send(ScanTick::Tracks(chunk));
         });
     }
+}
+
+/// 库里出现过的艺术家名，折成可比较的形式。多人的字段按分隔符拆开 ——
+/// `周杰伦/费玉清` 里的两位都算认识，否则这类合作曲目的文件名推不出来。
+fn known_artists(tracks: &[Track]) -> HashSet<String> {
+    tracks
+        .iter()
+        .filter_map(|track| track.artist.as_deref())
+        .flat_map(|artist| artist.split(['/', ',']))
+        .map(artist_key)
+        .filter(|key| !key.is_empty())
+        .collect()
 }
 
 /// 挑出库里还没有的文件。`known` 为空表示这次不筛（整目录导入要刷新已有曲目的标签）。

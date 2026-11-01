@@ -1,9 +1,11 @@
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
 
-use crate::metadata::read_track;
-use crate::track::Track;
+use crate::filename::{FolderContext, Siblings};
+use crate::metadata::{infer, read_track_in};
+use crate::track::{FileStamp, Track, TrackId};
 
 /// 扫得到的音频扩展名。进这一份只代表「这是个音频文件」，能不能播见 [`UNSUPPORTED_EXTENSIONS`]。
 pub const AUDIO_EXTENSIONS: &[&str] = &[
@@ -133,17 +135,58 @@ pub fn collect_audio_paths_with(inputs: &[PathBuf], recursive: bool) -> Vec<Path
 }
 
 /// 逐首读元数据、按 `chunk` 分批回调，让 UI 先显示前一批；阻塞函数，调用方负责放到后台线程。
-/// 单首失败退化成 [`Track::fallback`]，不中断整批；串行是刻意的，机械硬盘并发读会抢磁头。
-pub fn scan_into_tracks<F>(paths: Vec<PathBuf>, chunk: usize, mut on_chunk: F) -> usize
+/// 单首失败退化成按路径推断，不中断整批；串行是刻意的，机械硬盘并发读会抢磁头。
+pub fn scan_into_tracks<F>(paths: Vec<PathBuf>, chunk: usize, on_chunk: F) -> usize
+where
+    F: FnMut(Vec<Track>),
+{
+    scan_into_tracks_with(paths, chunk, ScanContext::default(), on_chunk)
+}
+
+/// 扫描时用得上的两份外部信息。
+#[derive(Clone, Copy, Default)]
+pub struct ScanContext<'a> {
+    /// 库内已有的艺术家名单，名字对得上时文件名推断的方向会稳得多。
+    pub known_artists: Option<&'a HashSet<String>>,
+    /// 已在库的曲目及其文件指纹。指纹没变的整段跳过，不再解析标签。
+    pub cached: Option<&'a HashMap<TrackId, FileStamp>>,
+}
+
+/// 见 [`scan_into_tracks`]。返回的是**真正读了几首**：被 [`ScanContext::cached`] 跳过的
+/// 和扫描到的文件数不是一回事。
+#[allow(clippy::implicit_hasher)]
+pub fn scan_into_tracks_with<F>(
+    paths: Vec<PathBuf>,
+    chunk: usize,
+    scan: ScanContext<'_>,
+    mut on_chunk: F,
+) -> usize
 where
     F: FnMut(Vec<Track>),
 {
     let chunk = chunk.max(1);
+    // 分组统计只碰字符串不碰磁盘，先全算完再开始读，省得为了「同目录一致性」
+    // 把每批文件的目录再扫一遍。`chunk` 切开的批次因此也不会割裂同一个目录的统计。
+    let siblings = sibling_index(&paths);
     let mut buffer = Vec::with_capacity(chunk);
     let mut total = 0;
 
     for path in paths {
-        let track = read_track(&path).unwrap_or_else(|_| Track::fallback(&path));
+        // 文件一个字节都没变时，标签解析整段可以省掉 —— 一次 stat 换一次完整的容器解析。
+        // 指纹缺失（旧版本落的盘、或 stat 失败）一律当「变了」，宁可多读一遍。
+        let untouched = scan
+            .cached
+            .and_then(|cached| cached.get(&TrackId::from_path(&path)))
+            .is_some_and(|stamp| stamp.matches(&FileStamp::of(&path)));
+        if untouched {
+            continue;
+        }
+
+        let folder = FolderContext {
+            known_artists: scan.known_artists,
+            siblings: siblings.get(parent_of(&path)),
+        };
+        let track = read_track_in(&path, &folder).unwrap_or_else(|_| infer(&path, &folder));
         buffer.push(track);
         total += 1;
 
@@ -158,6 +201,25 @@ where
     }
 
     total
+}
+
+/// 按父目录分组，算出每个目录里「首段 / 次段」的重复情况，供文件名推断定方向。
+fn parent_of(path: &Path) -> &Path {
+    path.parent().unwrap_or_else(|| Path::new(""))
+}
+
+fn sibling_index(paths: &[PathBuf]) -> HashMap<PathBuf, Siblings> {
+    let mut groups: HashMap<&Path, Vec<&str>> = HashMap::new();
+    for path in paths {
+        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        groups.entry(parent_of(path)).or_default().push(stem);
+    }
+    groups
+        .into_iter()
+        .map(|(dir, stems)| (dir.to_path_buf(), Siblings::of(stems)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -320,6 +382,94 @@ mod tests {
         let mut titles = Vec::new();
         scan_into_tracks(paths, 10, |c| titles.extend(c.into_iter().map(|t| t.title)));
         assert_eq!(titles, vec!["夜航西飞"], "读不出标签时应当用文件名兜底");
+    }
+
+    /// 一个目录里十首都是「歌名 - 歌手」写法时，靠重复出现的那一侧把方向扳回来。
+    /// 这是单看一首文件永远做不到的事，也是分批扫描不能割裂目录统计的原因。
+    #[test]
+    fn 同目录里重复的那一侧被认成艺术家() {
+        let dir = std::env::temp_dir().join("mp-scan-direction");
+        let mut tracks = Vec::new();
+        let paths: Vec<PathBuf> = ["七里香 - 周杰伦", "十年 - 周杰伦", "富士山下 - 周杰伦"]
+            .iter()
+            .map(|name| dir.join(format!("{name}.flac")))
+            .collect();
+
+        // 分成三批：目录统计要在分批之前算完，否则每批只有一首，看不出谁在重复
+        scan_into_tracks(paths, 1, |chunk| tracks.extend(chunk));
+
+        for track in &tracks {
+            assert_eq!(
+                track.artist.as_deref(),
+                Some("周杰伦"),
+                "《{}》的歌手认错了",
+                track.title
+            );
+        }
+        assert_eq!(tracks[0].title, "七里香");
+    }
+
+    /// 反过来写的时候不能被同一条规则带偏。
+    #[test]
+    fn 常规写法不会被一致性规则反过来() {
+        let dir = std::env::temp_dir().join("mp-scan-direction-2");
+        let mut tracks = Vec::new();
+        let paths: Vec<PathBuf> = ["周杰伦 - 七里香", "周杰伦 - 十年"]
+            .iter()
+            .map(|name| dir.join(format!("{name}.flac")))
+            .collect();
+
+        scan_into_tracks(paths, 8, |chunk| tracks.extend(chunk));
+
+        assert_eq!(tracks[0].artist.as_deref(), Some("周杰伦"));
+        assert_eq!(tracks[0].title, "七里香");
+    }
+
+    /// 文件一个字节都没变时，整段标签解析都该省掉 —— 这是重导一个大目录不卡的关键。
+    #[test]
+    fn 指纹没变的文件不再读标签() {
+        let dir = std::env::temp_dir().join(format!("mp-scan-stamp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        let file = dir.join("a.flac");
+        std::fs::write(&file, b"not really audio").expect("建临时文件");
+
+        // 第一次读：内容不是音频，会退化成按路径推断，但指纹照样记得下来
+        let mut first = Vec::new();
+        scan_into_tracks(vec![file.clone()], 8, |chunk| first.extend(chunk));
+        assert_eq!(first.len(), 1);
+
+        let cached: HashMap<TrackId, FileStamp> =
+            first.iter().map(|track| (track.id, track.stamp)).collect();
+        assert!(
+            cached.values().any(|stamp| stamp.modified.is_some()),
+            "文件在就应当记下时间戳"
+        );
+
+        // 第二次：指纹没变，一首都不该读
+        let context = ScanContext {
+            known_artists: None,
+            cached: Some(&cached),
+        };
+        let mut second = Vec::new();
+        let total =
+            scan_into_tracks_with(vec![file.clone()], 8, context, |chunk| second.extend(chunk));
+        assert_eq!(total, 0, "指纹没变却还是把标签读了一遍");
+        assert!(second.is_empty());
+
+        // 内容变了：必须重读
+        std::fs::write(&file, b"definitely not the same bytes").expect("改写临时文件");
+        let total = scan_into_tracks_with(vec![file.clone()], 8, context, |_| {});
+        assert_eq!(total, 1, "文件变了却没重读");
+
+        // 不传指纹（=「重读全部标签」）时，即使文件没动过也要读
+        let forced = ScanContext {
+            known_artists: None,
+            cached: None,
+        };
+        let total = scan_into_tracks_with(vec![file], 8, forced, |_| {});
+        assert_eq!(total, 1, "不看指纹时每一首都得重读");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

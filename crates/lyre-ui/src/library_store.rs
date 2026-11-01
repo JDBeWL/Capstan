@@ -1,15 +1,20 @@
 //! 曲库缓存，落盘到 `library.json`：读不到退回空、写不进只记日志。
 //! 文件形状是按导入顺序排列的裸 `Vec<Track>`，不含排序键与播放模式。
 
-use lyre_core::Track;
+use std::path::{Path, PathBuf};
+
+use lyre_core::{Track, TrackId};
 
 use crate::persist;
 
 const FILE: &str = "library.json";
 
-/// 读缓存并剔除已不存在的文件（不剔除会留着点不动的幽灵行）。
+/// 读缓存。只解析，不核对文件还在不在 —— 核对走 [`gone`]，由调用方把首屏画出来之后再跑。
+///
+/// 这几千次 stat 是启动路径上最贵的一段（慢盘、网络盘、休眠中的移动硬盘都是秒级），
+/// 而缓存本身是可信的：上一次退出时这些文件还在。先当真、后核对，比先核对再显示快得多。
 pub fn load() -> Vec<Track> {
-    prune_missing(persist::load_or_default(FILE))
+    persist::load_or_default(FILE)
 }
 
 /// 用紧凑排版：整库条目可能上千，缩进会让文件涨好几倍。
@@ -17,29 +22,27 @@ pub fn save(tracks: Vec<Track>) {
     persist::save_compact_lossy(FILE, tracks);
 }
 
-/// 一个都不在时要原样保留：那是盘没醒 / 可移动盘没挂载，照常剔除会把整库覆盖成空。
-fn prune_missing(tracks: Vec<Track>) -> Vec<Track> {
-    prune_missing_with(tracks, std::path::Path::is_file)
+/// 核对一批文件还在不在，返回已经消失的 id。
+///
+/// 整批都不在时返回空：那是盘没醒 / 可移动盘没挂载，照常剔除会把整库覆盖成空。
+pub fn gone(entries: &[(TrackId, PathBuf)]) -> Vec<TrackId> {
+    gone_with(entries, Path::is_file)
 }
 
-fn prune_missing_with(
-    tracks: Vec<Track>,
-    mut exists: impl FnMut(&std::path::Path) -> bool,
-) -> Vec<Track> {
-    let mut checked = Vec::with_capacity(tracks.len());
-    let mut present = 0usize;
-    for track in tracks {
-        let alive = exists(&track.path);
-        present += usize::from(alive);
-        checked.push((track, alive));
+fn gone_with(
+    entries: &[(TrackId, PathBuf)],
+    mut exists: impl FnMut(&Path) -> bool,
+) -> Vec<TrackId> {
+    let mut vanished = Vec::new();
+    for (id, path) in entries {
+        if !exists(path) {
+            vanished.push(*id);
+        }
     }
-    if !checked.is_empty() && present == 0 {
-        return checked.into_iter().map(|(track, _)| track).collect();
+    if vanished.len() == entries.len() {
+        return Vec::new();
     }
-    checked
-        .into_iter()
-        .filter_map(|(track, alive)| alive.then_some(track))
-        .collect()
+    vanished
 }
 
 #[cfg(test)]
@@ -47,7 +50,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
-    use lyre_core::{AudioInfo, Track, TrackId};
+    use lyre_core::{AudioInfo, FieldSources, FileStamp, Track, TrackId};
 
     /// 落盘形状一旦漂移，老用户的曲库就读不回来。
     #[test]
@@ -60,7 +63,7 @@ mod tests {
         assert_eq!(back, tracks);
     }
 
-    /// 老文件里没有 `audio` 字段，必须照常读得出来。
+    /// 老文件里没有 `audio` / `sources` / `stamp` 字段，必须照常读得出来。
     #[test]
     fn 缺字段的旧条目退默认值() {
         let old = r#"[{"id":7,"path":"D:/m/x.mp3","title":"旧条目","artist":null,
@@ -70,6 +73,9 @@ mod tests {
         assert_eq!(parsed[0].title, "旧条目");
         assert_eq!(parsed[0].id, TrackId(7));
         assert_eq!(parsed[0].audio, AudioInfo::default());
+        assert_eq!(parsed[0].sources, FieldSources::default());
+        // 没有指纹就永远比不上，重扫时会老老实实重读一遍
+        assert_eq!(parsed[0].stamp, FileStamp::default());
     }
 
     /// 坏 JSON 退空曲库而不是 panic —— 启动不该被一个写坏的文件卡住。
@@ -86,18 +92,21 @@ mod tests {
         dir
     }
 
+    fn entry(path: PathBuf) -> (TrackId, PathBuf) {
+        (TrackId::from_path(&path), path)
+    }
+
     #[test]
-    fn a_whole_missing_drive_keeps_the_cache() {
+    fn 整盘不在时一条都不剔() {
         let dir = temp_dir("all-missing");
-        let tracks = vec![
-            track(&dir.join("gone-a.flac").to_string_lossy()),
-            track(&dir.join("gone-b.flac").to_string_lossy()),
+        let entries = vec![
+            entry(dir.join("gone-a.flac")),
+            entry(dir.join("gone-b.flac")),
         ];
 
-        assert_eq!(
-            super::prune_missing(tracks).len(),
-            2,
-            "全都不在时要原样返回，而不是清空"
+        assert!(
+            super::gone(&entries).is_empty(),
+            "全都不在说明是盘没挂载，照常剔会把整库覆盖成空"
         );
 
         std::fs::remove_dir_all(&dir).unwrap();
@@ -105,39 +114,38 @@ mod tests {
 
     /// 逐条核对只查一遍：部分失效与整盘未挂载共用同一趟扫描。
     #[test]
-    fn every_path_is_checked_exactly_once() {
+    fn 每条路径只核对一次() {
         let dir = temp_dir("single-pass");
-        let tracks = vec![
-            track(&dir.join("a.flac").to_string_lossy()),
-            track(&dir.join("b.flac").to_string_lossy()),
-            track(&dir.join("c.flac").to_string_lossy()),
+        let entries = vec![
+            entry(dir.join("a.flac")),
+            entry(dir.join("b.flac")),
+            entry(dir.join("c.flac")),
         ];
         let mut checks = 0usize;
 
-        let kept = super::prune_missing_with(tracks, |path| {
+        let vanished = super::gone_with(&entries, |path| {
             checks += 1;
             path.ends_with("b.flac")
         });
 
-        assert_eq!(checks, 3, "每个路径只能查一次");
-        assert_eq!(kept.len(), 1, "部分失效时只保留存在的条目");
+        assert_eq!(checks, 3, "每条路径只能查一次");
+        assert_eq!(
+            vanished,
+            vec![entries[0].0, entries[2].0],
+            "只报不在的那两条"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// 只要还有一个在，就回到逐条核对：其余该被剔掉。
+    /// 只要还有一条在，就回到逐条核对：其余该被剔掉。
     #[test]
-    fn entries_that_are_gone_are_dropped_once_anything_survives() {
+    fn 还有一首在就照常剔掉消失的() {
         let dir = temp_dir("partial");
         let real = dir.join("here.flac");
         std::fs::write(&real, b"x").unwrap();
 
-        let kept = super::prune_missing(vec![
-            track(&real.to_string_lossy()),
-            track(&dir.join("gone.flac").to_string_lossy()),
-        ]);
-
-        assert_eq!(kept.len(), 1, "有一个还在时就该逐条核对");
-        assert_eq!(kept[0].path, real);
+        let entries = vec![entry(real), entry(dir.join("gone.flac"))];
+        assert_eq!(super::gone(&entries), vec![entries[1].0]);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -152,6 +160,8 @@ mod tests {
             duration: Some(Duration::from_secs(200)),
             has_cover: false,
             audio: AudioInfo::default(),
+            sources: FieldSources::default(),
+            stamp: FileStamp::default(),
         }
     }
 }
