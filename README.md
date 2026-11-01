@@ -86,4 +86,5 @@ Copyright 2026 JDBeWL。
 
 第三方组件保留各自许可：`gpui-pre` / `gpui-component` / `cpal` 为 Apache-2.0，`rodio` / `lofty` /
 `crossbeam` / `serde` 为 MIT OR Apache-2.0，`symphonia` 为 MPL-2.0，`walkdir` 为 Unlicense OR MIT，
-内嵌图标数据派生自 Lucide v0.544.0（ISC）。
+内嵌图标数据派生自 Lucide v0.544.0（ISC），界面字体 Saira 为 SIL OFL 1.1（许可全文见
+`crates/lyre-ui/assets/fonts/Saira-OFL.txt`）。

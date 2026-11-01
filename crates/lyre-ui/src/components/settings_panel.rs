@@ -2,6 +2,7 @@
 
 use std::rc::Rc;
 
+use crate::common::anim;
 use crate::common::button::TAB_STOP;
 use crate::common::thousands;
 use crate::entities::{LibraryEntity, PlaybackEntity, PlaybackEvent};
@@ -77,11 +78,12 @@ impl SettingsPanel {
 }
 
 impl Render for SettingsPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = self.settings.read(cx).settings();
 
         // `on_pick` 要求 `'static`，每个闭包各捕获一份句柄克隆，不能共用外层变量。
-        let (for_density, for_view, for_recursive) = (
+        let (for_appearance, for_density, for_view, for_recursive) = (
+            self.settings.clone(),
             self.settings.clone(),
             self.settings.clone(),
             self.settings.clone(),
@@ -95,6 +97,15 @@ impl Render for SettingsPanel {
         let (smooth_player, output_player) = (self.playback.clone(), self.playback.clone());
         let shell = self.shell.clone();
         let library = self.library.clone();
+
+        let appearance: Picker = Rc::new(move |index: usize, cx: &mut App| {
+            let value = if index == 0 {
+                theme::Appearance::Light
+            } else {
+                theme::Appearance::Dark
+            };
+            for_appearance.update(cx, |this, cx| this.set_appearance(value, cx));
+        });
 
         let density: Picker = Rc::new(move |index: usize, cx: &mut App| {
             let value = if index == 0 {
@@ -168,7 +179,19 @@ impl Render for SettingsPanel {
             )
         };
 
-        let list_card = card("列表").child(choice_row(
+        let appearance_card = card("Appearance", "外观").child(choice_row(
+            window,
+            cx,
+            Glyph::Appearance,
+            "主题",
+            &[
+                ("浅色", settings.appearance == theme::Appearance::Light),
+                ("深色", settings.appearance == theme::Appearance::Dark),
+            ],
+            &appearance,
+        ));
+        let list_card = card("List", "列表").child(choice_row(
+            window,
             cx,
             Glyph::List,
             "行密度",
@@ -178,8 +201,9 @@ impl Render for SettingsPanel {
             ],
             &density,
         ));
-        let startup_card = card("启动")
+        let startup_card = card("Startup", "启动")
             .child(choice_row(
+                window,
                 cx,
                 Glyph::Home,
                 "默认视图",
@@ -191,6 +215,7 @@ impl Render for SettingsPanel {
                 &view,
             ))
             .child(choice_row(
+                window,
                 cx,
                 Glyph::PanelRight,
                 "右面板",
@@ -205,6 +230,7 @@ impl Render for SettingsPanel {
                 &panel,
             ))
             .child(choice_row(
+                window,
                 cx,
                 Glyph::PanelLeft,
                 "侧栏",
@@ -222,6 +248,7 @@ impl Render for SettingsPanel {
                 &sidebar,
             ))
             .child(choice_row(
+                window,
                 cx,
                 Glyph::Clock,
                 "上次播放",
@@ -231,7 +258,8 @@ impl Render for SettingsPanel {
                 ],
                 &resume,
             ));
-        let import_card = card("导入").child(choice_row(
+        let import_card = card("Import", "导入").child(choice_row(
+            window,
             cx,
             Glyph::Folder,
             "文件夹",
@@ -242,8 +270,9 @@ impl Render for SettingsPanel {
             &recursive,
         ));
 
-        let audio_card = card("音频")
+        let audio_card = card("Audio", "音频")
             .child(choice_row(
+                window,
                 cx,
                 Glyph::VolumeHigh,
                 "输出模式",
@@ -254,6 +283,7 @@ impl Render for SettingsPanel {
                 &output,
             ))
             .child(choice_row(
+                window,
                 cx,
                 Glyph::Devices,
                 "切换输出设备",
@@ -265,7 +295,7 @@ impl Render for SettingsPanel {
             ))
             .children(self.output_detail(cx));
 
-        let left = vec![list_card, startup_card];
+        let left = vec![appearance_card, list_card, startup_card];
         let right = vec![audio_card, import_card, data_section(&self.library, cx)];
         let choices = if two_columns {
             div()
@@ -286,9 +316,8 @@ impl Render for SettingsPanel {
             .flex()
             .flex_col()
             .gap(px(theme::GAP_LG))
-            .p(px(theme::GAP_LG))
-            // 右内边距多留一档：滚动条是叠在滚动区上的兄弟节点，不避让就压在数字和路径上
-            .pr(px(theme::GAP_XL))
+            // 右边多留一档：滚动条叠在滚动区上，不避让会压在数字和路径上。
+            .p(px(theme::PAGE_PAD))
             .child(choices)
             .child(shortcuts_section(two_columns, self.shortcuts_open, cx));
 
@@ -330,15 +359,29 @@ const TWO_COL_MIN: f32 = 760.0;
 /// 整块内容的上限宽度，再宽就居中留白。
 const CONTENT_MAX_W: f32 = 1080.0;
 
-fn card(title: &str) -> Div {
+fn card(english: &str, title: &str) -> Div {
     div()
+        .relative()
         .w_full()
         .flex()
         .flex_col()
         .gap(px(theme::GAP_MD))
         .p(px(theme::GAP_LG))
-        .rounded(px(theme::RADIUS_CARD))
-        .bg(theme::surface())
+        .pt(px(theme::GAP_LG + 4.))
+        .bg(theme::window_base())
+        .border_1()
+        .border_color(theme::border())
+        // 顶边一小段墨色页签，和首页的浏览看板同一种形状语言
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .h(px(5.))
+                .w(px(48.))
+                .bg(theme::text()),
+        )
+        .child(crate::common::section::eyebrow(english))
         .child(crate::common::section::section_heading(title))
 }
 
@@ -360,6 +403,13 @@ fn column(cards: Vec<Div>) -> AnyElement {
 
 /// 让位量与浮动返回按钮的位置同源于 `root::BACK_*`，两处不一致按钮就会压住标题。
 fn header(back_inset: bool) -> impl IntoElement {
+    // 返回键占一条 40px 高的顶行：眉标与它同高，大标题落到它下方，并与卡片共用页边线。
+    let eyebrow_left = if back_inset {
+        crate::root::HEADER_BACK_INSET - theme::PAGE_PAD + theme::GAP_SM
+    } else {
+        0.0
+    };
+
     div().flex_none().w_full().flex().justify_center().child(
         div()
             .w_full()
@@ -372,39 +422,38 @@ fn header(back_inset: bool) -> impl IntoElement {
                 theme::GAP_XL
             }))
             .pb(px(theme::GAP_LG))
-            .pl(px(if back_inset {
-                // 让位量之外再留一档：按钮右缘恰好落在 `HEADER_BACK_INSET`，不留标题就贴着圆。
-                crate::root::HEADER_BACK_INSET + theme::GAP_SM
-            } else {
-                theme::GAP_LG
-            }))
-            .pr(px(theme::GAP_XL))
+            .px(px(theme::PAGE_PAD))
             .child(
                 div()
-                    .h(px(crate::root::BACK_BTN))
-                    .w_full()
+                    .h(px(if back_inset {
+                        crate::root::BACK_BTN
+                    } else {
+                        theme::GAP_LG
+                    }))
                     .flex()
                     .items_center()
+                    .pl(px(eyebrow_left))
+                    .child(crate::common::section::eyebrow("Config / 设置")),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_end()
                     .justify_between()
-                    .child(
-                        div()
-                            .text_size(px(theme::FONT_HERO))
-                            .font_weight(theme::WEIGHT_TITLE)
-                            .text_color(theme::text())
-                            .child("设置"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(theme::FONT_CAPTION))
-                            .text_color(theme::text_faint())
-                            .child(concat!("v", env!("CARGO_PKG_VERSION"))),
-                    ),
+                    .gap(px(theme::GAP_MD))
+                    .child(crate::common::section::page_title("设置"))
+                    .child(crate::common::section::field(concat!(
+                        "v",
+                        env!("CARGO_PKG_VERSION")
+                    ))),
             ),
     )
 }
 
 fn sub_title(text: &str) -> impl IntoElement {
     div()
+        .font(theme::label_font())
         .text_size(px(theme::FONT_MICRO))
         .font_weight(theme::WEIGHT_BUTTON)
         .text_color(theme::text_faint())
@@ -416,6 +465,7 @@ fn sub_title(text: &str) -> impl IntoElement {
 type Picker = Rc<dyn Fn(usize, &mut App)>;
 
 fn choice_row(
+    window: &mut Window,
     cx: &mut Context<SettingsPanel>,
     glyph: Glyph,
     title: &str,
@@ -438,56 +488,89 @@ fn choice_row(
                         .child(title.to_owned()),
                 ),
         )
-        .child(segmented(cx, title, options, on_pick))
+        .child(
+            div()
+                .flex()
+                .child(segmented(window, cx, title, options, on_pick)),
+        )
 }
 
 /// 无障碍状态由 `aria_selected` 与提示里的「（已选中）」表达。
+/// 当前段用一块墨底在等宽分段之间滑动，文字层再盖在上面。
 fn segmented(
+    window: &mut Window,
     cx: &mut Context<SettingsPanel>,
     title: &str,
     options: &[(&str, bool)],
     on_pick: &Picker,
 ) -> Div {
+    let gap = 2.0;
+    let pad = 2.0;
+    let active = options.iter().position(|(_, on)| *on).unwrap_or(0);
+    // 中文字宽约等于字号；按最长一项定等宽，选项少时也不会忽宽忽窄。
+    let max_chars = options
+        .iter()
+        .map(|(label, _)| label.chars().count())
+        .max()
+        .unwrap_or(1);
+    let seg_w = max_chars as f32 * theme::FONT_CAPTION + 2.0 * theme::GAP_MD;
+    let slide = anim::segment_slide(
+        SharedString::from(format!("settings-seg-{title}")),
+        active,
+        window,
+        cx,
+    );
+
     let mut track = div()
         .mt(px(theme::GAP_MD))
+        .relative()
         .flex()
-        .gap(px(2.))
-        .p(px(2.))
-        .rounded(px(theme::RADIUS_MD))
-        .bg(theme::bg());
+        .gap(px(gap))
+        .p(px(pad))
+        .border_1()
+        .border_color(theme::text())
+        .bg(theme::bg())
+        .child(
+            div()
+                .absolute()
+                .top(px(pad))
+                .bottom(px(pad))
+                .left(px(pad + slide * (seg_w + gap)))
+                .w(px(seg_w))
+                .bg(theme::control()),
+        );
 
     for (index, (label, active)) in options.iter().enumerate() {
         let label = (*label).to_owned();
         let active = *active;
+        // 字色跟着墨块走：滑到哪一段，哪一段反白；只按逻辑选中切换会有一半时间白字压白底。
+        let under = (slide - index as f32).abs() < 0.5;
         let on_pick = Rc::clone(on_pick);
         let a11y = format!("{title}：{label}{}", if active { "（已选中）" } else { "" });
-        let (base_bg, base_color) = if active {
-            (theme::control(), theme::text_on_control())
-        } else {
-            (theme::transparent(), theme::text_muted())
-        };
 
         track = track.child(
             div()
                 .id(SharedString::from(format!("choice-{title}-{index}")))
+                .w(px(seg_w))
                 .flex()
                 .items_center()
                 .justify_center()
-                .px(px(theme::GAP_MD))
                 .py(px(5.))
-                .rounded(px(theme::RADIUS_SM))
                 .tab_index(TAB_STOP)
                 .focus_visible(theme::focus_ring)
                 .role(Role::Button)
                 .aria_selected(active)
                 .text_size(px(theme::FONT_CAPTION))
                 .font_weight(theme::WEIGHT_BUTTON)
-                .bg(base_bg)
-                .text_color(base_color)
+                .text_color(if under {
+                    theme::text_on_control()
+                } else {
+                    theme::text_muted()
+                })
                 .cursor_pointer()
-                // 悬停只给未选项：选中态已是最亮档，再套 hover 会盖掉它的底色。
-                .when(!active, |seg| {
-                    seg.hover(|style| style.bg(theme::elevated()).text_color(theme::text()))
+                // 悬停只改字色：再铺一层底色会盖住滑过来的墨块
+                .when(!under, |seg| {
+                    seg.hover(|style| style.text_color(theme::text()))
                 })
                 .on_click(cx.listener(move |_, _, _, cx| on_pick(index, cx)))
                 .tooltip(crate::common::tooltip::builder(a11y))
@@ -652,7 +735,7 @@ fn data_section(library: &Entity<LibraryEntity>, cx: &App) -> Div {
         );
     }
 
-    card("数据").child(content)
+    card("Data", "数据").child(content)
 }
 
 /// 把内部写法 `ctrl-up` 翻成界面上的 `Ctrl + ↑`，只翻展示层。
@@ -699,6 +782,13 @@ impl SettingsEntity {
         edit(&mut self.settings);
         self.settings.save();
         cx.notify();
+    }
+
+    pub fn set_appearance(&mut self, appearance: theme::Appearance, cx: &mut Context<Self>) {
+        self.update_and_save(cx, |settings| settings.appearance = appearance);
+        // 两套明暗都要立刻生效：本项目 palette + 组件库 ThemeMode，再整窗重画。
+        crate::platform::set_appearance(appearance, cx);
+        cx.refresh_windows();
     }
 
     pub fn set_density(&mut self, density: Density, cx: &mut Context<Self>) {

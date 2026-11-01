@@ -63,14 +63,11 @@ pub(crate) fn card_play_button(
         .absolute()
         .right(px(theme::GAP_SM))
         .bottom(px(theme::GAP_SM))
-        .size(px(40.))
+        .size(px(36.))
         .flex()
         .items_center()
         .justify_center()
-        .rounded_full()
-        .bg(theme::control())
-        .border(px(2.))
-        .border_color(theme::bg())
+        .bg(theme::accent())
         .opacity(0.0)
         .cursor_pointer()
         .group_hover(group, |style| style.opacity(1.0))
@@ -79,11 +76,8 @@ pub(crate) fn card_play_button(
         .focus(|style| style.opacity(1.0))
         .focus_visible(theme::focus_ring)
         .role(Role::Button)
-        .hover(|style| {
-            style
-                .bg(theme::control_hover())
-                .shadow(theme::hover_shadow())
-        })
+        .hover(|style| style.bg(theme::accent_hover()))
+        .child(crate::common::ornament::cut_br(theme::CUT_SM, theme::bg()))
         .on_click({
             let library = library.clone();
             move |_, _, cx| {
@@ -97,7 +91,7 @@ pub(crate) fn card_play_button(
         })
         .tooltip(tooltip::builder(format!("播放《{title}》")))
         .aria_label(format!("播放《{title}》"))
-        .child(icon(Glyph::Play, 16., theme::text_on_control()))
+        .child(icon(Glyph::Play, 16., theme::text_on_accent()))
         .into_any_element()
 }
 
@@ -111,7 +105,6 @@ pub(crate) fn panel_close_button(el_id: &'static str, shell: &Entity<ShellEntity
         .flex()
         .items_center()
         .justify_center()
-        .rounded_full()
         .bg(theme::elevated())
         .text_color(theme::text_muted())
         .cursor_pointer()

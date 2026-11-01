@@ -1,5 +1,7 @@
 //! 行的四态、一行的骨架，以及列表的列头。
 
+use std::time::Duration;
+
 use lyre_core::{Track, TrackId, format_duration};
 
 use crate::cover::CoverCache;
@@ -18,8 +20,8 @@ pub(super) fn show_album_column(breakpoint_allows: bool, kind: ScopeKind) -> boo
     breakpoint_allows && kind != ScopeKind::Album
 }
 
-/// 列头。`trailing` 是行操作列那一格里的附加控件（详情页 / 搜索页的「多选」开关）。
-pub(super) fn column_header(env: &RowEnv, trailing: Option<AnyElement>) -> impl IntoElement {
+/// 列头。
+pub(super) fn column_header(env: &RowEnv) -> impl IntoElement {
     let mut row = div()
         .flex_none()
         .h(px(theme::COLUMN_HEADER_H))
@@ -28,9 +30,11 @@ pub(super) fn column_header(env: &RowEnv, trailing: Option<AnyElement>) -> impl 
         .pl(px(theme::ROW_PAD_LEFT))
         .pr(px(theme::GAP_MD))
         .border_b_1()
-        .border_color(theme::border_soft())
-        .text_size(px(theme::FONT_CAPTION))
-        .text_color(theme::text_muted())
+        .border_color(theme::text())
+        .font(theme::label_font())
+        .text_size(px(theme::FONT_EYEBROW))
+        .font_weight(theme::WEIGHT_BUTTON)
+        .text_color(theme::text_faint())
         // 勾选列与手柄列没有表头文字，但要占同样的宽：否则切换多选会在每行前面挖出一道错位。
         .when(env.selectable, |row| {
             row.child(div().flex_none().w(px(CHECK_W)))
@@ -38,11 +42,26 @@ pub(super) fn column_header(env: &RowEnv, trailing: Option<AnyElement>) -> impl 
         .when(env.reorderable, |row| {
             row.child(div().flex_none().w(px(HANDLE_W)))
         })
-        .child(div().flex_none().w(px(INDEX_W)))
-        .child(div().flex_1().min_w_0().child("标题"));
+        .child(
+            div()
+                .flex_none()
+                .w(px(INDEX_W))
+                .flex()
+                .justify_end()
+                .pr(px(theme::ROW_INDEX_GAP))
+                .child("NO."),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                // 标题格前面还有封面缩略图；列头让出同一段宽度才和歌名同一条竖线。
+                .pl(px(env.thumb_size() + theme::GAP_MD))
+                .child("TITLE / 标题"),
+        );
 
     if env.show_album {
-        row = row.child(div().flex_none().w(px(ALBUM_W)).child("专辑"));
+        row = row.child(div().flex_none().w(px(ALBUM_W)).child("ALBUM / 专辑"));
     }
     row.child(
         div()
@@ -51,7 +70,7 @@ pub(super) fn column_header(env: &RowEnv, trailing: Option<AnyElement>) -> impl 
             .flex()
             .justify_end()
             .pr(px(theme::GAP_MD))
-            .child("时长"),
+            .child("TIME / 时长"),
     )
     .child(
         div()
@@ -59,8 +78,7 @@ pub(super) fn column_header(env: &RowEnv, trailing: Option<AnyElement>) -> impl 
             .w(px(ACTIONS_W))
             .flex()
             .items_center()
-            .justify_end()
-            .children(trailing),
+            .justify_end(),
     )
 }
 
@@ -74,6 +92,13 @@ pub(super) enum RowState {
     Playing,
     /// 既在播放又是光标行
     PlayingFocused,
+}
+
+/// 删除动画传进每一行的位移：本行擦出、下方的行先向上补位。
+#[derive(Clone, Copy, Default)]
+pub(super) struct RowMotion {
+    pub(super) remove: f32,
+    pub(super) shift: f32,
 }
 
 impl RowState {
@@ -95,10 +120,10 @@ impl RowState {
     }
 
     fn background(self) -> Rgba {
+        // 播放行靠行首黄块与粗体标出，不再整行铺淡黄：黄色面积要小。
         match self {
-            Self::Playing | Self::PlayingFocused => theme::accent_soft(),
             Self::Focused => theme::cursor(),
-            Self::Idle => theme::transparent(),
+            Self::Playing | Self::PlayingFocused | Self::Idle => theme::transparent(),
         }
     }
 
@@ -108,12 +133,9 @@ impl RowState {
         self.is_focused()
     }
 
-    pub(super) fn title_color(self) -> Rgba {
-        if self.is_playing() {
-            theme::accent_text()
-        } else {
-            theme::text()
-        }
+    /// 黄只做填充；文字一律墨色，播放态靠字重与行首黄块区分。
+    pub(super) fn title_color() -> Rgba {
+        theme::text()
     }
 
     pub(super) fn title_weight(self) -> FontWeight {
@@ -122,6 +144,15 @@ impl RowState {
         } else {
             theme::WEIGHT_TRACK
         }
+    }
+}
+
+/// 行首黄块切角露出的底色：光标行是 chip 色，其余是白板。
+fn if_focused_backdrop(state: RowState) -> Rgba {
+    if state.is_focused() {
+        theme::cursor()
+    } else {
+        theme::bg()
     }
 }
 
@@ -135,16 +166,23 @@ pub(super) fn row(
     library: &Entity<LibraryEntity>,
     list: &WeakEntity<TrackList>,
     covers: &Entity<CoverCache>,
+    motion: RowMotion,
+    // `(世代, 延迟 ms)`：这一行属于本轮逐行入场。
+    enter: Option<(u64, u64)>,
+    window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let track_id = track.id;
     // 行高只从 `env.row_height` 来：`uniform_list` 按它算每一项的位置，这里另算一份就会错位
     let row_height = env.row_height;
     let group: SharedString = format!("track-row-{index}").into();
+    let hover_id = ElementId::from(("track-row", index));
+    let hover = crate::common::hover::row_progress(hover_id.clone(), window, cx);
+    let idle = matches!(state, RowState::Idle);
     let liked = library.read(cx).is_liked(track_id);
 
     let mut element = div()
-        .id(("track-row", index))
+        .id(hover_id.clone())
         .group(group.clone())
         // 落点区是绝对定位的，要有这个才钉在本行而不是钉在列表上
         .relative()
@@ -154,14 +192,30 @@ pub(super) fn row(
         .min_w_0()
         .flex()
         .items_center()
-        .pl(px(theme::ROW_PAD_LEFT))
+        .pl(px(
+            theme::ROW_PAD_LEFT + if idle { 6.0 * hover } else { 0.0 }
+        ))
         .pr(px(theme::GAP_MD))
-        .bg(state.background());
+        .border_b_1()
+        .border_color(theme::border_soft())
+        .bg(state.background())
+        .on_hover(crate::common::hover::bind(hover_id));
 
-    // 悬停底色只给空闲行：`hover` 比 `accent_soft` 与 `cursor` 都暗，叠上去会把播放行和光标行压暗
-    if matches!(state, RowState::Idle) {
-        element = element.hover(|style| style.bg(theme::hover()));
+    // 悬停底色只给空闲行；光标行已有底色，叠上去会分不清。
+    if idle {
+        element = element.child(div().absolute().inset_0().bg(theme::hover()).opacity(hover));
     }
+
+    // 悬停时左边落下一道 4px 当前条，高度随悬停进度落到底；深色主题里这道线是黄。
+    element = element.child(
+        div()
+            .absolute()
+            .left(px(0.))
+            .top(px(0.))
+            .w(px(4.))
+            .h(relative(hover))
+            .bg(theme::trace()),
+    );
 
     // `left(0)` 相对行的 padding box，绝对定位不挤占任何一列
     if state.shows_cursor_bar() {
@@ -172,8 +226,7 @@ pub(super) fn row(
                 .top(px(row_height * 0.25))
                 .w(px(theme::ROW_CURSOR_BAR_W))
                 .h(px(row_height * 0.5))
-                .rounded_full()
-                .bg(theme::text()),
+                .bg(theme::trace()),
         );
     }
 
@@ -193,7 +246,27 @@ pub(super) fn row(
             .flex()
             .justify_end()
             .pr(px(theme::ROW_INDEX_GAP))
-            .child(icon(Glyph::Music, 12., theme::accent_text()))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(24.))
+                    .h(px(18.))
+                    .bg(theme::accent())
+                    .relative()
+                    .child(crate::common::ornament::cut_br(
+                        theme::CUT_SM,
+                        if_focused_backdrop(state),
+                    ))
+                    .child(
+                        div()
+                            .font(theme::field_font())
+                            .text_size(px(theme::FONT_CAPTION))
+                            .text_color(theme::text_on_accent())
+                            .child(format!("{}", index + 1)),
+                    ),
+            )
             .into_any_element()
     } else {
         // 序号与悬停播放键重叠在同一格，用 `group_hover` 切换两层透明度。
@@ -225,7 +298,8 @@ pub(super) fn row(
             })
             .child(
                 div()
-                    .text_size(px(theme::FONT_CAPTION))
+                    .font(theme::field_font())
+                    .text_size(px(theme::FONT_BODY))
                     .text_color(number_color)
                     .group_hover(group.clone(), |style| style.opacity(0.0))
                     .child(format!("{}", index + 1)),
@@ -269,11 +343,11 @@ pub(super) fn row(
                     .ok();
             }
         })
-        .after_remove({
+        .remove({
             let list = list.clone();
-            move |track, at, cx| {
-                list.update(cx, |_, cx| cx.emit(TrackListEvent::Removed(track, at)))
-                    .ok();
+            move |id, cx| {
+                list.update(cx, |list, cx| list.begin_remove(id, index, cx))
+                    .is_ok()
             }
         });
     let menu = || crate::common::menu::track_context_menu(library.clone(), track_id, hooks.clone());
@@ -286,6 +360,7 @@ pub(super) fn row(
                 .flex()
                 .justify_end()
                 .pr(px(theme::GAP_MD))
+                .font(theme::field_font())
                 .text_size(px(theme::FONT_CAPTION))
                 .text_color(theme::text_muted())
                 .child(
@@ -300,7 +375,7 @@ pub(super) fn row(
             group,
             track_id,
             liked,
-            library.clone(),
+            library,
             list.clone(),
             menu(),
         ));
@@ -322,11 +397,39 @@ pub(super) fn row(
             ));
     }
 
+    // 换内容后的逐行亮起：从左滑入并淡入，延迟按行号错开。
+    if let Some((generation, delay_ms)) = enter {
+        let key = ElementId::named_usize(
+            "row-enter",
+            (generation as usize).wrapping_mul(1024) + index,
+        );
+        let progress = motion::transition(
+            key,
+            1.0,
+            motion::Transition::new(Duration::from_millis(crate::common::anim::MOTION_COME_MS))
+                .delay(Duration::from_millis(delay_ms))
+                .ease(theme::ease_snap()),
+            window,
+            cx,
+        );
+        element = element.opacity(progress).left(px(-14.0 * (1.0 - progress)));
+    }
+
     // 引擎解不了的格式照常列出，只是压暗并给出原因（判据见 `lyre_core::UNSUPPORTED_EXTENSIONS`）
     if let Some(reason) = track.unplayable_reason() {
         element = element
             .opacity(theme::UNPLAYABLE_OPACITY)
             .tooltip(crate::common::tooltip::builder(reason));
+    }
+
+    // 删除：本行向右擦出并变淡；它下面的行同步向上补位，等真正移除时正好接住。
+    if motion.shift != 0.0 {
+        element = element.top(px(motion.shift));
+    }
+    if motion.remove > 0.0 {
+        element = element
+            .left(px(14.0 * motion.remove))
+            .opacity(1.0 - motion.remove);
     }
 
     // `context_menu` 返回 `ContextMenu<Div>` 而不是 `Div`，只能放在链式末尾。
@@ -365,9 +468,16 @@ mod tests {
         assert!(!RowState::Focused.is_playing());
         assert!(RowState::Focused.is_focused());
         assert!(!RowState::Playing.is_focused());
+        // 两者都用墨字；区分靠「播放 = 行首黄块 + 粗体」和「光标 = 左侧竖条」。
         assert_ne!(
-            RowState::Playing.title_color(),
-            RowState::Focused.title_color()
+            RowState::Playing.title_weight(),
+            RowState::Focused.title_weight(),
+            "播放行必须比光标行更粗，否则只靠形状区分不够"
+        );
+        assert_ne!(
+            RowState::Playing.background(),
+            RowState::Focused.background(),
+            "光标行有底色，播放行没有"
         );
     }
 
@@ -377,10 +487,7 @@ mod tests {
             RowState::Playing.background(),
             RowState::PlayingFocused.background()
         );
-        assert_eq!(
-            RowState::Playing.title_color(),
-            RowState::PlayingFocused.title_color()
-        );
+        assert_eq!(RowState::title_color(), RowState::title_color());
         assert_eq!(
             RowState::Playing.title_weight(),
             RowState::PlayingFocused.title_weight()

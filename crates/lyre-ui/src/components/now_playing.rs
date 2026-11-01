@@ -2,6 +2,7 @@
 //! 封面按需加载：曲目变化时才读标签、解码，结果落到 `CoverCache`。
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use lyre_core::{Track, UNKNOWN_ARTIST, artist_key_str, format_duration};
 
@@ -174,10 +175,9 @@ impl Render for NowPlaying {
         } = self.derived(track.as_ref(), cx);
 
         let canvas = div()
+            .relative()
             .flex_none()
             .size(px(COVER_SIZE))
-            .rounded(px(theme::RADIUS_LG))
-            .overflow_hidden()
             .bg(theme::elevated())
             .flex()
             .items_center()
@@ -207,7 +207,8 @@ impl Render for NowPlaying {
                 }
             }
             None => canvas.child(placeholder(None)),
-        };
+        }
+        .child(crate::common::ornament::cut_br(14., theme::bg()));
 
         let (title, subtitle) = match track.as_ref() {
             Some(track) => (track.title.clone(), track.subtitle()),
@@ -231,10 +232,12 @@ impl Render for NowPlaying {
                     .items_center()
                     .gap(px(theme::GAP_XS))
                     .w_full()
+                    .child(crate::common::section::eyebrow("Now Playing"))
                     .child(
                         div()
                             .id("np-title")
                             .w_full()
+                            .text_center()
                             .text_size(px(theme::FONT_TITLE))
                             .font_weight(theme::WEIGHT_TITLE)
                             .text_color(theme::text())
@@ -246,6 +249,7 @@ impl Render for NowPlaying {
                         div()
                             .id("np-subtitle")
                             .w_full()
+                            .text_center()
                             .text_size(px(theme::FONT_CAPTION))
                             .text_color(theme::text_muted())
                             .truncate()
@@ -257,26 +261,58 @@ impl Render for NowPlaying {
             );
 
         if track.as_ref().is_some_and(|t| t.duration.is_some()) {
-            hero = hero.child(
-                div()
-                    .text_size(px(theme::FONT_CAPTION))
-                    .text_color(theme::text_muted())
-                    .child(format!("时长 {}", format_duration(duration))),
-            );
+            hero = hero.child(crate::common::section::field(format_duration(duration)));
         }
 
+        // 换曲：只让封面 + 标题这一块重新入场，下面的关于 / 制作信息直接换。
+        let track_key = track.as_ref().map_or(0, |track| track.id.0);
+
         if let Some(error) = error {
-            hero = hero.child(
-                div()
-                    .w(px(COVER_SIZE))
-                    .rounded(px(theme::RADIUS_MD))
-                    .bg(theme::danger_soft())
-                    .p(px(theme::GAP_SM))
-                    .text_size(px(theme::FONT_CAPTION))
-                    .text_color(theme::danger())
-                    .child(error),
-            );
+            let notice = div()
+                .relative()
+                .w(px(COVER_SIZE))
+                .flex()
+                .items_start()
+                .gap(px(theme::GAP_SM))
+                .bg(theme::elevated())
+                .border_l(px(4.))
+                .border_color(theme::text())
+                .p(px(theme::GAP_SM))
+                .text_size(px(theme::FONT_CAPTION))
+                .text_color(theme::text())
+                .child(
+                    div()
+                        .flex_none()
+                        .mt(px(3.))
+                        .size(px(8.))
+                        .bg(theme::accent()),
+                )
+                .child(error.clone());
+            hero = hero.child(notice.with_animation(
+                SharedString::from(format!("np-error-{track_key}-{error}")),
+                Animation::new(Duration::from_millis(280)).with_easing(theme::ease_mech()),
+                |notice, t| {
+                    notice.child(
+                        // 纸色盖板从右往左退开，左侧先露出提示，前缘随进度移动。
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .right_0()
+                            .w(px(COVER_SIZE * (1.0 - t)))
+                            .bg(theme::panel()),
+                    )
+                },
+            ));
         }
+
+        let hero = crate::common::anim::enter(
+            SharedString::from(format!("np-hero-{track_key}")),
+            0,
+            crate::common::anim::MOTION_COME_MS,
+            10.0,
+            hero,
+        );
 
         let mut body = div()
             .w_full()
@@ -342,22 +378,22 @@ fn card() -> Div {
         .flex()
         .flex_col()
         .gap(px(theme::GAP_SM))
-        .rounded(px(theme::RADIUS_CARD))
         .bg(theme::surface())
+        .border_1()
+        .border_color(theme::border())
         .p(px(theme::GAP_MD))
 }
 
-/// 「关于艺术家」卡：底色用 [`theme::hero_tint`] 取色，其上文字一律白色以保 AA。
+/// 「关于艺术家」卡：纸色底 + 1px 细线，不引入第二套色相。
 fn about_artist(
     name: String,
     stats: Option<(usize, usize)>,
     following: bool,
     library: Entity<LibraryEntity>,
 ) -> AnyElement {
-    let tint = theme::hero_tint(Some(name.as_str()));
     let stats_text = match stats {
         Some((tracks, albums)) => {
-            format!("{} 首 · {} 张专辑", thousands(tracks), thousands(albums))
+            format!("{} 首 │ {} 张专辑", thousands(tracks), thousands(albums))
         }
         None => String::new(),
     };
@@ -391,9 +427,11 @@ fn about_artist(
         .flex()
         .flex_col()
         .gap(px(theme::GAP_SM))
-        .rounded(px(theme::RADIUS_CARD))
-        .bg(tint)
+        .bg(theme::window_base())
+        .border_1()
+        .border_color(theme::border())
         .p(px(theme::GAP_MD))
+        .child(crate::common::section::eyebrow("Artist"))
         .child(
             div()
                 .w_full()
@@ -417,8 +455,7 @@ fn about_artist(
         card = card.child(
             div()
                 .text_size(px(theme::FONT_CAPTION))
-                // 白字降到 0.85 不透明度作次要信息；底色是中深色，仍在 AA 之上。
-                .text_color(theme::text().opacity(0.85))
+                .text_color(theme::text_muted())
                 .child(stats_text),
         );
     }
@@ -431,6 +468,7 @@ fn credits(track: &Track) -> AnyElement {
     let format = track.format().unwrap_or_else(|| "未知".to_owned());
 
     card()
+        .child(crate::common::section::eyebrow("Credits"))
         .child(crate::common::section::section_heading("制作人员"))
         .child(credit_row(
             "艺术家",
@@ -492,17 +530,22 @@ fn up_next(
             .child("♪")
     };
 
-    let thumb = match state {
-        crate::common::cover::Cover::Ready(image) => thumb.child(
-            img(ImageSource::Render(image))
-                .size_full()
-                .object_fit(ObjectFit::Cover),
-        ),
-        crate::common::cover::Cover::Missing => thumb.child(note()),
-        crate::common::cover::Cover::Pending => thumb.child(crate::common::cover::skeleton(
-            UP_NEXT_COVER,
-            theme::RADIUS_SM,
-        )),
+    let thumb: AnyElement = match state {
+        crate::common::cover::Cover::Ready(image) => {
+            let cell = thumb.child(
+                img(ImageSource::Render(std::sync::Arc::clone(&image)))
+                    .size_full()
+                    .object_fit(ObjectFit::Cover),
+            );
+            crate::common::cover::fade_in(&image, cell).into_any_element()
+        }
+        crate::common::cover::Cover::Missing => thumb.child(note()).into_any_element(),
+        crate::common::cover::Cover::Pending => thumb
+            .child(crate::common::cover::skeleton(
+                UP_NEXT_COVER,
+                theme::RADIUS_SM,
+            ))
+            .into_any_element(),
     };
 
     let subtitle = next.subtitle();
@@ -510,6 +553,7 @@ fn up_next(
 
     div()
         .w_full()
+        .child(crate::common::section::eyebrow("Next"))
         .child(crate::common::section::section_heading("下一首"))
         .child(
             div()

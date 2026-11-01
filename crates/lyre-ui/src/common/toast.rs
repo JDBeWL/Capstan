@@ -18,9 +18,12 @@ type UndoAction = Box<dyn FnOnce(&mut Window, &mut App) + 'static>;
 
 pub struct ToastEntity {
     pending: Option<Pending>,
-    /// 每次 show 递增；定时器只在本代仍是当前代时才关闭，否则前一次的定时器会提前关掉新提示。
+    /// 退出动画期间暂存的内容：等 160ms 播完才真正消失。
+    closing: Option<Pending>,
+    /// 每次 show / 开始退场递增；定时器只在本代仍是当前代时才生效。
     generation: u64,
     _expiry: Option<Task<()>>,
+    _close: Option<Task<()>>,
 }
 
 impl ToastEntity {
@@ -28,8 +31,10 @@ impl ToastEntity {
         let _ = cx;
         Self {
             pending: None,
+            closing: None,
             generation: 0,
             _expiry: None,
+            _close: None,
         }
     }
 
@@ -50,6 +55,8 @@ impl ToastEntity {
         self.generation = self.generation.wrapping_add(1);
         let generation = self.generation;
 
+        self.closing = None;
+        self._close = None;
         self.pending = Some(Pending {
             message: message.into(),
             action_label,
@@ -86,23 +93,43 @@ impl ToastEntity {
     // 置 `None` 即取消定时器：`Task` 一 drop 就中止。
     #[allow(clippy::used_underscore_binding)]
     pub fn dismiss(&mut self, cx: &mut Context<Self>) {
-        if self.pending.take().is_some() {
-            self._expiry = None;
-            cx.notify();
-        }
+        let Some(pending) = self.pending.take() else {
+            return;
+        };
+        // 定时器与撤销都结束：内容交给退出动画，播完再真正移除。
+        self._expiry = None;
+        self.closing = Some(pending);
+        self.generation = self.generation.wrapping_add(1);
+        let generation = self.generation;
+        let executor = cx.background_executor().clone();
+        self._close = Some(cx.spawn(async move |this, cx| {
+            executor
+                .timer(Duration::from_millis(theme::MOTION_TOAST_OUT_MS))
+                .await;
+            this.update(cx, |toast, cx| {
+                if toast.generation == generation && toast.closing.is_some() {
+                    toast.closing = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        }));
+        cx.notify();
     }
 }
 
 impl Render for ToastEntity {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 无内容时返回零尺寸占位；两条分支都要转 `AnyElement`，否则 `impl IntoElement` 的具体类型对不上
-        let Some(pending) = self.pending.as_mut() else {
+        let leaving = self.pending.is_none();
+        let generation = self.generation;
+        let Some(pending) = self.pending.as_mut().or(self.closing.as_mut()) else {
             return div().into_any_element();
         };
 
         let message = pending.message.clone();
         let action_label = pending.action_label;
-        let has_action = pending.action.is_some() && !action_label.is_empty();
+        let has_action = !leaving && pending.action.is_some() && !action_label.is_empty();
 
         let action_button = has_action.then(|| {
             let entity = cx.entity().downgrade();
@@ -111,16 +138,20 @@ impl Render for ToastEntity {
                 .flex_none()
                 .px(px(theme::GAP_SM))
                 .py(px(2.0))
-                .rounded(px(theme::RADIUS_SM))
                 .text_size(px(theme::FONT_CAPTION))
-                .text_color(theme::text())
+                .font_weight(theme::WEIGHT_BUTTON)
+                .text_color(theme::text_on_control())
                 .cursor_pointer()
                 // 撤销提示只活 6 秒，键盘用户也得够得着，所以它进 Tab 序列。
                 .tab_index(crate::common::button::TAB_STOP)
                 .focus_visible(theme::focus_ring)
                 .role(Role::Button)
                 .aria_label("撤销")
-                .hover(|style| style.bg(theme::hover()))
+                .hover(|style| {
+                    style
+                        .bg(theme::accent())
+                        .text_color(theme::text_on_accent())
+                })
                 .on_click(move |_, window, cx| {
                     entity
                         .update(cx, |toast, cx| {
@@ -137,21 +168,51 @@ impl Render for ToastEntity {
                 .child(action_label)
         });
 
-        div()
+        let toast = div()
             .id("toast")
+            .relative()
             .flex()
             .items_center()
             .gap(px(theme::GAP_MD))
-            .px(px(theme::GAP_LG))
+            .pl(px(theme::GAP_LG + 6.))
+            .pr(px(theme::GAP_LG))
             .py(px(theme::GAP_MD))
-            .rounded(px(theme::RADIUS_LG))
-            .bg(theme::elevated())
-            .border_1()
-            .border_color(theme::border())
+            .bg(theme::control())
             .text_size(px(theme::FONT_CAPTION))
-            .text_color(theme::text())
+            .text_color(theme::text_on_control())
+            // 左边 6px 黄条：提示条唯一的强调
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .bottom_0()
+                    .w(px(6.))
+                    .bg(theme::accent()),
+            )
             .child(div().max_w(px(420.)).truncate().child(message))
-            .children(action_button)
-            .into_any_element()
+            .children(action_button);
+
+        if leaving {
+            // 退出用 mech 的反向：慢慢松开，然后咔地关掉。
+            let ease = theme::ease_mech();
+            toast
+                .with_animation(
+                    SharedString::from(format!("toast-out-{generation}")),
+                    Animation::new(Duration::from_millis(theme::MOTION_TOAST_OUT_MS))
+                        .with_easing(ease),
+                    |el, delta| el.opacity(1.0 - delta).relative().left(px(delta * 12.0)),
+                )
+                .into_any_element()
+        } else {
+            toast
+                .with_animation(
+                    SharedString::from(format!("toast-in-{generation}")),
+                    Animation::new(Duration::from_millis(theme::MOTION_TOAST_IN_MS))
+                        .with_easing(theme::ease_mech()),
+                    |el, delta| el.opacity(delta).relative().left(px(-12.0 * (1.0 - delta))),
+                )
+                .into_any_element()
+        }
     }
 }

@@ -160,23 +160,27 @@ impl Render for MiniNowPlaying {
         }
 
         let art = div()
+            .relative()
             .flex_none()
             .size(px(COVER_SIZE))
-            .rounded(px(theme::RADIUS_LG))
-            .overflow_hidden()
             .bg(theme::elevated())
             .flex()
             .items_center()
             .justify_center();
 
         let art = match self.cover.clone() {
-            Some(image) => art.child(
-                img(ImageSource::Render(image))
+            Some(image) => art.child(crate::common::cover::fade_in(
+                &image,
+                img(ImageSource::Render(std::sync::Arc::clone(&image)))
                     .size_full()
                     .object_fit(ObjectFit::Cover),
-            ),
+            )),
             None => art.child(icon(Glyph::Music, 20., theme::text_faint())),
-        };
+        }
+        .child(crate::common::ornament::cut_br(
+            theme::CUT_SM,
+            theme::chrome(),
+        ));
 
         let has_track = self.cover_id.is_some();
         let title = if has_track {
@@ -212,6 +216,16 @@ impl Render for MiniNowPlaying {
         if has_track && quality != Quality::Lossy {
             title_row = title_row.child(quality_badge(quality, audio, format.clone()));
         }
+
+        // 换曲时只让标题这一行重新入场；封面自己按图淡入。
+        let track_key = self.cover_id.map_or(0, |id| id.0);
+        let title_row = crate::common::anim::enter(
+            SharedString::from(format!("mini-title-{track_key}")),
+            0,
+            theme::MOTION_ROW_MS,
+            8.0,
+            title_row,
+        );
 
         // 左侧可点区域：点它展开「正在播放」。爱心在这个区域之外，免得点击冒泡到这里。
         let info = div()
@@ -272,13 +286,8 @@ fn heart_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(theme::RADIUS_PILL))
         .cursor_pointer()
-        .text_color(if liked {
-            theme::accent_text()
-        } else {
-            theme::text_muted()
-        })
+        .text_color(theme::text())
         .hover(|style| style.bg(theme::elevated()).text_color(theme::text()))
         .tooltip(crate::common::tooltip::builder(if liked {
             "取消收藏"
@@ -335,12 +344,10 @@ fn quality_badge(quality: Quality, audio: AudioInfo, format: Option<String>) -> 
         .flex_none()
         .px(px(theme::GAP_XS + 2.0))
         .py(px(1.))
-        .rounded(px(theme::RADIUS_SM))
-        .border_1()
-        .border_color(theme::accent())
+        .bg(theme::accent())
         .text_size(px(theme::FONT_TAG))
         .font_weight(theme::WEIGHT_BUTTON)
-        .text_color(theme::accent_text())
+        .text_color(theme::text_on_accent())
         .cursor_pointer()
         // 徽章落在「点开正在播放」的可点区域里，不拦下来会连面板一起弹开
         .on_click(|_, _, cx| cx.stop_propagation())

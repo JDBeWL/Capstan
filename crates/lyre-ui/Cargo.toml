@@ -14,6 +14,7 @@ lyre-audio-exclusive = { path = "../lyre-audio-exclusive" }
 gpui = { workspace = true }
 gpui-platform = { workspace = true }
 gpui-component = { workspace = true }
+gpui-base = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 # release 下没有控制台（windows_subsystem="windows"），日志必须落文件，见 src/logging.rs

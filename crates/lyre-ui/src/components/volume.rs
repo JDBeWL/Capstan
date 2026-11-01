@@ -8,8 +8,8 @@ use crate::theme;
 
 const BAR_W: f32 = 84.0;
 const HIT_H: f32 = 18.0;
-const TRACK_H: f32 = 4.0;
-const TRACK_H_ACTIVE: f32 = 6.0;
+const TRACK_H: f32 = 3.0;
+const TRACK_H_ACTIVE: f32 = 5.0;
 /// 滑块的半径。轨道两端各让出这么多，见 [`ratio_in_track`]。
 const THUMB_R: f32 = 5.0;
 /// 拖动时浮出的数值气泡的宽度。定宽是为了它在 9% 和 100% 之间不左右跳。
@@ -150,7 +150,6 @@ impl Render for VolumeControl {
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(theme::RADIUS_PILL))
             .text_color(if muted {
                 theme::text_faint()
             } else {
@@ -253,7 +252,6 @@ impl Render for VolumeControl {
                             .relative()
                             .w_full()
                             .h(px(track_height))
-                            .rounded_full()
                             .bg(theme::track())
                             .child(
                                 div()
@@ -262,7 +260,6 @@ impl Render for VolumeControl {
                                     .top_0()
                                     .h_full()
                                     .w(relative(volume))
-                                    .rounded_full()
                                     .bg(if muted {
                                         theme::text_faint()
                                     } else {
@@ -277,8 +274,7 @@ impl Render for VolumeControl {
                                     .left(relative(volume))
                                     .ml(px(-5.))
                                     .size(px(10.))
-                                    .rounded_full()
-                                    .bg(theme::text())
+                                    .bg(theme::accent())
                                     .opacity(if active { 1.0 } else { 0.0 }),
                             ),
                     ),
@@ -304,10 +300,10 @@ impl Render for VolumeControl {
                 .flex()
                 .justify_center()
                 .py(px(theme::GAP_XS))
-                .rounded(px(theme::RADIUS_SM))
                 .bg(theme::elevated())
                 .border_1()
                 .border_color(theme::border())
+                .font(theme::field_font())
                 .text_size(px(theme::FONT_MICRO))
                 .text_color(theme::text())
                 .child(format!("{}%", (value * 100.0).round() as i32))

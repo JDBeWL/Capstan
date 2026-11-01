@@ -8,8 +8,8 @@ use crate::theme;
 
 /// 顶栏圆按钮的统一直径。
 const CTRL_PX: f32 = 32.0;
-/// 窗口符号「— □ ×」的尺寸。
-const GLYPH_PX: f32 = 12.0;
+/// 窗口符号「— □ ×」的尺寸。方框与叉的实面积比齿轮环显眼，比齿轮小一档才平衡。
+const GLYPH_PX: f32 = 16.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Control {
@@ -98,7 +98,6 @@ fn control_button(control: Control) -> impl IntoElement {
         .flex()
         .items_center()
         .justify_center()
-        .rounded_full()
         .when(cfg!(target_os = "windows"), |this| {
             this.window_control_area(control.area())
         })
@@ -124,7 +123,7 @@ fn control_button(control: Control) -> impl IntoElement {
 /// 窗口符号。颜色必须显式给常态与悬停两次：gpui 把 SVG 渲成 alpha 蒙版，颜色只由 `text_color` 决定，而子元素不继承父级的 `text_color`。
 /// `icon_inherit` 返回的 `impl IntoElement` 已擦除链式方法，所以变色要靠这层 `div`。
 fn window_glyph(control: Control, group: SharedString) -> impl IntoElement {
-    // 关闭键悬停是红底：白字压 `#e5484d` 只有 3.4:1，达不到 AA，得用黑字。
+    // 关闭键悬停是红底：浅色用白叉，深色用深墨叉，统一取 `text_on_danger`。
     let idle = theme::text();
     let hovered = if control == Control::Close {
         theme::text_on_danger()

@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use crate::common::{thousands, tooltip};
+use crate::common::{anim, thousands, tooltip};
 use crate::entities::LibraryEntity;
 use crate::icon::{Glyph, icon_inherit};
 use crate::platform::*;
@@ -11,56 +11,108 @@ use crate::theme;
 
 use super::Sidebar;
 use super::entries::{Listing, SideEntry, lib_row};
-use super::nav::{NavDeps, home_item, lib_fallback_item, library_item, library_item_selected};
+use super::nav::{
+    LibraryItem, NavDeps, active_index, home_item, icon_index, lib_fallback_item, library_item,
+    library_item_selected,
+};
 
-const CARD_PAD: f32 = theme::GAP_SM;
-const LIB_HEADER_H: f32 = 32.0;
+const CARD_PAD: f32 = 8.0;
 /// 下卡片虚拟列表最多渲染的行数。
 const LIB_MAX_ROWS: usize = 1000;
 
 impl Sidebar {
-    /// 上卡片：首页 / 曲库两项，定高不参与滚动。
-    pub(super) fn home_card(&self, state: SidebarState, cx: &mut App) -> AnyElement {
+    /// 顶部：字标 + 首页 / 曲库两项，定高不参与滚动。
+    pub(super) fn home_card(
+        &self,
+        state: SidebarState,
+        counts: (usize, usize, usize),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let labels = state.shows_labels();
-        let nav = self.shell.read(cx).nav_section();
+        let section = self.shell.read(cx).nav_section();
         let scoped = self.library.read(cx).scope().is_scoped();
-        let card = div()
+        let mut card = div()
             .flex_none()
             .flex()
             .flex_col()
-            .rounded(px(theme::RADIUS_CARD))
-            .overflow_hidden()
-            .bg(theme::panel())
-            .p(px(CARD_PAD))
-            .gap(px(2.));
+            .bg(theme::window_base())
+            .px(px(CARD_PAD))
+            .pb(px(CARD_PAD));
+
+        if labels {
+            card = card.child(brand_row());
+        }
 
         let deps = || NavDeps {
             shell: self.shell.clone(),
             library: self.library.clone(),
         };
 
-        card.child(home_item(
-            "side-home",
-            "首页",
-            labels,
-            nav == NavSection::Home,
-            deps(),
-        ))
-        .child(library_item(
-            "side-library",
-            "曲库",
-            labels,
-            library_item_selected(nav, scoped),
-            deps(),
-        ))
-        .into_any_element()
+        // 悬停曲库行时把 epoch 加一：计数换 id 重播一次乱码，移出不重播。
+        let bump_epoch = {
+            let sidebar = cx.entity().downgrade();
+            move |_window: &mut Window, cx: &mut App| {
+                sidebar
+                    .update(cx, |sidebar, cx| {
+                        sidebar.count_epoch = sidebar.count_epoch.wrapping_add(1);
+                        cx.notify();
+                    })
+                    .ok();
+            }
+        };
+
+        let mut rail = div().flex_none().relative().flex().flex_col();
+        if let Some(index) = active_index(section, scoped) {
+            let slide = anim::nav_slide(SharedString::from("side-nav"), index, window, cx);
+            rail = rail.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(px(slide * theme::SIDEBAR_ITEM_H))
+                    .w_full()
+                    .h(px(theme::SIDEBAR_ITEM_H))
+                    .bg(theme::accent())
+                    .child(crate::common::ornament::cut_br(
+                        theme::CUT_SM,
+                        theme::window_base(),
+                    )),
+            );
+        }
+
+        rail = rail
+            .child(home_item(
+                "side-home",
+                "首页",
+                labels,
+                section == NavSection::Home,
+                deps(),
+            ))
+            .child(library_item(
+                LibraryItem {
+                    id: "side-library",
+                    label: "曲库",
+                    show_label: labels,
+                    selected: library_item_selected(section, scoped),
+                    count: counts.0,
+                    epoch: self.count_epoch,
+                    on_hover: Some(Box::new(bump_epoch)),
+                },
+                deps(),
+            ));
+
+        card.child(rail).into_any_element()
     }
 
     /// 「你的音乐库」卡片：标题行 + Chip 筛选 + 专辑 / 艺术家列表。
-    pub(super) fn library_card(&self, state: SidebarState, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn library_card(
+        &self,
+        state: SidebarState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let labels = state.shows_labels();
         let nav = self.shell.read(cx).nav_section();
-        let scoped = self.library.read(cx).scope().is_scoped();
         let effective = self.effective_listing(nav);
 
         let entries = self.entries(nav, cx);
@@ -72,7 +124,7 @@ impl Sidebar {
             return card_shell(false)
                 .child(header)
                 .child(lib_fallback_item(
-                    scoped,
+                    nav.in_library(),
                     NavDeps {
                         shell: self.shell.clone(),
                         library: self.library.clone(),
@@ -81,7 +133,7 @@ impl Sidebar {
                 .into_any_element();
         }
 
-        let chips = Self::chips_row(effective, cx);
+        let chips = Self::chips_row(effective, state.width(), window, cx);
 
         if entries.is_empty() {
             return card_shell(true)
@@ -101,7 +153,7 @@ impl Sidebar {
             let shell = self.shell.clone();
             let library = self.library.clone();
             let covers = self.covers.clone();
-            move |range, _window, cx| {
+            move |range, window, cx| {
                 range
                     .map(|ix| {
                         lib_row(
@@ -109,6 +161,7 @@ impl Sidebar {
                             shell.clone(),
                             library.clone(),
                             &covers,
+                            window,
                             cx,
                         )
                     })
@@ -126,36 +179,96 @@ impl Sidebar {
             .into_any_element()
     }
 
-    /// 「你的音乐库」标题下的胶囊 Chip 行：手动切换下卡片列歌单、艺术家还是专辑。
-    fn chips_row(effective: Listing, cx: &mut Context<Self>) -> AnyElement {
-        div()
+    /// 「你的音乐库」标题下的切角 Chip 行：手动切换下卡片列歌单、艺术家还是专辑。
+    fn chips_row(
+        effective: Listing,
+        width: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let gap = theme::GAP_XS;
+        let chip_w = (width - 2.0 * CARD_PAD - 2.0 * gap) / 3.0;
+        let active = match effective {
+            Listing::Collections => 0,
+            Listing::Artists => 1,
+            Listing::Albums => 2,
+        };
+        let slide = anim::segment_slide(SharedString::from("side-lib-chips"), active, window, cx);
+
+        let mut row = div()
             .id("side-lib-chips")
+            .relative()
             .flex_none()
             .flex()
-            .gap(px(theme::GAP_SM))
-            .px(px(theme::GAP_SM))
-            .pb(px(theme::GAP_SM))
-            .child(chip(
-                "side-chip-collections",
-                "歌单",
-                effective == Listing::Collections,
-                cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.set_listing(Listing::Collections, cx);
-                }),
-            ))
-            .child(chip(
-                "side-chip-artists",
-                "艺术家",
-                effective == Listing::Artists,
-                cx.listener(|this, _: &ClickEvent, _, cx| this.set_listing(Listing::Artists, cx)),
-            ))
-            .child(chip(
-                "side-chip-albums",
-                "专辑",
-                effective == Listing::Albums,
-                cx.listener(|this, _: &ClickEvent, _, cx| this.set_listing(Listing::Albums, cx)),
-            ))
-            .into_any_element()
+            .gap(px(gap))
+            .pb(px(theme::GAP_SM));
+
+        // 灰底铺在后面，黄块在它们上面滑动，文字最后画。
+        for index in 0..3 {
+            row = row.child(
+                div()
+                    .absolute()
+                    .left(px(index as f32 * (chip_w + gap)))
+                    .top_0()
+                    .w(px(chip_w))
+                    .h(px(28.))
+                    .bg(theme::elevated())
+                    .child(crate::common::ornament::cut_br(
+                        theme::CUT_SM,
+                        theme::window_base(),
+                    )),
+            );
+        }
+        row = row.child(
+            div()
+                .absolute()
+                .left(px(slide * (chip_w + gap)))
+                .top_0()
+                .w(px(chip_w))
+                .h(px(28.))
+                .bg(theme::accent())
+                .child(crate::common::ornament::cut_br(
+                    theme::CUT_SM,
+                    theme::window_base(),
+                )),
+        );
+
+        let mut labels = div().flex_none().flex().gap(px(gap)).h(px(28.));
+        for (index, (id, label, listing)) in [
+            ("side-chip-collections", "歌单", Listing::Collections),
+            ("side-chip-artists", "艺术家", Listing::Artists),
+            ("side-chip-albums", "专辑", Listing::Albums),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            // 字色跟着黄块走，滑动中间不会有一半时间字压在对比不足的底色上。
+            let under = (slide - index as f32).abs() < 0.5;
+            labels = labels.child(
+                div()
+                    .id(id)
+                    .w(px(chip_w))
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_size(px(theme::FONT_CAPTION))
+                    .font_weight(theme::WEIGHT_BUTTON)
+                    .cursor_pointer()
+                    .text_color(if under {
+                        theme::text_on_accent()
+                    } else {
+                        theme::text_muted()
+                    })
+                    .when(!under, |chip| {
+                        chip.hover(|style| style.text_color(theme::text()))
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_listing(listing, cx)))
+                    .child(label),
+            );
+        }
+
+        row.child(labels).into_any_element()
     }
 
     /// 图标态（56px）的整栏渲染。
@@ -163,10 +276,10 @@ impl Sidebar {
         &self,
         state: SidebarState,
         counts: (usize, usize, usize),
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let nav = self.shell.read(cx).nav_section();
-        let scoped = self.library.read(cx).scope().is_scoped();
+        let section = self.shell.read(cx).nav_section();
 
         let mut card = div()
             .flex_none()
@@ -174,38 +287,68 @@ impl Sidebar {
             .h_full()
             .flex()
             .flex_col()
-            .rounded(px(theme::RADIUS_CARD))
-            .overflow_hidden()
-            .bg(theme::panel())
-            .p(px(CARD_PAD))
-            .gap(px(2.));
+            .bg(theme::window_base())
+            .border_r_1()
+            .border_color(theme::border())
+            // 图标态没有字标行兜底，上留白要和左右一致，首页按钮才不会贴住顶栏
+            .p(px(CARD_PAD));
 
         let deps = || NavDeps {
             shell: self.shell.clone(),
             library: self.library.clone(),
         };
 
-        card = card.child(home_item(
-            "side-home-icon",
-            "首页",
-            false,
-            nav == NavSection::Home,
-            deps(),
-        ));
+        // 两块图标之间隔一条细线。细线画在黄块之前（下层），中间用等高空档占位：
+        // 黄块从上面滑过时不会把线割成两截。
+        let step = theme::SIDEBAR_ITEM_H + theme::GAP_XS * 2.0 + 1.0;
+        let mut rail = div()
+            .flex_none()
+            .relative()
+            .flex()
+            .flex_col()
+            .w(px(theme::SIDEBAR_ITEM_H));
 
-        let (tracks, albums, artists) = counts;
-        card = card.child(
+        rail = rail.child(
             div()
-                .flex_none()
-                .my(px(theme::GAP_XS))
+                .absolute()
+                .left(px(theme::GAP_SM))
+                .top(px(theme::SIDEBAR_ITEM_H + theme::GAP_XS))
+                .w(px(theme::SIDEBAR_ITEM_H - theme::GAP_SM * 2.0))
                 .h(px(1.))
-                .mx(px(theme::GAP_SM))
                 .bg(theme::border_soft()),
         );
-        card = card.child(lib_fallback_item(scoped, deps()));
 
+        if let Some(index) = icon_index(section) {
+            let slide = anim::nav_slide(SharedString::from("side-nav-icons"), index, window, cx);
+            rail = rail.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(px(slide * step))
+                    .size(px(theme::SIDEBAR_ITEM_H))
+                    .bg(theme::accent())
+                    .child(crate::common::ornament::cut_br(
+                        theme::CUT_SM,
+                        theme::window_base(),
+                    )),
+            );
+        }
+
+        rail = rail
+            .child(home_item(
+                "side-home-icon",
+                "首页",
+                false,
+                section == NavSection::Home,
+                deps(),
+            ))
+            .child(div().flex_none().h(px(step - theme::SIDEBAR_ITEM_H)))
+            .child(lib_fallback_item(section.in_library(), deps()));
+        card = card.child(rail);
+
+        let (tracks, albums, artists) = counts;
         let label = format!(
-            "音乐库 · {} 首 / {} 张专辑 / {} 位艺术家",
+            "音乐库 │ {} 首 / {} 张专辑 / {} 位艺术家",
             thousands(tracks),
             thousands(albums),
             thousands(artists)
@@ -217,16 +360,14 @@ impl Sidebar {
 }
 
 /// 下卡片外壳。`fills` = true 吃掉剩余高度（展开态列表要滚），false 按内容定高（图标态）。
+/// 左右内边距与导航卡片相同：标题、Chip 与列表块共用一条边线。
 fn card_shell(fills: bool) -> Div {
     let card = div()
         .flex()
         .flex_col()
         .min_h_0()
-        .rounded(px(theme::RADIUS_CARD))
-        // 不裁剪的话内部铺满的背景会把圆角盖成直角。
-        .overflow_hidden()
-        .bg(theme::panel())
-        .p(px(CARD_PAD));
+        .bg(theme::window_base())
+        .px(px(CARD_PAD));
 
     if fills {
         card.flex_1()
@@ -235,32 +376,45 @@ fn card_shell(fills: bool) -> Div {
     }
 }
 
-/// 下卡片标题行：分组标签 + 导入按钮，这一行本身不参与选中。
-fn lib_header(labels: bool, library: &Entity<LibraryEntity>) -> AnyElement {
-    let mut row = div()
+/// 侧栏顶部的字标。宽体大写 + 一枚黄色小方块，不开新卡片。
+fn brand_row() -> AnyElement {
+    div()
         .flex_none()
-        .h(px(LIB_HEADER_H))
+        .h(px(56.))
         .flex()
         .items_center()
         .gap(px(theme::GAP_SM))
-        .px(px(theme::GAP_SM));
+        .px(px(4.))
+        .child(div().flex_none().size(px(10.)).bg(theme::accent()))
+        .child(
+            div()
+                .font(theme::label_font())
+                .text_size(px(16.))
+                .font_weight(FontWeight::EXTRA_BOLD)
+                .text_color(theme::text())
+                .child("LYRE"),
+        )
+        .into_any_element()
+}
 
-    row = row.child(
-        div()
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .w(px(24.))
-            .text_color(theme::text_muted())
-            .child(icon_inherit(Glyph::Folder, 20.)),
-    );
+/// 下卡片标题行：`// LIBRARY` + 中文粗体 + 导入按钮，这一行本身不参与选中。
+fn lib_header(labels: bool, library: &Entity<LibraryEntity>) -> AnyElement {
+    let mut row = div()
+        .flex_none()
+        .h(px(48.))
+        .flex()
+        .items_center()
+        .gap(px(theme::GAP_SM));
 
     if labels {
         row = row.child(
             div()
                 .flex_1()
                 .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(crate::common::section::eyebrow("Your Library"))
                 .child(crate::common::section::section_heading("你的音乐库")),
         );
 
@@ -280,7 +434,7 @@ fn lib_header(labels: bool, library: &Entity<LibraryEntity>) -> AnyElement {
     row.into_any_element()
 }
 
-/// 标题行右侧的小圆按钮。
+/// 标题行右侧的小切角按钮。
 fn header_action(
     id: &'static str,
     glyph: Glyph,
@@ -289,48 +443,18 @@ fn header_action(
 ) -> AnyElement {
     div()
         .id(id)
+        .relative()
         .flex_none()
         .size(px(24.))
         .flex()
         .items_center()
         .justify_center()
-        .rounded_full()
         .cursor_pointer()
         .text_color(theme::text_muted())
-        .hover(|style| style.bg(theme::hover()).text_color(theme::text()))
+        .hover(|style| style.bg(theme::elevated()).text_color(theme::text()))
         .on_click(on_click)
         .child(icon_inherit(glyph, 16.))
         .tooltip(tooltip::builder(label))
-        .into_any_element()
-}
-
-fn chip(
-    id: &'static str,
-    label: &'static str,
-    selected: bool,
-    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> AnyElement {
-    let (base_bg, base_color) = crate::common::button::chip_colors(selected);
-
-    div()
-        .id(id)
-        .flex_none()
-        .h(px(28.))
-        .px(px(theme::GAP_MD))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(theme::RADIUS_PILL))
-        .text_size(px(theme::FONT_CAPTION))
-        .font_weight(theme::WEIGHT_BUTTON)
-        .cursor_pointer()
-        .bg(base_bg)
-        .text_color(base_color)
-        .when(!selected, |chip| {
-            chip.hover(|style| style.bg(theme::border()).text_color(theme::text()))
-        })
-        .on_click(on_click)
-        .child(label)
         .into_any_element()
 }
 

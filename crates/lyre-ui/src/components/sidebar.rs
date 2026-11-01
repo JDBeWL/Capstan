@@ -27,6 +27,8 @@ pub struct Sidebar {
     /// 上次渲染时的主区区段：区段一变就把手动筛选复位回「跟随」，
     /// 否则从「专辑」切到「艺术家」区段时侧栏还停在专辑列表。
     last_nav: NavSection,
+    /// 曲库计数每次被悬停进入时加一：换元素的 id，乱码重新落定一次。
+    count_epoch: u64,
     _subs: Vec<Subscription>,
 }
 
@@ -48,6 +50,7 @@ impl Sidebar {
             covers,
             listing_override: None,
             last_nav: NavSection::Home,
+            count_epoch: 0,
             _subs: vec![observe_shell, observe_library, observe_covers],
         }
     }
@@ -78,7 +81,7 @@ impl Sidebar {
 }
 
 impl Render for Sidebar {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.shell.read(cx).sidebar();
         let nav = self.shell.read(cx).nav_section();
         // 主区区段变了：把手动筛选复位回「跟随主区」。在 render 里改而不 notify —— 本帧就会用上新值。
@@ -89,7 +92,7 @@ impl Render for Sidebar {
         let counts = self.counts(cx);
 
         if !state.shows_labels() {
-            return self.render_icons(state, counts, cx);
+            return self.render_icons(state, counts, window, cx);
         }
 
         div()
@@ -98,9 +101,12 @@ impl Render for Sidebar {
             .h_full()
             .flex()
             .flex_col()
-            .gap(px(theme::GUTTER))
-            .child(self.home_card(state, cx))
-            .child(self.library_card(state, cx))
+            .bg(theme::window_base())
+            .border_r_1()
+            .border_color(theme::border())
+            .child(self.home_card(state, counts, window, cx))
+            .child(div().flex_none().h(px(1.)).w_full().bg(theme::border()))
+            .child(self.library_card(state, window, cx))
             .into_any_element()
     }
 }

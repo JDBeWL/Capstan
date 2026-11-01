@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::persist;
 use crate::shell::{Density, NavSection, PanelTab, SidebarState};
+use crate::theme::Appearance;
 
 const FILE: &str = "settings.json";
 
@@ -14,6 +15,8 @@ const FILE: &str = "settings.json";
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    /// 浅色 / 深色。旧存档没有这个字段时按默认的浅色补齐。
+    pub appearance: Appearance,
     pub density: Density,
     pub default_view: NavSection,
     pub recursive_import: bool,
@@ -40,6 +43,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            appearance: Appearance::Light,
             density: Density::Compact,
             default_view: NavSection::Tracks,
             recursive_import: true,
@@ -71,10 +75,12 @@ impl Settings {
 mod tests {
     use super::Settings;
     use crate::shell::{Density, NavSection, PanelTab, SidebarState};
+    use crate::theme::Appearance;
 
     #[test]
     fn defaults_are_the_conservative_choice() {
         let settings = Settings::default();
+        assert_eq!(settings.appearance, Appearance::Light, "默认浅色");
         assert_eq!(settings.density, Density::Compact);
         assert_eq!(settings.default_view, NavSection::Tracks);
         assert!(
@@ -103,6 +109,7 @@ mod tests {
     #[test]
     fn round_trips_through_json() {
         let settings = Settings {
+            appearance: Appearance::Dark,
             density: Density::Comfortable,
             default_view: NavSection::Albums,
             recursive_import: false,

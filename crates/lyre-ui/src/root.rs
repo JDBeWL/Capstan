@@ -3,6 +3,7 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
+use std::time::Duration;
 
 use crate::common::toast::ToastEntity;
 use crate::components::{
@@ -53,6 +54,16 @@ pub struct RootView {
     focus: FocusHandle,
     /// 由 `render` 的拖拽回调读写 —— gpui 会把外部拖拽的 `Entered/Pending` 翻译成一次 `MouseMove`。
     drop_active: bool,
+    /// 刚收起、还在播退出动画的面板。外壳说 `None`，这里再留 240ms 把它画完。
+    panel_closing: Option<PanelTab>,
+    panel_closing_overlay: bool,
+    /// 外壳上一次的页签 / 遮罩状态，用来识别「刚关上」。
+    last_panel: Option<PanelTab>,
+    last_panel_overlay: bool,
+    lyrics_closing: bool,
+    last_lyrics: bool,
+    _panel_close: Option<Task<()>>,
+    _lyrics_close: Option<Task<()>>,
     /// 播放中兜底写 `resume.json` 的节拍任务，持有它才不会被提前回收。
     _resume_watcher: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -62,6 +73,8 @@ impl RootView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         // 先读盘：下面的实体按它初始化
         let stored = Settings::load();
+        // 明暗要在建控件之前定下来，输入框、菜单等组件库控件会按当时的 ThemeMode 取色。
+        crate::platform::set_appearance(stored.appearance, cx);
 
         let playback = cx.new(|cx| PlaybackEntity::new(stored.preferred_device.clone(), cx));
         let library = cx.new(LibraryEntity::new);
@@ -368,6 +381,21 @@ impl RootView {
             })
         };
 
+        let last_panel = shell.read(cx).right_panel();
+        let last_panel_overlay = shell.read(cx).right_panel_overlays();
+        let last_lyrics = shell.read(cx).shows_lyrics();
+        let on_shell = cx.observe(&shell, |this, shell, cx| {
+            let (panel, panel_overlay, lyrics) = {
+                let shell = shell.read(cx);
+                (
+                    shell.right_panel(),
+                    shell.right_panel_overlays(),
+                    shell.shows_lyrics(),
+                )
+            };
+            this.sync_overlay_closing(panel, panel_overlay, lyrics, cx);
+        });
+
         Self {
             playback,
             library,
@@ -389,6 +417,14 @@ impl RootView {
             settings,
             focus,
             drop_active: false,
+            panel_closing: None,
+            panel_closing_overlay: false,
+            last_panel,
+            last_panel_overlay,
+            lyrics_closing: false,
+            last_lyrics,
+            _panel_close: None,
+            _lyrics_close: None,
             _resume_watcher: resume_watcher,
             _subscriptions: vec![
                 on_playback,
@@ -398,10 +434,88 @@ impl RootView {
                 on_mini,
                 on_grid,
                 on_search,
+                on_shell,
                 on_quit,
                 on_window_closed,
             ],
         }
+    }
+
+    /// 关面板 / 关歌词时外壳会立刻把状态置空，退出动画得由根视图把旧内容多留一会儿。
+    #[allow(clippy::used_underscore_binding)]
+    fn sync_overlay_closing(
+        &mut self,
+        panel: Option<PanelTab>,
+        panel_overlay: bool,
+        lyrics: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let mut changed = false;
+
+        if panel != self.last_panel {
+            match (self.last_panel, panel) {
+                (Some(previous), None) => {
+                    self.panel_closing = Some(previous);
+                    self.panel_closing_overlay = self.last_panel_overlay;
+                    self.spawn_panel_close(cx);
+                }
+                (_, Some(_)) => {
+                    self.panel_closing = None;
+                    self.panel_closing_overlay = false;
+                    self._panel_close = None;
+                }
+                _ => {}
+            }
+            self.last_panel = panel;
+            changed = true;
+        }
+        self.last_panel_overlay = panel_overlay;
+
+        if lyrics != self.last_lyrics {
+            self.last_lyrics = lyrics;
+            if lyrics {
+                self.lyrics_closing = false;
+                self._lyrics_close = None;
+            } else {
+                self.lyrics_closing = true;
+                let executor = cx.background_executor().clone();
+                self._lyrics_close = Some(cx.spawn(async move |this, cx| {
+                    executor
+                        .timer(Duration::from_millis(crate::theme::MOTION_OVERLAY_OUT_MS))
+                        .await;
+                    this.update(cx, |this, cx| {
+                        if this.lyrics_closing {
+                            this.lyrics_closing = false;
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+                }));
+            }
+            changed = true;
+        }
+
+        if changed {
+            cx.notify();
+        }
+    }
+
+    #[allow(clippy::used_underscore_binding)]
+    fn spawn_panel_close(&mut self, cx: &mut Context<Self>) {
+        let executor = cx.background_executor().clone();
+        self._panel_close = Some(cx.spawn(async move |this, cx| {
+            executor
+                .timer(Duration::from_millis(crate::theme::MOTION_PANEL_OUT_MS))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.panel_closing.is_some() {
+                    this.panel_closing = None;
+                    this.panel_closing_overlay = false;
+                    cx.notify();
+                }
+            })
+            .ok();
+        }));
     }
 
     /// 命令行导入（`lyre.exe <文件或文件夹>...`），「关联文件类型」依赖它。

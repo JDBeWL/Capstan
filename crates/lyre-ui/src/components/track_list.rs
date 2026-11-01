@@ -12,13 +12,16 @@ mod toolbar;
 
 use std::collections::HashSet;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use lyre_core::{CollectionId, Track, TrackId};
 
+use crate::common::anim;
 use crate::cover::CoverCache;
 use crate::entities::{LibraryEntity, LibraryEvent, Scope, ScopeKind};
 use crate::platform::*;
 use crate::shell::{Breakpoint, NavSection, ShellEntity};
+use crate::theme;
 
 use super::SearchPage;
 use super::detail::{self, HeroInfo};
@@ -33,6 +36,8 @@ const CHECK_BOX: f32 = 18.0;
 const THUMB: f32 = 40.0;
 /// 紧凑密度下的封面边长：40px 行高塞不下 40px 封面 + 文字。
 const THUMB_COMPACT: f32 = 32.0;
+/// 双行阈值：行高 >= 它才画两行，缩略图也用大号。必须落在两档行高（40 / 52）之间。
+const TWO_LINE_MIN: f32 = 48.0;
 /// 专辑列宽，窄窗口下整列隐藏。
 const ALBUM_W: f32 = 220.0;
 /// 时长列定宽，避免数字宽度跳动。
@@ -88,7 +93,22 @@ pub struct TrackList {
     anchor: Option<usize>,
     /// 上次清理选择时对应的可见投影代次。只在换代时清理，渲染本身不再扫全表。
     selection_generation: u64,
+    /// 正在播退出动画的那一行；播完才真正从曲库删。
+    removing: Option<Removal>,
+    /// 删除动画的世代号；行模型变了也不会复用上一轮的动画进度。
+    remove_seq: u64,
+    /// 可见投影代次变化后延时启动的错开入场。
+    stagger_generation: u64,
+    stagger_seq: u64,
+    stagger_started: Option<Instant>,
+    _stagger_task: Option<Task<()>>,
     _subs: Vec<Subscription>,
+}
+
+#[derive(Clone, Copy)]
+struct Removal {
+    visible_index: usize,
+    generation: u64,
 }
 
 impl EventEmitter<TrackListEvent> for TrackList {}
@@ -123,6 +143,12 @@ impl TrackList {
 
         Self {
             selection_generation: library.read(cx).visible_generation(),
+            removing: None,
+            remove_seq: 0,
+            stagger_generation: library.read(cx).visible_generation(),
+            stagger_seq: 0,
+            stagger_started: None,
+            _stagger_task: None,
             library,
             shell,
             covers,
@@ -141,16 +167,98 @@ impl TrackList {
             _subs: vec![observe, observe_shell, observe_covers, follow],
         }
     }
+
+    /// 删除先播 200ms 退出动画：这期间行仍留在数据里，下面的行先向上补位；
+    /// 动画结束才真正从曲库移除，视觉上正好接住。
+    #[allow(clippy::used_underscore_binding)]
+    pub(super) fn begin_remove(&mut self, id: TrackId, index: usize, cx: &mut Context<Self>) {
+        if self.removing.is_some() {
+            return;
+        }
+        self.remove_seq = self.remove_seq.wrapping_add(1);
+        let generation = self.remove_seq;
+        self.removing = Some(Removal {
+            visible_index: index,
+            generation,
+        });
+        cx.notify();
+
+        let library = self.library.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            executor
+                .timer(Duration::from_millis(crate::theme::MOTION_ROW_MS))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.removing.as_ref().map(|row| row.generation) != Some(generation) {
+                    return;
+                }
+                this.removing = None;
+                let removed = library.update(cx, |library, cx| library.remove(id, cx));
+                // 这一轮是删除自己触发的投影换代，不再排队一次错开入场。
+                this.stagger_generation = library.read(cx).visible_generation();
+                this.stagger_started = None;
+                this._stagger_task = None;
+                if let Some((track, at)) = removed {
+                    cx.emit(TrackListEvent::Removed(track, at));
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// 等输入停手 180ms 再启动逐行入场；连续打字只有最后一次算数。
+    #[allow(clippy::used_underscore_binding)]
+    fn schedule_stagger(&mut self, cx: &mut Context<Self>) {
+        let executor = cx.background_executor().clone();
+        self._stagger_task = Some(cx.spawn(async move |this, cx| {
+            executor
+                .timer(Duration::from_millis(anim::STAGGER_DEBOUNCE_MS))
+                .await;
+            this.update(cx, |this, cx| {
+                this.stagger_seq = this.stagger_seq.wrapping_add(1);
+                this.stagger_started = Some(Instant::now());
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
 }
 
 impl Render for TrackList {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 查询 / 作用域 / 删歌都会让可见投影换代；只有这时才需要清掉看不见的勾选。
         let generation = self.library.read(cx).visible_generation();
         if generation != self.selection_generation {
             self.selection_generation = generation;
             self.prune_selection(cx);
         }
+        if generation != self.stagger_generation {
+            self.stagger_generation = generation;
+            self.schedule_stagger(cx);
+        }
+        let stagger = self.stagger_started.and_then(|started| {
+            (started.elapsed() < Duration::from_millis(anim::STAGGER_WINDOW_MS))
+                .then_some(self.stagger_seq)
+        });
+
+        // 删除动画：一次渲染只采样一次，所有行共用同一个进度。
+        let removal = self.removing;
+        let remove_progress = removal.map_or(0.0, |row| {
+            motion::transition(
+                (
+                    ElementId::named_usize("row-remove", row.generation as usize),
+                    "progress",
+                ),
+                1.0,
+                motion::Transition::new(Duration::from_millis(theme::MOTION_ROW_MS))
+                    .ease(theme::ease_mech()),
+                window,
+                cx,
+            )
+        });
 
         let (
             count,
@@ -198,9 +306,13 @@ impl Render for TrackList {
         };
         let reorderable = toolbar::can_reorder(collection.is_some(), filtering, count);
 
-        // 选择已经在投影换代时清理过，这里只取数量；有序 ID 留到批量动作执行时再生成。
+        // `in_search` 判的是「停在搜索页」而不是「有搜索词」：曲库页用顶栏过滤时仍算曲库页
+        let in_search = self.shell.read(cx).nav_section() == crate::shell::NavSection::Search;
+        let headed_elsewhere = scoped || in_search;
+
+        // 搜索页不提供多选；在曲库开着多选再搜进来时，选择状态留着，界面先按单选画。
         let chosen_count = self.selected.len();
-        let selecting = self.selecting;
+        let selecting = self.selecting && !in_search;
         let selected = Rc::clone(&self.selected);
 
         let env = RowEnv {
@@ -213,10 +325,6 @@ impl Render for TrackList {
             reorderable,
             selectable: selecting,
         };
-
-        // `in_search` 判的是「停在搜索页」而不是「有搜索词」：曲库页用顶栏过滤时仍算曲库页
-        let in_search = self.shell.read(cx).nav_section() == crate::shell::NavSection::Search;
-        let headed_elsewhere = scoped || in_search;
 
         // 页头并入滚动区只发生在两种页面：搜索结果、专辑 / 艺人详情。
         // 曲库页没有页头，工具条固定、只滚行。
@@ -247,6 +355,8 @@ impl Render for TrackList {
             sort_key,
             scanning,
             scoped,
+            kind,
+            from_list,
             scope: scope.clone(),
             headed_elsewhere,
             in_search,
@@ -318,7 +428,7 @@ impl Render for TrackList {
             let toolbar = toolbar_state.clone();
             let page_query = query.clone();
             let scope_label = scope.clone();
-            let page_body = list(page.clone(), move |ix, _window, cx| {
+            let page_body = list(page.clone(), move |ix, window, cx| {
                 if ix == 0 {
                     let mut header = div().flex_none().flex().flex_col().w_full();
                     match &head {
@@ -356,6 +466,8 @@ impl Render for TrackList {
                         Rc::clone(&selected),
                         count,
                         collection,
+                        window,
+                        cx,
                     ));
                     if count == 0 {
                         header = header.child(empty_body(
@@ -366,6 +478,8 @@ impl Render for TrackList {
                             &page_query,
                             scope_label.clone(),
                             from_list,
+                            window,
+                            cx,
                         ));
                     }
                     return header.into_any_element();
@@ -382,8 +496,11 @@ impl Render for TrackList {
                 };
                 let state = row::RowState::of(track.id, playing, focus);
                 let picked = selected.contains(&track.id);
+                let motion = row_motion(index, removal, remove_progress, env.row_height);
+                let enter = stagger.and_then(|seq| stagger_enter(seq, index));
                 row::row(
-                    index, &track, state, picked, env, &library, &list_weak, &covers, cx,
+                    index, &track, state, picked, env, &library, &list_weak, &covers, motion,
+                    enter, window, cx,
                 )
             })
             .size_full()
@@ -411,15 +528,27 @@ impl Render for TrackList {
             Rc::clone(&self.selected),
             count,
             collection,
+            window,
+            cx,
         );
 
         let body: AnyElement = if count == 0 {
-            empty_body(loading, total, 0, &self.library, &query, scope, from_list)
+            empty_body(
+                loading,
+                total,
+                0,
+                &self.library,
+                &query,
+                scope,
+                from_list,
+                window,
+                cx,
+            )
         } else {
             let library = self.library.clone();
             let covers = self.covers.clone();
             let list = Self::weak(cx);
-            uniform_list("track-list", count, move |range, _window, cx| {
+            uniform_list("track-list", count, move |range, window, cx| {
                 // 走可见投影而不是曲库本体，只拷可视区那几首
                 let tracks = library.read(cx).visible_tracks(range.clone());
                 tracks
@@ -429,8 +558,11 @@ impl Render for TrackList {
                         let index = range.start + offset;
                         let state = row::RowState::of(track.id, playing, focus);
                         let picked = selected.contains(&track.id);
+                        let motion = row_motion(index, removal, remove_progress, env.row_height);
+                        let enter = stagger.and_then(|seq| stagger_enter(seq, index));
                         row::row(
-                            index, &track, state, picked, env, &library, &list, &covers, cx,
+                            index, &track, state, picked, env, &library, &list, &covers, motion,
+                            enter, window, cx,
                         )
                     })
                     .collect::<Vec<AnyElement>>()
@@ -464,10 +596,9 @@ fn chrome(
     selected: Rc<HashSet<TrackId>>,
     rows: usize,
     collection: Option<CollectionId>,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
-    // 搜索页没有头图的「更多操作」菜单，多选开关放在列头右端；
-    // 详情页的开关在头图菜单里，曲库页留在工具条里。
-    let header_selection = state.in_search && state.count > 0;
     let toolbar_visible = !state.headed_elsewhere || state.scanning.is_some();
 
     let mut column = div().flex_none().flex().flex_col();
@@ -476,10 +607,10 @@ fn chrome(
             library.clone(),
             list.clone(),
             state.clone(),
+            window,
+            cx,
         ));
     }
-    let trailing = header_selection
-        .then(|| toolbar::selection_toggle(list.clone(), selecting).into_any_element());
 
     if selecting {
         column = column.child(batch::batch_bar(batch::BatchBar {
@@ -492,9 +623,7 @@ fn chrome(
         }));
     }
 
-    column
-        .child(row::column_header(&env, trailing))
-        .into_any_element()
+    column.child(row::column_header(&env)).into_any_element()
 }
 
 fn empty_body(
@@ -505,20 +634,46 @@ fn empty_body(
     query: &str,
     scope: Option<String>,
     from_list: bool,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
     if loading {
         empty::loading_library().into_any_element()
     } else if total == 0 {
-        empty::empty_library(library.clone()).into_any_element()
+        empty::empty_library(library.clone(), window, cx).into_any_element()
     } else if count == 0 {
         if query.trim().is_empty() {
-            empty::empty_scope(library.clone(), scope, from_list).into_any_element()
+            empty::empty_scope(library.clone(), scope, from_list, window, cx).into_any_element()
         } else {
-            empty::no_matches(library.clone(), total, query).into_any_element()
+            empty::no_matches(library.clone(), total, query, window, cx).into_any_element()
         }
     } else {
         div().into_any_element()
     }
+}
+
+fn row_motion(
+    index: usize,
+    removal: Option<Removal>,
+    progress: f32,
+    row_height: f32,
+) -> row::RowMotion {
+    match removal {
+        Some(row) if index == row.visible_index => row::RowMotion {
+            remove: progress,
+            shift: 0.0,
+        },
+        Some(row) if index > row.visible_index => row::RowMotion {
+            remove: 0.0,
+            shift: -row_height * progress,
+        },
+        _ => row::RowMotion::default(),
+    }
+}
+
+/// 本轮逐行入场的延迟：只照顾首屏前 `STAGGER_ROWS` 行，延迟按行号累加但不超过 6 行。
+fn stagger_enter(seq: u64, index: usize) -> Option<(u64, u64)> {
+    (index < anim::STAGGER_ROWS).then_some((seq, (index.min(6) as u64) * anim::STAGGER_ROW_MS))
 }
 
 /// 行与列头共用的布局与作用域参数。
@@ -532,4 +687,74 @@ struct RowEnv {
     /// 行首拖拽手柄 + 行内落点区
     reorderable: bool,
     selectable: bool,
+}
+
+impl RowEnv {
+    /// 与 `cells::title_cell` 同一判据：列头据此让出缩略图的宽度。
+    fn two_lines(self) -> bool {
+        self.row_height >= TWO_LINE_MIN
+    }
+
+    fn thumb_size(self) -> f32 {
+        if self.two_lines() {
+            THUMB
+        } else {
+            THUMB_COMPACT
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Removal, TWO_LINE_MIN, anim, row_motion, stagger_enter};
+    use crate::shell::Density;
+
+    #[test]
+    fn the_two_line_threshold_separates_the_two_densities() {
+        assert!(
+            Density::Comfortable.row_height() >= TWO_LINE_MIN,
+            "舒适档（{}px）应当画两行（阈值 {TWO_LINE_MIN}px）",
+            Density::Comfortable.row_height()
+        );
+        assert!(
+            Density::Compact.row_height() < TWO_LINE_MIN,
+            "紧凑档（{}px）应当只有一行",
+            Density::Compact.row_height()
+        );
+    }
+
+    #[test]
+    fn stagger_covers_only_the_first_screen_rows() {
+        assert_eq!(stagger_enter(7, 0), Some((7, 0)));
+        assert_eq!(stagger_enter(7, 3), Some((7, 3 * anim::STAGGER_ROW_MS)));
+        assert_eq!(
+            stagger_enter(7, 6),
+            Some((7, 6 * anim::STAGGER_ROW_MS)),
+            "第 6 行开始延迟封顶"
+        );
+        assert_eq!(
+            stagger_enter(7, anim::STAGGER_ROWS - 1),
+            Some((7, 6 * anim::STAGGER_ROW_MS))
+        );
+        assert_eq!(stagger_enter(7, anim::STAGGER_ROWS), None);
+    }
+
+    #[test]
+    fn removal_fades_the_row_and_pulls_the_rows_below_up() {
+        let removal = Removal {
+            visible_index: 3,
+            generation: 1,
+        };
+        let target = row_motion(3, Some(removal), 0.5, 52.0);
+        assert_eq!(target.remove, 0.5);
+        assert_eq!(target.shift, 0.0);
+
+        let below = row_motion(4, Some(removal), 0.5, 52.0);
+        assert_eq!(below.remove, 0.0);
+        assert_eq!(below.shift, -26.0);
+
+        let above = row_motion(2, Some(removal), 0.5, 52.0);
+        assert_eq!(above.remove, 0.0);
+        assert_eq!(above.shift, 0.0);
+    }
 }

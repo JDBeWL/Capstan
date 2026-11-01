@@ -15,16 +15,14 @@ use crate::theme;
 
 /// 卡片间距，同时用作行间距。
 const GAP: f32 = theme::GAP_MD;
-const PAD: f32 = theme::GAP_LG;
+const PAD: f32 = theme::PAGE_PAD;
 /// 封面区最小高度，实际高度按卡宽算，见 `cover_height`。
 const COVER_H_MIN: f32 = 132.0;
 /// 封面区最大高度，等于 `CARD_MAX_W`，所以最宽的卡片正好是方形封面。
 const COVER_H_MAX: f32 = CARD_MAX_W;
-/// 行高按最坏情况给：`uniform_list` 不算内容高度，少了就溢出卡片下缘。
-/// `66` = 标题 19 + 副标题 16 + 说明 15 + 两段 gap 16；`CARD_PAD` 常态占位（见 `card_item`）也要计入。
-const CARD_PAD: f32 = theme::GAP_MD;
-const CARD_H: f32 = COVER_H_MAX + 66.0 + CARD_PAD * 2.0;
-const ROW_H: f32 = CARD_H + GAP;
+/// 卡片在封面之外还要的高度：上下内边距 + 两段间距 + 标题 / 副标题 / 字段三行。
+/// 行高必须跟着实际封面高度走；按最大封面预留，窄卡下面会留出一条空带。
+const CARD_BODY_H: f32 = 90.0;
 
 struct RowCtx<'a> {
     library: &'a Entity<LibraryEntity>,
@@ -42,7 +40,7 @@ pub struct Card {
     title: String,
     /// 副标题。艺术家卡留空 —— 否则总等于自己的标题。
     subtitle: String,
-    /// 「12 首 · 42:15」这类说明
+    /// 「12 首 │ 42:15」这类说明
     meta: String,
     initial: Option<char>,
     kind: NavSection,
@@ -52,7 +50,7 @@ impl Card {
     fn from_album(group: &AlbumGroup) -> Self {
         let tracks = group.track_count();
         let meta = match group.total_duration() {
-            Some(total) => format!("{} 首 · {}", thousands(tracks), format_duration(total)),
+            Some(total) => format!("{} 首 │ {}", thousands(tracks), format_duration(total)),
             None => format!("{} 首", thousands(tracks)),
         };
         Self {
@@ -69,12 +67,12 @@ impl Card {
         let (tracks, albums) = (group.track_count(), group.album_count());
         let meta = match group.total_duration() {
             Some(total) => format!(
-                "{} 首 · {} 张专辑 · {}",
+                "{} 首 │ {} 张专辑 │ {}",
                 thousands(tracks),
                 thousands(albums),
                 format_duration(total)
             ),
-            None => format!("{} 首 · {} 张专辑", thousands(tracks), thousands(albums)),
+            None => format!("{} 首 │ {} 张专辑", thousands(tracks), thousands(albums)),
         };
         Self {
             id: group.representative,
@@ -230,7 +228,7 @@ impl Render for AlbumGrid {
                 .collect::<Vec<AnyElement>>()
         })
         .size_full()
-        .pt(px(PAD))
+        .pt(px(theme::GAP_LG))
         .px(px(PAD))
         // 句柄必须挂上：滚动条读的就是它，不挂则偏移恒为 0。
         .track_scroll(&self.scroll)
@@ -258,37 +256,31 @@ fn grid_header(section: NavSection, count: usize, columns: usize) -> impl IntoEl
         NavSection::Albums => "张专辑",
         _ => "位艺术家",
     };
-    let summary = format!("{} · {}", title_for(section), thousands(count));
-
-    let hint = format!("每行 {columns} 个 · 共 {} {noun}", thousands(count));
+    let eyebrow = match section {
+        NavSection::Albums => "Albums",
+        _ => "Artists",
+    };
+    let hint = format!("每行 {columns} 个 │ 共 {} {noun}", thousands(count));
 
     // 网格页没有浮动返回按钮，左内边距不让位。
-    let back_inset = theme::GAP_LG;
+    let back_inset = theme::PAGE_PAD;
     let top_pad = theme::GAP_XL;
 
     div()
         .flex_none()
         .flex()
         .flex_col()
-        .justify_end()
-        .gap(px(theme::GAP_SM))
+        .items_start()
+        .gap(px(6.))
         .pt(px(top_pad))
-        .pb(px(theme::GAP_LG))
+        .pb(px(theme::GAP_MD))
         .pl(px(back_inset))
-        .pr(px(theme::GAP_LG))
-        .child(
-            div()
-                .text_size(px(theme::FONT_HERO))
-                .font_weight(theme::WEIGHT_TITLE)
-                .text_color(theme::text())
-                .child(summary),
-        )
-        .child(
-            div()
-                .text_size(px(theme::FONT_CAPTION))
-                .text_color(theme::text_muted())
-                .child(hint),
-        )
+        .pr(px(theme::GAP_XL))
+        .border_b_1()
+        .border_color(theme::border())
+        .child(crate::common::section::eyebrow(eyebrow))
+        .child(crate::common::section::page_title(title_for(section)))
+        .child(crate::common::section::field(hint))
 }
 
 fn title_for(section: NavSection) -> &'static str {
@@ -306,11 +298,13 @@ fn grid_row(index: usize, cards: &[Card], columns: usize, ctx: RowCtx<'_>) -> An
         cover_h,
         cx,
     } = ctx;
+    // 同一帧里所有卡片的封面等高，行高由它推出，不按最大封面预留。
+    let card_h = cover_h + CARD_BODY_H;
     let mut row = div()
         .id(("grid-row", index))
         .flex_none()
         .w_full()
-        .h(px(ROW_H))
+        .h(px(card_h + GAP))
         .flex()
         .justify_start()
         .gap(px(GAP));
@@ -322,19 +316,19 @@ fn grid_row(index: usize, cards: &[Card], columns: usize, ctx: RowCtx<'_>) -> An
 
     // 末行不满时补占位，否则剩下的 `flex_1` 会被拉宽成一行巨幅封面。
     for extra in filled..columns {
-        row = row.child(filler(extra));
+        row = row.child(filler(extra, card_h));
     }
 
     row.into_any_element()
 }
 
 /// 撑开一格但不画任何东西，用于补齐末行的空位。
-fn filler(index: usize) -> impl IntoElement {
+fn filler(index: usize, card_h: f32) -> impl IntoElement {
     div()
         .id(("grid-filler", index))
         .flex_1()
         .min_w_0()
-        .h(px(CARD_H))
+        .h(px(card_h))
 }
 
 /// 封面高度跟着卡宽 clamp；固定高度会在宽卡上把封面拉成横幅。
@@ -366,7 +360,7 @@ fn card_item(
     let tip = if card.subtitle.is_empty() {
         card.title.clone()
     } else {
-        format!("{} · {}", card.title, card.subtitle)
+        format!("{} │ {}", card.title, card.subtitle)
     };
 
     div()
@@ -382,18 +376,17 @@ fn card_item(
         .flex_col()
         .gap(px(theme::GAP_SM))
         // 内边距必须常态就有：hover 时才加会让卡片在鼠标移入的瞬间抖一下
-        .p(px(theme::GAP_MD))
-        .rounded(px(theme::RADIUS_MD))
+        .p(px(theme::GAP_SM))
         .cursor_pointer()
         .tooltip(crate::common::tooltip::builder(tip))
-        // 这版 gpui 没有 `transform`，「上浮」只能用阴影 + 底色提亮（见 `theme::hover_shadow`）
-        .hover(|style| style.bg(theme::hover()).shadow(theme::hover_shadow()))
         .child(
             div()
                 .relative()
                 .flex_none()
                 .w_full()
                 .child(cover)
+                // 左上切角：封面本身可以点进去
+                .child(crate::common::ornament::cut_tl(12., theme::bg()))
                 .child(super::card_play_button(
                     ("card-play", track_id.0),
                     group.clone(),
@@ -464,7 +457,8 @@ fn card_meta(card: &Card) -> impl IntoElement {
         div()
             .w_full()
             .min_w_0()
-            .text_size(px(theme::FONT_CAPTION))
+            .font(theme::field_font())
+            .text_size(px(theme::FONT_FIELD_SIZE))
             .text_color(theme::text_faint())
             .truncate()
             .child(card.meta.clone()),
@@ -496,23 +490,25 @@ fn cover_cell(
     match state {
         crate::common::cover::Cover::Ready(image) => {
             // `ObjectFit::Cover` 会把圆角裁到可见区域，gpui 也没有 `overflow_hidden`，
-            // 所以这里不需要容器裁剪
+            // 所以这里不需要容器裁剪。网格是虚拟列表，滚回来会重挂，不做逐格淡入。
             cell.child(
                 img(ImageSource::Render(image))
                     .size_full()
                     .rounded(px(theme::RADIUS_LG))
                     .object_fit(ObjectFit::Cover),
             )
+            .into_any_element()
         }
         crate::common::cover::Cover::Missing => cell
             .rounded(px(theme::RADIUS_LG))
             .border_1()
             .border_color(theme::border())
-            .child(monogram(card.initial)),
+            .child(monogram(card.initial))
+            .into_any_element(),
         // 还在解码：画骨架屏，别让首字色块闪一下再被真封面顶掉
-        crate::common::cover::Cover::Pending => {
-            cell.child(crate::common::cover::skeleton(height, theme::RADIUS_LG))
-        }
+        crate::common::cover::Cover::Pending => cell
+            .child(crate::common::cover::skeleton(height, theme::RADIUS_LG))
+            .into_any_element(),
     }
 }
 
@@ -531,7 +527,7 @@ fn monogram(initial: Option<char>) -> impl IntoElement {
         .justify_center()
         .bg(crate::common::cover::monogram_color(ch))
         .text_size(px(32.))
-        .text_color(rgb(0xffffff))
+        .text_color(theme::text_on_monogram())
         .child(ch.to_string())
 }
 
@@ -542,8 +538,9 @@ fn empty_grid() -> impl IntoElement {
         .flex_col()
         .items_start()
         .pt(px(theme::GAP_XL))
-        .px(px(theme::GAP_LG))
+        .px(px(theme::GAP_XL))
         .gap(px(theme::GAP_MD))
+        .child(crate::common::section::eyebrow("Empty"))
         .child(
             div()
                 .text_size(px(theme::FONT_DISPLAY))

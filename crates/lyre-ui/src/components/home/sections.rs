@@ -26,8 +26,10 @@ pub(super) fn grid_columns_in(usable: f32) -> usize {
     let gap = theme::GAP_MD;
     ((usable + gap) / (RECENT_W + gap)).floor().max(1.0) as usize
 }
+/// 两行文字的预留高度。字号 15 / 12 的常规行高合计约 38px，留 44 才不会被下一节压住。
+const RECENT_TEXT_H: f32 = 44.0;
 /// 总高 = 上下内边距 + 封面 + 间距 + 标题两行。
-const RECENT_H: f32 = RECENT_PAD * 2.0 + RECENT_COVER + 8.0 + 36.0;
+const RECENT_H: f32 = RECENT_PAD * 2.0 + RECENT_COVER + 8.0 + RECENT_TEXT_H;
 /// 横向滚动区块里每张海报的封面边长（整卡宽 = 它 + 左右内边距）。
 const POSTER_COVER: f32 = 160.0;
 const POSTER_PAD: f32 = theme::GAP_MD;
@@ -92,20 +94,31 @@ impl RowEdges {
     }
 }
 
-pub(super) fn section_title(text: &'static str) -> impl IntoElement {
+pub(super) fn section_title(index: usize, english: &'static str, text: &'static str) -> Div {
     div()
         .flex_none()
         .pb(px(theme::GAP_MD))
-        .child(section_heading(text))
+        .border_b_1()
+        .border_color(theme::border())
+        .child(section_heading(index, english, text))
 }
 
-/// 区块标题的字身，不带下边距 —— 下边距在带箭头的标题行那一层给，否则同一排里标题和箭头会错位。
-fn section_heading(text: &'static str) -> impl IntoElement {
+/// 区块标题：`// 01 / RECENT` 眉标在上，中文粗体在下。编号按区块在首页的出现顺序从 01 起。
+fn section_heading(index: usize, english: &'static str, text: &'static str) -> impl IntoElement {
     div()
-        .text_size(px(theme::FONT_TITLE))
-        .font_weight(theme::WEIGHT_TITLE)
-        .text_color(theme::text())
-        .child(text)
+        .flex()
+        .flex_col()
+        .gap(px(2.))
+        .child(crate::common::section::eyebrow(format!(
+            "{index:02} / {english}"
+        )))
+        .child(
+            div()
+                .text_size(px(theme::FONT_TITLE))
+                .font_weight(theme::WEIGHT_TITLE)
+                .text_color(theme::text())
+                .child(text),
+        )
 }
 
 /// 一张最近播放卡片：封面 + 专辑名 + 艺术家，点击即从这首开始播。
@@ -127,13 +140,13 @@ pub(super) fn recent_card(
     let subtitle = if card.artist.is_empty() {
         card.meta.clone()
     } else {
-        format!("{} · {}", card.artist, card.meta)
+        format!("{} │ {}", card.artist, card.meta)
     };
     // 卡片文字一律截断，悬停时给出完整专辑名与艺术家。
     let tip = if card.artist.is_empty() {
         card.album.clone()
     } else {
-        format!("{} · {}", card.album, card.artist)
+        format!("{} │ {}", card.album, card.artist)
     };
 
     div()
@@ -145,10 +158,8 @@ pub(super) fn recent_card(
         .flex()
         .flex_col()
         .gap(px(8.0))
-        .rounded(px(theme::RADIUS_CARD))
         .p(px(RECENT_PAD))
         .cursor_pointer()
-        .hover(|style| style.bg(theme::elevated()))
         .tooltip(crate::common::tooltip::builder(tip))
         .on_click(move |_, _, cx| {
             // `activate` 只发事件，装载播放器由根视图做。
@@ -192,24 +203,38 @@ pub(super) fn recent_card(
 }
 
 fn scroll_row(
+    index: usize,
+    english: &'static str,
     id: &'static str,
     title: &'static str,
     cards: Vec<AnyElement>,
     home: &HomeView,
     view: Entity<HomeView>,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
     let handle = home.row_handle(id);
     div()
         .flex_none()
         .flex()
         .flex_col()
-        .child(section_header(title, id, handle.clone(), view))
+        .child(section_header(
+            index,
+            english,
+            title,
+            id,
+            handle.clone(),
+            view,
+            window,
+            cx,
+        ))
         .child(
             div()
                 .id(id)
                 .flex_none()
                 .flex()
                 .gap(px(theme::GAP_MD))
+                .pt(px(theme::GAP_MD))
                 .pb(px(theme::GAP_XL))
                 .track_scroll(&handle)
                 .overflow_x_scroll()
@@ -220,10 +245,14 @@ fn scroll_row(
 
 /// 标题那一行：字在左，一对箭头在右。到头的那个方向变灰、不绑事件、也不进 Tab 序列。
 fn section_header(
+    index: usize,
+    english: &'static str,
     title: &'static str,
     id: &'static str,
     handle: ScrollHandle,
     view: Entity<HomeView>,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
     let edges = RowEdges::of(
         f32::from(handle.bounds().size.width),
@@ -234,17 +263,27 @@ fn section_header(
     div()
         .flex_none()
         .flex()
-        .items_center()
+        .items_end()
         .justify_between()
-        .pb(px(theme::GAP_MD))
-        .child(section_heading(title))
+        .pb(px(theme::GAP_SM))
+        .border_b_1()
+        .border_color(theme::border())
+        .child(section_heading(index, english, title))
         .child(
             div()
                 .flex()
                 .items_center()
                 .gap(px(theme::GAP_XS))
-                .child(row_arrow(id, false, handle.clone(), view.clone(), edges))
-                .child(row_arrow(id, true, handle, view, edges)),
+                .child(row_arrow(
+                    id,
+                    false,
+                    handle.clone(),
+                    view.clone(),
+                    edges,
+                    window,
+                    cx,
+                ))
+                .child(row_arrow(id, true, handle, view, edges, window, cx)),
         )
         .into_any_element()
 }
@@ -256,6 +295,8 @@ fn row_arrow(
     handle: ScrollHandle,
     view: Entity<HomeView>,
     edges: RowEdges,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
     let glyph = if forward {
         Glyph::ArrowRight
@@ -284,16 +325,20 @@ fn row_arrow(
         .on_click(move |_, _, cx| {
             view.update(cx, |_home, cx| HomeView::nudge_row(&handle, forward, cx));
         })
+        .hover_progress(window, cx)
         .render()
         .into_any_element()
 }
 
 pub(super) fn horizontal_section(
+    index: usize,
+    english: &'static str,
     id: &'static str,
     title: &'static str,
     cards: Vec<RecentCard>,
     home: &HomeView,
     view: Entity<HomeView>,
+    window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let posters = cards
@@ -301,7 +346,7 @@ pub(super) fn horizontal_section(
         .enumerate()
         .map(|(i, card)| poster_card(id, i, card, &home.library, &home.covers, cx))
         .collect();
-    scroll_row(id, title, posters, home, view)
+    scroll_row(index, english, id, title, posters, home, view, window, cx)
 }
 
 /// 横向区块里的海报卡（竖向：封面在上、两行文字在下）。
@@ -323,12 +368,12 @@ fn poster_card(
     let subtitle = if card.artist.is_empty() {
         card.meta.clone()
     } else {
-        format!("{} · {}", card.artist, card.meta)
+        format!("{} │ {}", card.artist, card.meta)
     };
     let tip = if card.artist.is_empty() {
         card.album.clone()
     } else {
-        format!("{} · {}", card.album, card.artist)
+        format!("{} │ {}", card.album, card.artist)
     };
 
     div()
@@ -340,9 +385,7 @@ fn poster_card(
         .flex_col()
         .gap(px(theme::GAP_SM))
         .p(px(POSTER_PAD))
-        .rounded(px(theme::RADIUS_MD))
         .cursor_pointer()
-        .hover(|style| style.bg(theme::hover()))
         .tooltip(crate::common::tooltip::builder(tip))
         .on_click(move |_, _, cx| {
             target.update(cx, |library, cx| {
@@ -383,11 +426,14 @@ fn poster_card(
 
 /// 一排歌单卡：收藏 + 每个自建歌单。
 pub(super) fn list_section(
+    index: usize,
+    english: &'static str,
     id: &'static str,
     title: &'static str,
     cards: Vec<(Scope, HeroInfo)>,
     home: &HomeView,
     view: Entity<HomeView>,
+    window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let row = cards
@@ -405,7 +451,7 @@ pub(super) fn list_section(
             )
         })
         .collect();
-    scroll_row(id, title, row, home, view)
+    scroll_row(index, english, id, title, row, home, view, window, cx)
 }
 
 /// 一张歌单卡：点它是收窄作用域并切到曲库页，不是开播，所以不画 hover 播放键。
@@ -433,7 +479,7 @@ fn list_card(
     let tip = if info.meta.is_empty() {
         info.title.clone()
     } else {
-        format!("{} · {}", info.title, info.meta)
+        format!("{} │ {}", info.title, info.meta)
     };
 
     div()
@@ -444,9 +490,7 @@ fn list_card(
         .flex_col()
         .gap(px(theme::GAP_SM))
         .p(px(POSTER_PAD))
-        .rounded(px(theme::RADIUS_MD))
         .cursor_pointer()
-        .hover(|style| style.bg(theme::hover()))
         .tooltip(crate::common::tooltip::builder(tip))
         .on_click(move |_, _, cx| {
             crate::shell::enter_scope_from_here(scope.clone(), &shell, &library, cx);
@@ -495,14 +539,15 @@ fn cover_slot(
         .bg(theme::elevated());
 
     match state {
-        crate::common::cover::Cover::Ready(image) => cell
-            .child(
-                img(ImageSource::Render(image))
+        crate::common::cover::Cover::Ready(image) => {
+            let cell = cell.child(
+                img(ImageSource::Render(std::sync::Arc::clone(&image)))
                     .size_full()
                     .rounded(px(theme::RADIUS_LG))
                     .object_fit(ObjectFit::Cover),
-            )
-            .into_any_element(),
+            );
+            crate::common::cover::fade_in(&image, cell).into_any_element()
+        }
         // 确认没有封面：首字色块。
         crate::common::cover::Cover::Missing => cell
             .border_1()
@@ -532,9 +577,161 @@ fn monogram(initial: Option<char>) -> impl IntoElement {
         .justify_center()
         .rounded(px(theme::RADIUS_LG))
         .bg(crate::common::cover::monogram_color(ch))
-        .text_color(rgb(0xffffff))
+        .text_color(theme::text_on_monogram())
         .text_size(px(32.0))
         .child(ch.to_string())
+}
+
+/// 首页右侧的展示画框：切角封面 + 硬边斜线纹影子 + 墨色铭牌。
+/// 内容全部来自最近播放的那张专辑；没有记录时给出空状态。
+pub(super) fn showcase_frame(
+    card: Option<&RecentCard>,
+    library: &Entity<LibraryEntity>,
+    covers: &Entity<CoverCache>,
+    cx: &mut App,
+) -> AnyElement {
+    let shadow = div()
+        .absolute()
+        .top(px(12.))
+        .left(px(12.))
+        .size_full()
+        .bg(theme::elevated())
+        .child(crate::common::ornament::hatch_fill(
+            theme::text().opacity(0.22),
+        ));
+
+    let mut frame = div()
+        .flex_none()
+        .relative()
+        .w(px(360.))
+        .h(px(280.))
+        .child(shadow);
+
+    let Some(card) = card else {
+        let empty = div()
+            .relative()
+            .size_full()
+            .bg(theme::bg())
+            .border_1()
+            .border_color(theme::text())
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(theme::GAP_SM))
+            .child(crate::common::ornament::hatch_fill(
+                theme::text().opacity(0.05),
+            ))
+            .child(
+                div()
+                    .text_size(px(theme::FONT_BODY))
+                    .font_weight(theme::WEIGHT_BUTTON)
+                    .text_color(theme::text())
+                    .child("还没有播放记录"),
+            )
+            .child(
+                div()
+                    .text_size(px(theme::FONT_CAPTION))
+                    .text_color(theme::text_muted())
+                    .child("播放任意一首后，最近听的那张专辑会出现在这里。"),
+            )
+            .child(crate::common::ornament::cut_tl(theme::CUT_LG, theme::bg()))
+            .child(crate::common::ornament::cut_br(theme::CUT_LG, theme::bg()));
+        frame = frame.child(empty);
+        return frame.into_any_element();
+    };
+
+    let mut panel = div()
+        .relative()
+        .size_full()
+        .bg(theme::bg())
+        .border_1()
+        .border_color(theme::text());
+
+    match crate::common::cover::cover_image(covers, library, card.id, 360., cx) {
+        Some(image) => {
+            panel = panel.child(crate::common::cover::fade_in(
+                &image,
+                img(ImageSource::Render(std::sync::Arc::clone(&image)))
+                    .absolute()
+                    .size_full()
+                    .object_fit(ObjectFit::Cover),
+            ));
+        }
+        None => {
+            panel = panel
+                .bg(theme::control())
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .font(theme::label_font())
+                        .text_size(px(72.))
+                        .font_weight(FontWeight::EXTRA_BOLD)
+                        .text_color(theme::text_on_control())
+                        .child(
+                            card.album
+                                .chars()
+                                .next()
+                                .map_or_else(|| "♪".to_owned(), |ch| ch.to_string()),
+                        ),
+                );
+        }
+    }
+
+    let artist = if card.artist.is_empty() {
+        card.meta.clone()
+    } else {
+        format!("{} │ {}", card.artist, card.meta)
+    };
+
+    panel = panel
+        .child(crate::common::ornament::cut_tl(theme::CUT_LG, theme::bg()))
+        .child(crate::common::ornament::cut_br(theme::CUT_LG, theme::bg()))
+        .child(
+            div()
+                .absolute()
+                .left_0()
+                .bottom_0()
+                .max_w(px(290.))
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .pl(px(theme::GAP_MD))
+                .pr(px(theme::GAP_MD + theme::CUT_LG))
+                .py(px(theme::GAP_SM))
+                .bg(theme::control())
+                .child(
+                    div()
+                        .font(theme::label_font())
+                        .text_size(px(theme::FONT_EYEBROW))
+                        .font_weight(theme::WEIGHT_BUTTON)
+                        .text_color(theme::text_on_control())
+                        .child("// RECENT / 最近"),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(theme::FONT_SUBTITLE))
+                        .font_weight(theme::WEIGHT_TITLE)
+                        .text_color(theme::text_on_control())
+                        .child(card.album.clone()),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .font(theme::field_font())
+                        .text_size(px(theme::FONT_CAPTION))
+                        .text_color(theme::text_on_control().opacity(0.72))
+                        .child(artist),
+                ),
+        );
+
+    frame = frame.child(panel);
+    frame.into_any_element()
 }
 
 #[cfg(test)]

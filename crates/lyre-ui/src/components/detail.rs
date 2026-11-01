@@ -36,7 +36,7 @@ pub struct HeroInfo {
     pub tag: &'static str,
     /// 副标题：专辑给艺术家名，艺术家给「N 张专辑」。
     pub subtitle: String,
-    /// 说明行：「12 首 · 42:15」。时长未知时只有曲目数。
+    /// 说明行：「12 首 │ 42:15」。时长未知时只有曲目数。
     pub meta: String,
     /// 取封面的代表曲目。空歌单没有曲目可代表，`None` 时画派生色块。
     pub cover_id: Option<TrackId>,
@@ -51,7 +51,7 @@ impl HeroInfo {
         let artist = group.display_artist();
         let tracks = group.track_count();
         let meta = match group.total_duration() {
-            Some(total) => format!("{} 首 · {}", thousands(tracks), format_duration(total)),
+            Some(total) => format!("{} 首 │ {}", thousands(tracks), format_duration(total)),
             None => format!("{} 首", thousands(tracks)),
         };
         Self {
@@ -69,7 +69,7 @@ impl HeroInfo {
     pub fn from_artist(group: &ArtistGroup) -> Self {
         let (tracks, albums) = (group.track_count(), group.album_count());
         let meta = match group.total_duration() {
-            Some(total) => format!("{} 首 · {}", thousands(tracks), format_duration(total)),
+            Some(total) => format!("{} 首 │ {}", thousands(tracks), format_duration(total)),
             None => format!("{} 首", thousands(tracks)),
         };
         Self {
@@ -164,7 +164,7 @@ fn list_hero(
     let meta = if count == 0 {
         "还没有曲目".to_owned()
     } else if complete {
-        format!("{} 首 · {}", thousands(count), format_duration(total))
+        format!("{} 首 │ {}", thousands(count), format_duration(total))
     } else {
         format!("{} 首", thousands(count))
     };
@@ -199,73 +199,103 @@ pub fn hero(
     let cover = cover_slot(covers, &library, info, cx);
     let actions = action_row(info, library, shell, multi_select, cx);
 
-    let tag = div()
-        .text_size(px(theme::FONT_TITLE))
-        .font_weight(theme::WEIGHT_TITLE)
-        .text_color(theme::text())
-        .child(info.tag);
+    let kind_en = match info.kind {
+        HeroKind::Album => "Album",
+        HeroKind::Artist => "Artist",
+        HeroKind::Collection => "Playlist",
+    };
+    let meta = info.meta.replace(" · ", " │ ");
 
     div()
         .flex_none()
         .flex()
         .flex_col()
-        .px(px(theme::GAP_LG))
+        .px(px(theme::GAP_XL))
         // 顶行顶到与按钮同一高度；让位的量与按钮位置同源于 `root::HEADER_BACK_INSET`。
         .pt(px(crate::root::BACK_INSET_TOP))
         .pb(px(theme::GAP_LG))
+        .border_b_1()
+        .border_color(theme::border())
         .child(
             div()
                 .h(px(crate::root::BACK_BTN))
                 .flex()
                 .items_center()
                 .pl(px(
-                    crate::root::HEADER_BACK_INSET - theme::GAP_LG + theme::GAP_SM
+                    crate::root::HEADER_BACK_INSET - theme::GAP_XL + theme::GAP_SM
                 ))
-                .child(tag),
+                .child(crate::common::section::eyebrow(format!(
+                    "{kind_en} / {}",
+                    info.tag
+                ))),
         )
         .child(
             div()
                 .flex()
                 .items_end()
                 .gap(px(theme::GAP_XL))
-                .mt(px(theme::GAP_LG))
-                .child(cover)
+                .mt(px(theme::GAP_MD))
+                .child(framed_cover(cover))
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
                         .flex()
                         .flex_col()
+                        .items_start()
                         .gap(px(theme::GAP_SM))
                         // 父级 `items_end` 只让文字块整体贴底，这里要 `justify_end` 把自己推到底。
                         .justify_end()
                         .pb(px(6.0))
+                        .child(crate::common::section::page_title(info.title.clone()))
                         .child(
                             div()
-                                .text_size(px(theme::FONT_HERO))
-                                .font_weight(theme::WEIGHT_TITLE)
-                                .text_color(theme::text())
-                                // 必须截断：gpui 默认换行，`hero` 是 `flex_none`、列表是 `flex_1`，
-                                // 长专辑名多折一行就吃掉列表一行，极端情况能吃掉整屏。
-                                .truncate()
-                                .child(info.title.clone()),
+                                .w(px(160.))
+                                .child(crate::common::ornament::tri_strip()),
                         )
                         .when(!info.subtitle.trim().is_empty(), |col| {
                             col.child(
                                 div()
                                     .text_size(px(theme::FONT_SUBTITLE))
+                                    .font_weight(theme::WEIGHT_BUTTON)
                                     .text_color(theme::text_muted())
                                     .child(info.subtitle.clone()),
                             )
                         })
-                        .child(
-                            div()
-                                .text_size(px(theme::FONT_CAPTION))
-                                .text_color(theme::text_faint())
-                                .child(info.meta.clone()),
-                        )
+                        .child(crate::common::section::field(meta))
                         .child(div().mt(px(theme::GAP_XS)).child(actions)),
                 ),
+        )
+        .into_any_element()
+}
+
+/// 头图外框：切角封面 + 错开的斜线纹硬影子，不用投影。
+fn framed_cover(cover: AnyElement) -> AnyElement {
+    div()
+        .flex_none()
+        .relative()
+        .w(px(COVER + 10.0))
+        .h(px(COVER + 10.0))
+        .child(
+            div()
+                .absolute()
+                .top(px(10.))
+                .left(px(10.))
+                .size(px(COVER))
+                .bg(theme::elevated())
+                .child(crate::common::ornament::hatch_fill(
+                    theme::text().opacity(0.22),
+                )),
+        )
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size(px(COVER))
+                .child(cover)
+                .child(crate::common::ornament::cut_tl(14., theme::bg()))
+                .child(crate::common::ornament::cut_br(14., theme::bg())),
         )
         .into_any_element()
 }
@@ -359,18 +389,19 @@ fn more_button(
 ) -> AnyElement {
     let trigger = div()
         .id("hero-more")
+        .relative()
         .flex_none()
         .size(px(34.))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(theme::RADIUS_PILL))
         .border_1()
         .border_color(theme::border())
         .text_color(theme::text())
         .cursor_pointer()
         .hover(|style| style.bg(theme::elevated()))
         .tooltip(crate::common::tooltip::builder("更多操作"))
+        .child(crate::common::ornament::cut_br(theme::CUT_SM, theme::bg()))
         .child(icon_inherit(Glyph::More, 16.));
 
     crate::common::menu::dropdown(trigger, Anchor::TopLeft, move |menu, _window, _cx| {
@@ -427,17 +458,13 @@ fn play_button(info: &HeroInfo, library: Entity<LibraryEntity>) -> AnyElement {
         .flex()
         .items_center()
         .justify_center()
-        .rounded_full()
-        .bg(theme::control())
+        .relative()
+        .bg(theme::accent())
         .cursor_pointer()
-        // 这版 gpui 的元素没有 `transform`，悬停放大做不到，只能用阴影。
-        .hover(|style| {
-            style
-                .bg(theme::control_hover())
-                .shadow(theme::hover_shadow())
-        })
+        .hover(|style| style.bg(theme::accent_hover()))
+        .child(crate::common::ornament::cut_br(theme::CUT, theme::bg()))
         .tooltip(crate::common::tooltip::builder(label))
-        .child(icon(Glyph::Play, 20., theme::text_on_control()))
+        .child(icon(Glyph::Play, 20., theme::text_on_accent()))
         .on_click(move |_, _, cx| {
             library.update(cx, |library, cx| {
                 // 作用域与搜索自动生效：专辑详情里可见区第一行就是这张专辑的第一首。
@@ -536,7 +563,7 @@ fn placeholder(kind: HeroKind, initial: Option<char>) -> AnyElement {
         .justify_center()
         .rounded(px(theme::RADIUS_LG))
         .bg(crate::common::cover::monogram_color(ch))
-        .text_color(rgb(0xffffff))
+        .text_color(theme::text_on_monogram())
         .text_size(px(64.0))
         .font_weight(theme::WEIGHT_TITLE)
         .child(ch.to_string())
@@ -609,7 +636,7 @@ mod tests {
         let info = HeroInfo::from_album(&groups[0]);
 
         // `format_duration` 的口径是 `M:SS`，分钟不补零。
-        assert_eq!(info.meta, "2 首 · 2:05");
+        assert_eq!(info.meta, "2 首 │ 2:05");
     }
 
     #[test]

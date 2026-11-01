@@ -1,9 +1,11 @@
 //! 与业务无关的自绘基础件（不认识 `Track`、`Playlist`、`PlaybackEntity`）。
 
+pub mod anim;
 pub mod button;
 pub mod cover;
-pub mod gradient;
+pub mod hover;
 pub mod menu;
+pub mod ornament;
 pub mod scroll;
 pub mod section;
 pub mod toast;

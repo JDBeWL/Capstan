@@ -2,9 +2,9 @@
 
 use lyre_core::SortKey;
 
-use crate::common::button::{ButtonKind, text_button};
+use crate::common::button::{ButtonKind, text_button_animated};
 use crate::common::thousands;
-use crate::entities::{LibraryEntity, ScanProgress};
+use crate::entities::{LibraryEntity, ScanProgress, ScopeKind};
 use crate::icon::{Glyph, icon_inherit};
 use crate::platform::*;
 use crate::theme;
@@ -25,6 +25,10 @@ pub(super) struct ToolbarState {
     pub(super) scanning: Option<ScanProgress>,
     /// 是否处于专辑 / 艺术家详情里，决定要不要给浮动返回按钮让出左内边距
     pub(super) scoped: bool,
+    /// 作用域种类，决定眉标写 `// ALBUM` 还是 `// ARTIST`
+    pub(super) kind: ScopeKind,
+    /// 当前作用域是歌单 / 收藏（`ScopeKind::All` 分不出这两者）
+    pub(super) from_list: bool,
     /// 详情页的标题（专辑名 / 艺术家名）。`None` 表示没有收窄作用域
     pub(super) scope: Option<String>,
     /// 上方已有页头（详情页头图 / 搜索页大标题）时不再画大标题；列头照常画
@@ -37,14 +41,36 @@ pub(super) fn can_reorder(in_collection: bool, has_query: bool, rows: usize) -> 
     in_collection && !has_query && rows > 1
 }
 
-/// 页头大标题的文案：搜索词 > 作用域名 > 「曲库 · N 首」。
-fn header_summary(filtering: bool, scope: Option<&str>, count: usize, total: usize) -> String {
+/// 眉标：当前页是什么。搜索词优先。
+fn header_eyebrow(filtering: bool, kind: ScopeKind, from_list: bool) -> &'static str {
     if filtering {
-        format!("找到 {} / {} 首", thousands(count), thousands(total))
+        return "Search";
+    }
+    match kind {
+        ScopeKind::Album => "Album",
+        ScopeKind::Artist => "Artist",
+        ScopeKind::All if from_list => "Playlist",
+        ScopeKind::All => "Library",
+    }
+}
+
+/// 中文标题。搜索优先，其次作用域名，最后是「曲库」。
+fn header_title(filtering: bool, scope: Option<&str>) -> String {
+    if filtering {
+        "搜索结果".to_owned()
     } else if let Some(name) = scope.filter(|name| !name.trim().is_empty()) {
         name.to_owned()
     } else {
-        format!("曲库 · {} 首", thousands(total))
+        "曲库".to_owned()
+    }
+}
+
+/// 标题下的一行真实字段：计数 / 命中比。
+fn header_meta(filtering: bool, count: usize, total: usize) -> String {
+    if filtering {
+        format!("找到 {} / {} 首", thousands(count), thousands(total))
+    } else {
+        format!("{} 首", thousands(total))
     }
 }
 
@@ -58,6 +84,8 @@ pub(super) fn toolbar(
     library: Entity<LibraryEntity>,
     list: WeakEntity<TrackList>,
     state: ToolbarState,
+    window: &mut Window,
+    cx: &mut App,
 ) -> impl IntoElement {
     let ToolbarState {
         count,
@@ -66,6 +94,8 @@ pub(super) fn toolbar(
         sort_key,
         scanning,
         scoped,
+        kind,
+        from_list,
         scope,
         headed_elsewhere,
         in_search,
@@ -76,7 +106,7 @@ pub(super) fn toolbar(
     let back_inset = if scoped {
         crate::root::HEADER_BACK_INSET
     } else {
-        theme::GAP_LG
+        theme::GAP_XL
     };
 
     // 详情里的上留白再叠一档返回按钮的高度，让大标题落在按钮下方
@@ -86,7 +116,9 @@ pub(super) fn toolbar(
         theme::GAP_XL
     };
 
-    let summary = header_summary(filtering, scope.as_deref(), count, total);
+    let title = header_title(filtering, scope.as_deref());
+    let meta = header_meta(filtering, count, total);
+    let eyebrow = header_eyebrow(filtering, kind, from_list);
 
     let mut bar = div()
         .flex_none()
@@ -96,40 +128,35 @@ pub(super) fn toolbar(
         .pt(px(if headed_elsewhere { 0.0 } else { top_pad }))
         .pb(px(theme::GAP_MD))
         .pl(px(back_inset))
-        .pr(px(theme::GAP_LG))
+        .pr(px(theme::GAP_XL))
         .child(
             div()
                 .flex_1()
                 .min_w_0()
                 .flex()
-                .items_center()
-                .gap(px(theme::GAP_MD))
+                .flex_col()
+                .items_start()
+                .gap(px(6.))
                 // 扫描指示与页头归属无关，`headed_elsewhere` 时仍要画
-                .when(!headed_elsewhere, |row| {
-                    row.child(
-                        div()
-                            // 可缩 + 截断，不能 `flex_none`：大字撑破外壳时墨迹会盖到右边那排按钮上
-                            .flex_shrink_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(theme::FONT_HERO))
-                            .font_weight(theme::WEIGHT_TITLE)
-                            .text_color(theme::text())
-                            .child(summary),
-                    )
+                .when(!headed_elsewhere, |col| {
+                    col.child(crate::common::section::eyebrow(eyebrow))
+                        .child(crate::common::section::page_title(title).flex_shrink_1())
+                        .child(crate::common::section::field(meta))
                 })
                 .children(scanning.map(scan_indicator)),
         );
 
     if shows_actions(scoped, in_search) {
-        bar = bar.child(sort_menu(library.clone(), total, sort_key));
+        bar = bar.child(sort_menu(library.clone(), total, sort_key, window, cx));
 
         if total > 0 {
             let list = list.clone();
-            bar = bar.child(text_button(
+            bar = bar.child(text_button_animated(
                 "header-clear",
                 "清空",
-                ButtonKind::Ghost,
+                ButtonKind::Secondary,
+                window,
+                cx,
                 move |_, _, cx| {
                     let previous = library.update(cx, LibraryEntity::clear);
                     list.update(cx, |_, cx| cx.emit(TrackListEvent::Cleared(previous)))
@@ -139,18 +166,22 @@ pub(super) fn toolbar(
         }
     }
 
-    // 多选是全列表的功能（详情页、搜索页同样要批量收藏 / 批量进歌单），所以不进 `shows_actions`。
-    // 详情页 / 搜索页没有别的工具条内容，开关挪到列头右端（见 `chrome`），这里只留在曲库页。
+    // 多选开关只留在曲库页工具条里：详情页走头图的「更多操作」，搜索页不提供多选。
     if !headed_elsewhere && count > 0 {
-        bar = bar.child(selection_toggle(list, selecting));
+        bar = bar.child(selection_toggle(list, selecting, window, cx));
     }
 
     bar
 }
 
-/// 多选开关。曲库页放在工具条里；详情页 / 搜索页没有工具条，放到列头右端。
-pub(super) fn selection_toggle(list: WeakEntity<TrackList>, selecting: bool) -> impl IntoElement {
-    text_button(
+/// 多选开关，只出现在曲库页工具条里。
+pub(super) fn selection_toggle(
+    list: WeakEntity<TrackList>,
+    selecting: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
+    text_button_animated(
         "header-select",
         if selecting { "退出多选" } else { "多选" },
         if selecting {
@@ -158,6 +189,8 @@ pub(super) fn selection_toggle(list: WeakEntity<TrackList>, selecting: bool) -> 
         } else {
             ButtonKind::Ghost
         },
+        window,
+        cx,
         move |_, _, cx| {
             list.update(cx, TrackList::toggle_selection_mode).ok();
         },
@@ -165,37 +198,45 @@ pub(super) fn selection_toggle(list: WeakEntity<TrackList>, selecting: bool) -> 
 }
 
 /// 扫描进度指示：不确定进度（只报已找到数），因为扫描前不知道总文件数，百分比只能是假的。
+/// 黄块 + 墨字 = 需要注意，不用红绿。
 fn scan_indicator(progress: ScanProgress) -> impl IntoElement {
     div()
         .flex_none()
         .flex()
         .items_center()
-        .gap(px(theme::GAP_XS))
+        .gap(px(theme::GAP_SM))
+        .child(div().flex_none().size(px(8.)).bg(theme::accent()))
         .child(
             div()
                 .flex_none()
                 .text_size(px(theme::FONT_CAPTION))
-                .text_color(theme::success())
+                .font_weight(theme::WEIGHT_BUTTON)
+                .text_color(theme::text())
                 .child("正在扫描"),
         )
-        .child(
-            div()
-                .flex_none()
-                .text_size(px(theme::FONT_CAPTION))
-                .text_color(theme::text_muted())
-                .child(format!("已找到 {}", thousands(progress.found))),
-        )
+        .child(crate::common::section::field(format!(
+            "已找到 {}",
+            thousands(progress.found)
+        )))
 }
 
 /// 排序入口。不用 `context_menu`：它只在右键打开，左键点下去毫无反应。
-fn sort_menu(library: Entity<LibraryEntity>, total: usize, current: SortKey) -> AnyElement {
+fn sort_menu(
+    library: Entity<LibraryEntity>,
+    total: usize,
+    current: SortKey,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
     if total == 0 {
         return div().into_any_element();
     }
 
-    let trigger = crate::common::button::button_shell(
+    let trigger = crate::common::button::button_shell_animated(
         "sort-menu",
         crate::common::button::ButtonKind::Outline,
+        window,
+        cx,
     )
     .tooltip(crate::common::tooltip::builder("排序方式"))
     .child(icon_inherit(Glyph::Sort, 14.))
@@ -222,7 +263,8 @@ fn sort_menu(library: Entity<LibraryEntity>, total: usize, current: SortKey) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::{can_reorder, header_summary, shows_actions};
+    use super::{can_reorder, header_eyebrow, header_meta, header_title, shows_actions};
+    use crate::entities::ScopeKind;
 
     #[test]
     fn reorder_needs_a_playlist_a_still_list_and_something_to_move() {
@@ -246,37 +288,41 @@ mod tests {
     #[test]
     fn detail_page_titles_the_thing_you_entered() {
         assert_eq!(
-            header_summary(false, Some("Chill Studio"), 3, 24),
+            header_title(false, Some("Chill Studio")),
             "Chill Studio",
             "详情页的大标题就是专辑 / 艺术家的名字，不是搜索结果文案"
         );
+        assert_eq!(header_eyebrow(false, ScopeKind::Album, false), "Album");
+        assert_eq!(header_eyebrow(false, ScopeKind::Artist, false), "Artist");
+        assert_eq!(header_eyebrow(false, ScopeKind::All, true), "Playlist");
     }
 
     #[test]
     fn plain_library_titles_the_whole_collection() {
-        assert_eq!(header_summary(false, None, 24, 24), "曲库 · 24 首");
+        assert_eq!(header_title(false, None), "曲库");
+        assert_eq!(header_meta(false, 24, 24), "24 首");
+        assert_eq!(header_eyebrow(false, ScopeKind::All, false), "Library");
     }
 
     #[test]
     fn searching_wins_over_the_scope_it_happens_inside() {
-        assert_eq!(
-            header_summary(true, Some("Chill Studio"), 1, 24),
-            "找到 1 / 24 首",
-            "有搜索词时搜索的文案优先于作用域名"
-        );
+        assert_eq!(header_title(true, Some("Chill Studio")), "搜索结果");
+        assert_eq!(header_meta(true, 1, 24), "找到 1 / 24 首");
+        assert_eq!(header_eyebrow(true, ScopeKind::Album, true), "Search");
     }
 
     #[test]
     fn summary_never_renders_an_empty_title() {
-        // 空标题会让页头那一行塌成空白
         for filtering in [true, false] {
             for scope in [None, Some(""), Some("某个名字")] {
                 for (count, total) in [(0usize, 0usize), (0, 24), (3, 24), (9, 9)] {
-                    let summary = header_summary(filtering, scope, count, total);
                     assert!(
-                        !summary.trim().is_empty(),
-                        "filtering={filtering} scope={scope:?} count={count} total={total} \
-                         时标题成了空串"
+                        !header_title(filtering, scope).trim().is_empty(),
+                        "filtering={filtering} scope={scope:?} 时标题成了空串"
+                    );
+                    assert!(
+                        !header_meta(filtering, count, total).trim().is_empty(),
+                        "filtering={filtering} count={count} total={total} 时字段成了空串"
                     );
                 }
             }

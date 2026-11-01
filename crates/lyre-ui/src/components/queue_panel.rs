@@ -161,25 +161,26 @@ impl Render for QueuePanel {
             .items_center()
             .gap(px(theme::GAP_SM))
             .px(px(theme::GAP_MD))
-            .h(px(44.))
+            .h(px(52.))
             .border_b_1()
-            .border_color(theme::border_soft())
-            .child(
-                div()
-                    .flex_none()
-                    .text_size(px(theme::FONT_SUBTITLE))
-                    .font_weight(theme::WEIGHT_SUBTITLE)
-                    .text_color(theme::text())
-                    .child("播放队列"),
-            )
+            .border_color(theme::border())
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
-                    .text_size(px(theme::FONT_CAPTION))
-                    .text_color(theme::text_muted())
-                    .child(thousands(total)),
+                    .flex()
+                    .flex_col()
+                    .gap(px(1.))
+                    .child(crate::common::section::eyebrow("Queue"))
+                    .child(
+                        div()
+                            .text_size(px(theme::FONT_SUBTITLE))
+                            .font_weight(theme::WEIGHT_TITLE)
+                            .text_color(theme::text())
+                            .child("播放队列"),
+                    ),
             )
+            .child(crate::common::section::field(thousands(total)))
             .child(mode_badge(mode))
             .when(overlay, |row| {
                 row.child(panel_close_button("queue-close", &self.shell))
@@ -192,15 +193,16 @@ impl Render for QueuePanel {
             .truncate()
             .px(px(theme::GAP_MD))
             .py(px(theme::GAP_SM))
+            .font(theme::field_font())
             .text_size(px(theme::FONT_CAPTION))
             .text_color(theme::text_muted())
             .child(if total == 0 {
                 "曲库为空".to_owned()
             } else if playing.is_none() {
-                format!("共 {} 首 · 尚未开始播放", thousands(total))
+                format!("共 {} 首 │ 尚未开始播放", thousands(total))
             } else {
                 format!(
-                    "共 {} 首 · 接下来 {} 首",
+                    "共 {} 首 │ 接下来 {} 首",
                     thousands(total),
                     thousands(ahead)
                 )
@@ -213,7 +215,7 @@ impl Render for QueuePanel {
         let body: AnyElement = if row_count == 0 {
             empty_queue(total)
         } else {
-            list(self.scroll.clone(), move |ix, _window, cx| {
+            list(self.scroll.clone(), move |ix, window, cx| {
                 let Some(entry) = rows.get(ix) else {
                     return div().into_any_element();
                 };
@@ -222,8 +224,10 @@ impl Render for QueuePanel {
                         // 先拷出曲目再放开曲库读取，行元素的回调还要可变借用 `cx`。
                         let track = library_entity.read(cx).playlist().by_id(*id).cloned();
                         match track {
-                            Some(track) => queue_row(*number, &track, *kind, &library_entity, cx)
-                                .into_any_element(),
+                            Some(track) => {
+                                queue_row(*number, &track, *kind, &library_entity, window, cx)
+                                    .into_any_element()
+                            }
                             None => div().into_any_element(),
                         }
                     }
@@ -271,12 +275,12 @@ enum QueueEntry {
         kind: RowKind,
         number: usize,
     },
-    /// 带文字的刻度行（「接下来」/「待播放」）。
+    /// 带文字的刻度行。只在没有当前曲时标出「待播放」。
     Divider(&'static str),
 }
 
 /// 队列的行模型：行本身，加上正在播的那一行的下标。滚动锚点只能从这里拿。
-/// 「已播那段有几行」不等于 `PLAYED_CONTEXT`：刚开播时是空的、只往回取 5 首、分段标签还占一行。
+/// 「已播那段有几行」不等于 `PLAYED_CONTEXT`：刚开播时是空的、只往回取 5 首、没有当前曲时「待播放」标签还占一行。
 #[derive(Default)]
 struct QueueRows {
     /// 行模型只存 id：整条队列的 `Track` 每次重绘都 clone 一遍是真正的大头。
@@ -301,7 +305,8 @@ struct QueueKey {
     playing: Option<TrackId>,
 }
 
-/// 把「已播 / 待播」两段拼成一条连续队列：标签只在两段都非空时插入，序号按曲目连续、标签不占号。
+/// 把「已播 / 待播」两段拼成一条连续队列：有当前曲时不再插「接下来」标签，
+/// 它直接接在已播记录后面；没有当前曲、两段都非空时才插「待播放」。序号按曲目连续、标签不占号。
 /// `upcoming` 第一首只有与 `now_playing` 相同才算 [`RowKind::Current`]。
 fn build_entries(
     played: Vec<TrackId>,
@@ -346,18 +351,9 @@ fn build_entries(
         number += 1;
     }
 
-    if played_count > 0 && rows.len() > played_count {
-        let label = if current.is_some() {
-            "接下来"
-        } else {
-            "待播放"
-        };
-        rows.insert(played_count, QueueEntry::Divider(label));
-        // 标签插在已播段之后，把当前行连同它后面的一切都推下去一行 ——
-        // 有当前行时它必然正好是已播段后面那第一行。
-        if let Some(row) = current_row.as_mut() {
-            *row += 1;
-        }
+    // 当前曲本身就是分界，不再额外插「接下来」。
+    if current.is_none() && played_count > 0 && rows.len() > played_count {
+        rows.insert(played_count, QueueEntry::Divider("待播放"));
     }
 
     QueueRows {
@@ -438,7 +434,6 @@ fn mode_badge(mode: PlayMode) -> impl IntoElement {
         .gap(px(theme::GAP_XS))
         .px(px(theme::GAP_SM))
         .py(px(2.))
-        .rounded(px(theme::RADIUS_PILL))
         .bg(if active {
             theme::control()
         } else {
@@ -467,7 +462,8 @@ fn queue_row(
     track: &Track,
     kind: RowKind,
     library: &Entity<LibraryEntity>,
-    _cx: &mut App,
+    window: &mut Window,
+    cx: &mut App,
 ) -> impl IntoElement {
     let track_id = track.id;
     let duration = track
@@ -475,25 +471,26 @@ fn queue_row(
         .map_or_else(|| "--:--".to_owned(), format_duration);
     let current = kind == RowKind::Current;
     let played = kind == RowKind::Played;
+    let hover_id = ElementId::from(("queue-row", number));
+    let hover = crate::common::hover::row_progress(hover_id.clone(), window, cx);
 
     let title_color = match kind {
-        RowKind::Current => theme::accent_text(),
         RowKind::Played => theme::text_muted(),
-        RowKind::Upcoming => theme::text(),
+        RowKind::Current | RowKind::Upcoming => theme::text(),
     };
     let meta_color = match kind {
-        RowKind::Current => theme::accent_text(),
         RowKind::Played => theme::text_faint(),
-        RowKind::Upcoming => theme::text_muted(),
+        RowKind::Current | RowKind::Upcoming => theme::text_muted(),
     };
 
     // 每行独立的 group 名：共用一个的话鼠标进任意一行、所有行都会亮。
     let group: SharedString = format!("queue-row-{number}").into();
 
     let mut row = div()
-        .id(("queue-row", number))
+        .id(hover_id.clone())
         .group(group.clone())
         .flex_none()
+        .relative()
         // `uniform_list` 的行默认按内容定宽：`w_full` 给时长列右对齐的参照系，
         // `min_w_0` 才允许标题列收缩。
         .w_full()
@@ -501,17 +498,30 @@ fn queue_row(
         .h(px(ROW_H))
         .flex()
         .items_center()
-        .pl(px(theme::ROW_PAD_LEFT))
+        .pl(px(
+            theme::ROW_PAD_LEFT + if current { 0.0 } else { 6.0 * hover }
+        ))
         .pr(px(theme::GAP_MD))
         .cursor_pointer()
-        .bg(if current {
-            theme::accent_soft()
-        } else {
-            theme::transparent()
+        .border_b_1()
+        .border_color(theme::border_soft())
+        .bg(theme::transparent())
+        .when(!current, |row| {
+            row.on_hover(crate::common::hover::bind(hover_id))
         });
 
     if !current {
-        row = row.hover(|style| style.bg(theme::hover()));
+        row = row
+            .child(div().absolute().inset_0().bg(theme::hover()).opacity(hover))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(0.))
+                    .top(px(0.))
+                    .w(px(4.))
+                    .h(relative(hover))
+                    .bg(theme::trace()),
+            );
     }
 
     row = row.on_click({
@@ -530,7 +540,6 @@ fn queue_row(
                 .flex_none()
                 .w(px(2.))
                 .h(px(ROW_H * 0.5))
-                .rounded_full()
                 .bg(if current {
                     theme::accent()
                 } else {
@@ -554,6 +563,7 @@ fn queue_row(
             .flex()
             .justify_end()
             .text_size(px(theme::FONT_CAPTION))
+            .font(theme::field_font())
             .text_color(if played {
                 theme::text_faint()
             } else {
@@ -602,7 +612,24 @@ fn index_cell(
             .items_center()
             .justify_end()
             .pr(px(theme::ROW_INDEX_GAP))
-            .child(icon(Glyph::Music, 12., theme::accent_text()))
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(24.))
+                    .h(px(18.))
+                    .bg(theme::accent())
+                    .child(crate::common::ornament::cut_br(theme::CUT_SM, theme::bg()))
+                    .child(
+                        div()
+                            .font(theme::field_font())
+                            .text_size(px(theme::FONT_CAPTION))
+                            .text_color(theme::text_on_accent())
+                            .child(format!("{number}")),
+                    ),
+            )
             .into_any_element();
     }
 
@@ -795,11 +822,11 @@ mod tests {
     }
 
     #[test]
-    fn divider_sits_between_played_and_current() {
+    fn no_divider_between_played_and_current() {
         let rows = build_entries(vec![id("a")], ids(&["b", "c"]), Some(id("b")));
 
-        assert_eq!(divider_at(&rows), Some(1));
-        assert_eq!(rows.entries().len(), 4, "1 已播 + 1 标签 + 2 曲目");
+        assert_eq!(divider_at(&rows), None);
+        assert_eq!(rows.entries().len(), 3, "1 已播 + 2 曲目");
     }
 
     #[test]
@@ -819,7 +846,7 @@ mod tests {
     }
 
     #[test]
-    fn divider_label_follows_playback_state() {
+    fn divider_only_marks_pending_when_stopped() {
         let playing = build_entries(vec![id("a")], vec![id("b")], Some(id("b")));
         let stopped = build_entries(vec![id("a")], vec![id("b")], None);
 
@@ -832,7 +859,7 @@ mod tests {
             None => panic!("这一段应当有分段标签"),
         };
 
-        assert_eq!(label(&playing), "接下来");
+        assert_eq!(divider_at(&playing), None, "有当前曲时不再插「接下来」");
         assert_eq!(label(&stopped), "待播放");
     }
 
@@ -852,7 +879,7 @@ mod tests {
 
     #[test]
     fn track_numbers_stay_contiguous_across_the_divider() {
-        let rows = build_entries(ids(&["a", "b", "c"]), ids(&["d", "e"]), Some(id("d")));
+        let rows = build_entries(ids(&["a", "b", "c"]), ids(&["d", "e"]), None);
 
         assert_eq!(divider_at(&rows), Some(3), "先确认标签确实插在中间");
         assert_eq!(numbers(&rows), [1, 2, 3, 4, 5], "序号必须连续");
@@ -892,18 +919,14 @@ mod tests {
         assert_eq!(rows.current_row, Some(0));
     }
 
-    /// 分段标签也占一行，锚点必须把它算进去 —— 少算一行就正好停在前一首上。
+    /// 没有分段标签时，已播几首，当前就在第几行。
     #[test]
-    fn the_divider_row_pushes_the_anchor_down_by_one() {
+    fn played_context_keeps_the_anchor_on_the_next_row() {
         let head = id("cur");
         let rows = build_entries(vec![id("p0")], vec![head, id("n1")], Some(head));
 
-        assert_eq!(divider_at(&rows), Some(1));
-        assert_eq!(
-            rows.current_row,
-            Some(2),
-            "已播 1 行 + 标签 1 行，当前在第 2 行"
-        );
+        assert_eq!(divider_at(&rows), None);
+        assert_eq!(rows.current_row, Some(1), "已播 1 行，当前直接接在第 1 行");
     }
 
     /// 没在播时下面那段是「待播放」，第一行不算「当前」，没有锚点。

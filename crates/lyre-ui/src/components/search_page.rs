@@ -249,42 +249,33 @@ impl SearchPage {
 }
 
 impl Render for SearchPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let query = self.library.read(cx).query().to_string();
         let searching = crate::entities::searching(&query);
         let loading = self.library.read(cx).loading();
         let summary = self.summary(cx);
         // 主区宽度已扣掉侧栏与停靠的面板，这里再扣页面左右内边距。
-        let usable = (self.shell.read(cx).center_width() - theme::GAP_LG * 2.0).max(0.0);
+        let usable = (self.shell.read(cx).center_width() - theme::PAGE_PAD * 2.0).max(0.0);
 
-        // 主区左上角浮着返回按钮（`root::floating_back`），标题不让开就会被压在下面；
-        // 让位量与它同源于 `root::HEADER_BACK_INSET`。
-        let header_top = if self.shell.read(cx).can_go_back() {
-            crate::root::HEADER_BACK_INSET + theme::GAP_MD
-        } else {
-            theme::GAP_XL
-        };
+        // 搜索页不画浮动返回按钮：顶栏的后退与 Esc 已经能退回上一处，页头按普通上留白。
+        let header_top = theme::GAP_XL;
 
         let header = div()
             .flex_none()
             .flex()
             .flex_col()
             .w_full()
-            .gap(px(theme::GAP_SM))
+            .items_start()
+            .gap(px(6.))
             .pt(px(header_top))
             .pb(px(theme::GAP_MD))
-            .px(px(theme::GAP_LG))
+            .px(px(theme::PAGE_PAD))
+            .child(crate::common::section::eyebrow("Search / 搜索"))
+            .child(crate::common::section::page_title("搜索"))
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(theme::FONT_HERO))
-                    .font_weight(theme::WEIGHT_TITLE)
-                    .text_color(theme::text())
-                    .child("搜索"),
-            )
-            .child(
-                div()
-                    .flex_none()
+                    .font(theme::field_font())
                     .text_size(px(theme::FONT_CAPTION))
                     .text_color(if searching {
                         theme::text()
@@ -294,24 +285,17 @@ impl Render for SearchPage {
                     .child(summary),
             );
 
-        // 有歌曲命中时这块是 TrackList 的页头：大标题和「结果」摘要让位，歌曲行才能尽早上屏。
-        // 空搜索或只有分组命中时仍保留标题。
-        let track_results = searching && self.library.read(cx).visible_len() > 0;
-
+        // 搜索结果也保留这层页头：与浏览页、详情页同一套顶部结构，往下一眼能看出还在搜索里。
         let mut page = div()
             .id("search-page")
             .flex_none()
             .flex()
             .flex_col()
-            .w_full();
-        page = if track_results {
-            page.pt(px(header_top))
-        } else {
-            page.child(header)
-        };
+            .w_full()
+            .child(header);
 
         page = if searching {
-            page.child(self.results_body(&query, usable, cx))
+            page.child(self.results_body(&query, usable, window, cx))
         } else if loading {
             page.child(loading_state())
         } else {
@@ -329,7 +313,7 @@ impl SearchPage {
         if groups.is_empty() {
             return div()
                 .flex_none()
-                .px(px(theme::GAP_LG))
+                .px(px(theme::PAGE_PAD))
                 .pb(px(theme::GAP_XL))
                 .text_size(px(theme::FONT_BODY))
                 .text_color(theme::text_muted())
@@ -354,22 +338,32 @@ impl SearchPage {
             .flex_col()
             .w_full()
             .gap(px(theme::GAP_MD))
-            .px(px(theme::GAP_LG))
+            .px(px(theme::PAGE_PAD))
             .pb(px(theme::GAP_XL))
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(theme::FONT_TITLE))
-                    .font_weight(theme::WEIGHT_TITLE)
-                    .text_color(theme::text())
-                    .child("浏览全部"),
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap(px(2.))
+                    .pb(px(theme::GAP_SM))
+                    .border_b_1()
+                    .border_color(theme::border())
+                    .child(crate::common::section::eyebrow("Browse"))
+                    .child(
+                        div()
+                            .text_size(px(theme::FONT_TITLE))
+                            .font_weight(theme::WEIGHT_TITLE)
+                            .text_color(theme::text())
+                            .child("浏览全部"),
+                    ),
             )
             .child(grid)
             .into_any_element()
     }
 
     fn browse_tile(&self, index: usize, group: &AlbumGroup) -> AnyElement {
-        let color = crate::common::cover::monogram_color(group.title.chars().next().unwrap_or('?'));
         let title = group.title.clone();
         let meta = format!("{} 首", group.track_count());
         let id = group.representative;
@@ -382,11 +376,11 @@ impl SearchPage {
             .min_w_0()
             .h(px(BROWSE_TILE_H))
             .relative()
-            .overflow_hidden()
-            .rounded(px(theme::RADIUS_MD))
-            .bg(color)
+            .bg(theme::window_base())
+            .border_1()
+            .border_color(theme::border())
             .cursor_pointer()
-            .hover(|style| style.opacity(0.88))
+            .hover(|style| style.bg(theme::elevated()))
             .tooltip(crate::common::tooltip::builder(group.title.clone()))
             .on_click({
                 let title = title.clone();
@@ -401,15 +395,26 @@ impl SearchPage {
                     );
                 }
             })
+            // 顶边一小段墨色页签 + 右下切角，和首页的浏览看板同一套形状
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .h(px(5.))
+                    .w(px(24.))
+                    .bg(theme::text()),
+            )
+            .child(crate::common::ornament::cut_br(theme::CUT, theme::bg()))
             .child(
                 div()
                     .absolute()
                     .left(px(theme::GAP_MD))
-                    .right(px(theme::GAP_MD))
-                    .top(px(theme::GAP_MD))
+                    .right(px(theme::GAP_MD + theme::CUT))
+                    .top(px(theme::GAP_MD + 2.))
                     .text_size(px(theme::FONT_BODY))
-                    .font_weight(theme::WEIGHT_SUBTITLE)
-                    .text_color(rgb(0xffffff))
+                    .font_weight(theme::WEIGHT_BUTTON)
+                    .text_color(theme::text())
                     .truncate()
                     .child(group.title.clone()),
             )
@@ -418,8 +423,9 @@ impl SearchPage {
                     .absolute()
                     .left(px(theme::GAP_MD))
                     .bottom(px(theme::GAP_SM))
+                    .font(theme::field_font())
                     .text_size(px(theme::FONT_CAPTION))
-                    .text_color(rgb(0xffffff).opacity(0.75))
+                    .text_color(theme::text_faint())
                     .child(meta),
             )
             .context_menu(crate::common::menu::group_context_menu(
@@ -439,7 +445,13 @@ impl SearchPage {
             .into_any_element()
     }
 
-    fn results_body(&mut self, query: &str, usable: f32, cx: &mut Context<Self>) -> AnyElement {
+    fn results_body(
+        &mut self,
+        query: &str,
+        usable: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         self.sync_results(query, cx);
         let Some(cache) = self.results.as_ref() else {
             return div().into_any_element();
@@ -453,7 +465,7 @@ impl SearchPage {
         );
 
         if total == 0 && artist_total == 0 && album_total == 0 && list_total == 0 {
-            return no_results().into_any_element();
+            return no_results(self.library.clone(), window, cx).into_any_element();
         }
 
         // 只画命中的分组：空分组连同「没有匹配」不再占首屏高度。
@@ -492,7 +504,7 @@ impl SearchPage {
             body.flex_none()
                 .flex()
                 .w_full()
-                .px(px(theme::GAP_LG))
+                .px(px(theme::PAGE_PAD))
                 .pb(px(theme::GAP_MD))
         };
 
@@ -555,7 +567,7 @@ impl SearchPage {
         let tip = if info.meta.is_empty() {
             info.title.clone()
         } else {
-            format!("{} · {}", info.title, info.meta)
+            format!("{} │ {}", info.title, info.meta)
         };
 
         let row = div()
@@ -638,7 +650,7 @@ impl SearchPage {
         let tip = if subtitle.is_empty() {
             title.clone()
         } else {
-            format!("{title} · {subtitle}")
+            format!("{title} │ {subtitle}")
         };
         let cover = thumb(
             &self.covers,
@@ -659,10 +671,8 @@ impl SearchPage {
             .items_center()
             .gap(px(theme::GAP_MD))
             .p(px(theme::GAP_MD))
-            .rounded(px(theme::RADIUS_CARD))
             .bg(theme::elevated())
             .cursor_pointer()
-            .hover(|style| style.bg(theme::border()))
             .tooltip(crate::common::tooltip::builder(tip))
             .on_click(move |_, _, cx| {
                 library.update(cx, |library, cx| {
@@ -679,11 +689,12 @@ impl SearchPage {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded_full()
-                        .bg(theme::control())
-                        .border(px(2.))
-                        .border_color(theme::bg())
-                        .child(icon(Glyph::Play, 16., theme::text_on_control())),
+                        .bg(theme::accent())
+                        .child(crate::common::ornament::cut_br(
+                            theme::CUT_SM,
+                            theme::elevated(),
+                        ))
+                        .child(icon(Glyph::Play, 16., theme::text_on_accent())),
                 ),
             )
             .child(
@@ -796,7 +807,7 @@ impl SearchPage {
         let tip = if row.meta.is_empty() {
             row.name.clone()
         } else {
-            format!("{} · {}", row.name, row.meta)
+            format!("{} │ {}", row.name, row.meta)
         };
 
         div()
@@ -895,7 +906,7 @@ impl MiniRow {
         let meta = if artist.is_empty() {
             format!("{} 首", group.track_count())
         } else {
-            format!("{} · {} 首", artist, group.track_count())
+            format!("{} │ {} 首", artist, group.track_count())
         };
         Self {
             id: group.representative,
@@ -907,12 +918,29 @@ impl MiniRow {
 }
 
 fn plain_header(text: &'static str) -> impl IntoElement {
+    let english = match text {
+        "最佳结果" => "Best Match",
+        "艺术家" => "Artists",
+        "专辑" => "Albums",
+        "歌单" => "Playlists",
+        _ => "Section",
+    };
     div()
         .flex_none()
-        .text_size(px(theme::FONT_BODY))
-        .font_weight(theme::WEIGHT_SUBTITLE)
-        .text_color(theme::text())
-        .child(text)
+        .flex()
+        .flex_col()
+        .gap(px(1.))
+        .pb(px(4.))
+        .border_b_1()
+        .border_color(theme::border())
+        .child(crate::common::section::eyebrow(english))
+        .child(
+            div()
+                .text_size(px(theme::FONT_BODY))
+                .font_weight(theme::WEIGHT_SUBTITLE)
+                .text_color(theme::text())
+                .child(text),
+        )
 }
 
 /// 区块行的元素 id 前缀。用固定字符串而不是中文标题，避免 id 里出现会变的文案。
@@ -945,14 +973,15 @@ fn thumb(
         .bg(theme::elevated());
 
     match state {
-        crate::common::cover::Cover::Ready(image) => cell
-            .child(
-                img(ImageSource::Render(image))
+        crate::common::cover::Cover::Ready(image) => {
+            let cell = cell.child(
+                img(ImageSource::Render(std::sync::Arc::clone(&image)))
                     .size_full()
                     .rounded(px(radius))
                     .object_fit(ObjectFit::Cover),
-            )
-            .into_any_element(),
+            );
+            crate::common::cover::fade_in(&image, cell).into_any_element()
+        }
         crate::common::cover::Cover::Missing => cell
             .border_1()
             .border_color(theme::border())
@@ -978,7 +1007,7 @@ fn loading_state() -> impl IntoElement {
         .flex()
         .flex_col()
         .gap(px(theme::GAP_SM))
-        .px(px(theme::GAP_LG))
+        .px(px(theme::PAGE_PAD))
         .pb(px(theme::GAP_XL))
         .child(
             div()
@@ -993,16 +1022,35 @@ fn loading_state() -> impl IntoElement {
                 .text_color(theme::text_muted())
                 .child("窗口先显示，搜索与分类会在后台核对完成后出现。"),
         )
+        .child(
+            div()
+                .w_full()
+                .pt(px(theme::GAP_SM))
+                .child(crate::common::anim::unknown_progress()),
+        )
 }
 
-fn no_results() -> impl IntoElement {
+fn no_results(
+    library: Entity<LibraryEntity>,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
     div()
-        .flex_none()
+        .relative()
+        .mt(px(theme::GAP_XL))
+        .mx(px(theme::PAGE_PAD))
+        .max_w(px(560.))
         .flex()
         .flex_col()
+        .items_start()
         .gap(px(theme::GAP_SM))
-        .px(px(theme::GAP_LG))
-        .pb(px(theme::GAP_XL))
+        .p(px(theme::GAP_XL))
+        .border_1()
+        .border_color(theme::border())
+        .child(crate::common::ornament::hatch_fill(
+            theme::text().opacity(0.05),
+        ))
+        .child(crate::common::section::eyebrow("Empty"))
         .child(
             div()
                 .text_size(px(theme::FONT_TITLE))
@@ -1014,7 +1062,19 @@ fn no_results() -> impl IntoElement {
             div()
                 .text_size(px(theme::FONT_BODY))
                 .text_color(theme::text_muted())
-                .child("换个关键词试试，或者检查拼写。"),
+                .child("换个关键词试试，或者清空搜索回到浏览页。"),
+        )
+        .child(
+            div()
+                .mt(px(theme::GAP_XS))
+                .child(crate::common::button::text_button_animated(
+                    "search-empty-clear",
+                    "清空搜索",
+                    crate::common::button::ButtonKind::Primary,
+                    window,
+                    cx,
+                    move |_, _, cx| library.update(cx, LibraryEntity::clear_query),
+                )),
         )
 }
 

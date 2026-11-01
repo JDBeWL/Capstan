@@ -97,6 +97,8 @@ pub fn artist_menu_label(first: &str, total: usize) -> String {
 /// 「进入专辑 / 艺术家之前」的副作用。
 type BeforeLeave = Rc<dyn Fn(&mut App)>;
 type AfterRemove = Rc<dyn Fn(Track, usize, &mut App)>;
+/// 接管「从曲库移除」：返回 `true` 表示宿主自己负责（例如先播退出动画）。
+type OnRemove = Rc<dyn Fn(TrackId, &mut App) -> bool>;
 /// 「打开这个分组」的落点。
 type OnOpen = Rc<dyn Fn(&mut App)>;
 /// 「从这一首开始播」的落点。
@@ -109,6 +111,7 @@ pub struct TrackMenuHooks {
     play: Option<OnPlay>,
     before_leave: Option<BeforeLeave>,
     after_remove: Option<AfterRemove>,
+    remove: Option<OnRemove>,
 }
 
 impl TrackMenuHooks {
@@ -134,6 +137,16 @@ impl TrackMenuHooks {
     pub fn after_remove(mut self, hook: impl Fn(Track, usize, &mut App) + 'static) -> Self {
         self.after_remove = Some(Rc::new(hook));
         self
+    }
+
+    /// 接管移除动作（曲库行用它先播删除动画）。返回 `false` 时退回立即移除。
+    pub fn remove(mut self, hook: impl Fn(TrackId, &mut App) -> bool + 'static) -> Self {
+        self.remove = Some(Rc::new(hook));
+        self
+    }
+
+    fn remove_track(&self, id: TrackId, cx: &mut App) -> bool {
+        self.remove.as_ref().is_some_and(|hook| hook(id, cx))
     }
 
     fn leaving(&self, cx: &mut App) {
@@ -268,6 +281,9 @@ pub fn track_context_menu(
             let hooks = hooks.clone();
             menu = menu.item(PopupMenuItem::separator()).item(
                 PopupMenuItem::new("从曲库移除").on_click(move |_, _, cx| {
+                    if hooks.remove_track(track_id, cx) {
+                        return;
+                    }
                     let removed = library.update(cx, |library, cx| library.remove(track_id, cx));
                     if let Some((track, at)) = removed {
                         hooks.removed(track, at, cx);

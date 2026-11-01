@@ -69,6 +69,8 @@ pub enum Glyph {
     Devices,
     Fullscreen,
     PanelRight,
+    /// 明暗主题：半实心圆。
+    Appearance,
 
     // 窗口控件：手写的填充类，不在生成的那批里
     WindowMinimize,
@@ -126,6 +128,7 @@ impl Glyph {
             Glyph::Devices => "播放设备",
             Glyph::Fullscreen => "全屏",
             Glyph::PanelRight => "正在播放视图",
+            Glyph::Appearance => "外观",
             Glyph::WindowMinimize => "最小化",
             Glyph::WindowMaximize => "最大化",
             Glyph::WindowRestore => "向下还原",
@@ -180,17 +183,22 @@ fn svg_source(glyph: Glyph) -> &'static str {
         Glyph::HeartFilled => filled!(
             r#"<path d="M12 21.1l-1.38-1.26C5.5 15.24 2.2 12.24 2.2 8.55 2.2 5.55 4.55 3.2 7.55 3.2c1.7 0 3.33.79 4.45 2.04 1.12-1.25 2.75-2.04 4.45-2.04 3 0 5.35 2.35 5.35 5.35 0 3.69-3.3 6.69-8.42 11.29L12 21.1z"/>"#
         ),
-        // 窗口控件不走 Lucide：2px 描边缩到 10px 只剩 0.83px，光栅化后不保证可见。
-        Glyph::WindowMinimize => filled!(r#"<rect x="5" y="11.5" width="14" height="1"/>"#),
+        // 半实心圆：外圈描边 + 右半实心，缩到 14px 仍看得出明暗两半。
+        Glyph::Appearance => filled!(
+            r#"<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/>"#,
+            r#"<path d="M12 3a9 9 0 0 1 0 18Z"/>"#
+        ),
+        // 窗口控件手写：几何按 24 视框的标准边界画，16px 下描边约 1.3px，接近设置齿轮。
+        Glyph::WindowMinimize => filled!(r#"<rect x="3.5" y="11" width="17" height="2"/>"#),
         Glyph::WindowMaximize => filled!(
-            r#"<rect x="5.5" y="5.5" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1"/>"#
+            r#"<rect x="3.5" y="3.5" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"/>"#
         ),
         Glyph::WindowRestore => filled!(
-            r#"<rect x="8.5" y="3.5" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1" opacity="0.55"/>"#,
-            r#"<rect x="3.5" y="8.5" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1"/>"#
+            r#"<rect x="7.5" y="3.5" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" opacity="0.55"/>"#,
+            r#"<rect x="3.5" y="7.5" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"/>"#
         ),
         Glyph::WindowClose => filled!(
-            r#"<path d="M5.5 5.5 18.5 18.5M18.5 5.5 5.5 18.5" fill="none" stroke="currentColor" stroke-width="1"/>"#
+            r#"<path d="M3.5 3.5 20.5 20.5M20.5 3.5 3.5 20.5" fill="none" stroke="currentColor" stroke-width="2"/>"#
         ),
         other => stroke_svg(other),
     }

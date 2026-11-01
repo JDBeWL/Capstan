@@ -152,17 +152,17 @@ impl Render for SearchBox {
         let focused = self.input.read(cx).focus_handle(cx).is_focused(window);
 
         let border_color = if focused {
-            theme::control()
+            theme::text()
         } else {
-            theme::transparent()
+            theme::border()
         };
 
         // 左内边距必须恒定，否则打进第一个字符的瞬间整段文本右跳；需要让位的只有右端的清空按钮。
-        let input_left = theme::GAP_MD;
+        let input_left = theme::GAP_SM;
         let input_right = if has_text {
             theme::GAP_XL
         } else {
-            theme::GAP_MD
+            theme::GAP_SM
         };
 
         let mut root = div()
@@ -174,13 +174,12 @@ impl Render for SearchBox {
             .h(px(theme::SEARCH_H))
             .flex()
             .items_center()
-            .rounded(px(theme::RADIUS_PILL))
-            .bg(theme::elevated())
-            .border(px(0.5))
+            .bg(theme::surface())
+            .border_1()
             .border_color(border_color)
-            .hover(|style| style.bg(theme::border()))
+            .hover(|style| style.border_color(theme::text_faint()))
             // `Input` 只有 32px 高、左右还各让出 12px 内边距，点这些空白不会聚焦；
-            // 整条胶囊转发一次焦点，点哪儿都算点进搜索框（点在 `Input` 内部时这次 `focus` 幂等）。
+            // 整条转发一次焦点，点哪儿都算点进搜索框（点在 `Input` 内部时这次 `focus` 幂等）。
             .cursor_text()
             .on_mouse_down(MouseButton::Left, {
                 let input = self.input.clone();
@@ -188,12 +187,22 @@ impl Render for SearchBox {
                     input.update(cx, |input, cx| input.focus(window, cx));
                 }
             })
+            // `//` 前缀：字段语言的一部分，不额外占一个图标
+            .child(
+                div()
+                    .flex_none()
+                    .pl(px(theme::GAP_MD))
+                    .font(theme::field_font())
+                    .text_size(px(theme::FONT_CAPTION))
+                    .text_color(theme::text_faint())
+                    .child("//"),
+            )
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    // `Input` 是组件库写死的 32px 定高元素，在 36px 的壳里要显式居中。
+                    // `Input` 是组件库写死的定高元素，在壳里要显式居中。
                     .flex()
                     .items_center()
                     .pl(px(input_left))
@@ -236,12 +245,12 @@ impl Render for SearchBox {
 mod tests {
     // 不写 `use super::*`：`platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
 
-    /// 搜索框底色与组件库暗色主题下 `Input` 文字色的对比度。
-    /// 文字色来自组件库全局态而不是 `crate::theme`；`platform::init` 被切回亮色时输入文字会隐形。
+    /// 两套主题下，组件库 `Input` 的文字色都要读过搜索框底色。
+    /// 文字色来自组件库全局态而不是 `crate::theme`，两边的明暗必须一起切。
     #[test]
-    fn input_text_reads_against_the_search_pill() {
+    fn input_text_reads_against_the_search_pill_in_both_themes() {
         use crate::platform::{Rgba, rgb};
-        use crate::theme;
+        use crate::theme::{self, Appearance};
 
         // theme.rs 里那份 WCAG 计算是 `#[cfg(test)]` 私有函数，跨不到这里。
         fn luminance(c: Rgba) -> f32 {
@@ -254,43 +263,31 @@ mod tests {
             }
             0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b)
         }
-        fn over(fg: Rgba, bg: Rgba) -> Rgba {
-            Rgba {
-                r: fg.r * fg.a + bg.r * (1.0 - fg.a),
-                g: fg.g * fg.a + bg.g * (1.0 - fg.a),
-                b: fg.b * fg.a + bg.b * (1.0 - fg.a),
-                a: 1.0,
-            }
-        }
         fn ratio(fg: Rgba, bg: Rgba) -> f32 {
-            let base = theme::bg();
-            let bg = over(bg, base);
-            let fg = over(fg, bg);
             let (l1, l2) = (luminance(fg), luminance(bg));
             let (hi, lo) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
             (hi + 0.05) / (lo + 0.05)
         }
 
-        let pill = theme::elevated();
-
-        // 组件库暗色主题下 `Input` 的文字色是 `neutral-50`（`#fafafa`）。
-        let input_text_dark = rgb(0xfafafa);
-        assert!(
-            ratio(input_text_dark, pill) >= 4.5,
-            "组件库暗色下的输入文字对搜索框底色只有 {:.2}:1，低于 AA ——\
-             说明 platform::init 没有把组件库切到 ThemeMode::Dark",
-            ratio(input_text_dark, pill)
-        );
-
-        // 反向锁定亮色文字色在这个底上确实不达标。
+        // 组件库亮色主题下 `Input` 的文字色是 `neutral-900`（`#0a0a0a`），深色下是近白。
         let input_text_light = rgb(0x0a0a0a);
+        let input_text_dark = rgb(0xfafafa);
+        let light = rgb(theme::palette_for(Appearance::Light).panel);
+        let dark = rgb(theme::palette_for(Appearance::Dark).panel);
+
         assert!(
-            ratio(input_text_light, pill) < 4.5,
-            "近黑文字压在 {} 上竟然过了 AA（{:.2}:1）——\
-             如果这是真的，说明搜索框底色被调亮了，\
-             platform::init 里那次 ThemeMode::Dark 的必要性需要重新评估",
-            "#282828",
-            ratio(input_text_light, pill)
+            ratio(input_text_light, light) >= 4.5,
+            "组件库亮色下的输入文字对搜索框底色只有 {:.2}:1，低于 AA",
+            ratio(input_text_light, light)
+        );
+        assert!(
+            ratio(input_text_dark, dark) >= 4.5,
+            "组件库深色下的输入文字对搜索框底色只有 {:.2}:1，低于 AA",
+            ratio(input_text_dark, dark)
+        );
+        assert!(
+            ratio(input_text_dark, light) < 4.5 && ratio(input_text_light, dark) < 4.5,
+            "输入文字色与主题明暗对不上：亮色文字压在亮底、或深色文字压在深底上"
         );
     }
 }

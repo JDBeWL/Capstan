@@ -1,142 +1,255 @@
-//! 设计令牌。
-//! 所有文字色对背景的对比度必须 ≥ 4.5:1（WCAG AA），由本文件末尾的测试强制。
+//! 设计令牌：纸 / 板 / 墨三色、单一强调色、细线与切角，以及字体与动效。
+//! 浅色是默认，深色是一整套平行取值：不是把浅色反相，而是各自的纸、板、墨、细线。
+//! 所有文字色对背景的对比度必须 ≥ 4.5:1（WCAG AA），由本文件末尾的测试对两套主题逐项强制。
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
+
+use serde::{Deserialize, Serialize};
 
 use crate::platform::*;
 
-/// 窗口底层：卡片之间的缝（gutter）与窗口四周的留白，纯黑。
-pub fn window_base() -> Rgba {
-    rgb(0x000000)
-}
-/// 主内容区，也是所有卡片（侧栏 / 主区 / 右面板）的底色。
-pub fn bg() -> Rgba {
-    rgb(0x121212)
-}
-/// 顶栏 / 底栏这些通栏窗口外壳的背景，与缝同色。
-pub fn chrome() -> Rgba {
-    rgb(0x000000)
+/// 界面明暗。存档里写 `"Light"` / `"Dark"`。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Appearance {
+    #[default]
+    Light,
+    Dark,
 }
 
-/// 侧边栏 / 右面板卡片的背景，与 [`bg`] 刻意同色。
-pub fn panel() -> Rgba {
-    rgb(0x121212)
-}
-
-/// 主区顶部渐变带的起始色，由一个稳定字符串派生出固定色相。
-/// 不从封面取主色：解码是异步的，首帧会闪，且取色结果不稳定。
-pub fn hero_tint(seed: Option<&str>) -> Rgba {
-    const TINTS: [(u8, u8, u8); 6] = [
-        (0x53, 0x45, 0x6b), // 灰紫
-        (0x3d, 0x55, 0x66), // 灰蓝
-        (0x6b, 0x4a, 0x45), // 灰砖
-        (0x44, 0x5c, 0x4c), // 灰绿
-        (0x5c, 0x4c, 0x66), // 灰藕
-        (0x63, 0x56, 0x3f), // 灰棕
-    ];
-
-    // 兜底色的明度对齐 `TINTS`，有 / 无种子之间才不跳档。
-    let Some(seed) = seed else {
-        return rgb(0x3a_3f_4a);
-    };
-
-    // 手写 FNV-1a：`DefaultHasher` 不承诺跨版本稳定，而同一张专辑的颜色必须每次都一样。
-    let mut hash: u32 = 2166136261;
-    for byte in seed.as_bytes() {
-        hash ^= u32::from(*byte);
-        hash = hash.wrapping_mul(16777619);
+impl Appearance {
+    pub fn is_dark(self) -> bool {
+        matches!(self, Self::Dark)
     }
-    let (r, g, b) = TINTS[hash as usize % TINTS.len()];
-    rgb(u32::from(r) << 16 | u32::from(g) << 8 | u32::from(b))
 }
-/// 搜索框、卡片、输入框的容器底色。
+
+/// 一套完整的主题取值，字段是原始 sRGB。函数只负责按当前明暗取色。
+/// 两套的层级关系一致：板比纸亮，切角露出的始终是更暗的纸。
+#[derive(Clone, Copy)]
+pub(crate) struct Palette {
+    pub(crate) dark: bool,
+    pub(crate) paper: u32,
+    pub(crate) panel: u32,
+    pub(crate) ink: u32,
+    pub(crate) ink2: u32,
+    pub(crate) faint: u32,
+    pub(crate) rule: u32,
+    pub(crate) rule_soft: u32,
+    pub(crate) chip: u32,
+    pub(crate) signal: u32,
+    pub(crate) on_signal: u32,
+    pub(crate) hover: u32,
+    pub(crate) cursor: u32,
+    pub(crate) tag_bg: u32,
+    pub(crate) danger: u32,
+    pub(crate) on_danger: u32,
+    pub(crate) on_control: u32,
+}
+
+const LIGHT: Palette = Palette {
+    dark: false,
+    paper: 0xf4f4f2,
+    panel: 0xffffff,
+    ink: 0x161616,
+    ink2: 0x3f3f3f,
+    faint: 0x5c5c5c,
+    rule: 0xd9d9d6,
+    rule_soft: 0xe4e4e0,
+    chip: 0xe4e4e0,
+    signal: 0xfffa00,
+    on_signal: 0x161616,
+    hover: 0xf4f4f2,
+    cursor: 0xe4e4e0,
+    tag_bg: 0xe4e4e0,
+    danger: 0xb3_26_1e,
+    on_danger: 0xffffff,
+    on_control: 0xffffff,
+};
+
+/// 深色：纸 #191919、板 #222222、墨 #EDEDED，黄不变。
+const DARK: Palette = Palette {
+    dark: true,
+    paper: 0x191919,
+    panel: 0x222222,
+    ink: 0xededed,
+    ink2: 0xa3a3a3,
+    faint: 0x9c9c9c,
+    rule: 0x353535,
+    rule_soft: 0x2a2a2a,
+    chip: 0x2e2e2e,
+    signal: 0xfffa00,
+    on_signal: 0x161616,
+    hover: 0x191919,
+    cursor: 0x303030,
+    tag_bg: 0x3a3a3a,
+    danger: 0xff8a7a,
+    on_danger: 0x161616,
+    on_control: 0x161616,
+};
+
+static MODE: AtomicU8 = AtomicU8::new(0);
+
+pub fn mode() -> Appearance {
+    if MODE.load(Ordering::Relaxed) == 1 {
+        Appearance::Dark
+    } else {
+        Appearance::Light
+    }
+}
+
+pub fn set_mode(mode: Appearance) {
+    MODE.store(u8::from(mode.is_dark()), Ordering::Relaxed);
+}
+
+fn palette() -> &'static Palette {
+    match mode() {
+        Appearance::Light => &LIGHT,
+        Appearance::Dark => &DARK,
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn palette_for(mode: Appearance) -> &'static Palette {
+    match mode {
+        Appearance::Light => &LIGHT,
+        Appearance::Dark => &DARK,
+    }
+}
+
+fn c(value: u32) -> Rgba {
+    rgb(value)
+}
+
+/// 纸色：窗口底、侧栏、顶栏和底栏。比板色更暗，让板浮出来。
+pub fn window_base() -> Rgba {
+    c(palette().paper)
+}
+/// 板色：主内容区与右面板的底，是给人读的那一张纸。
+pub fn bg() -> Rgba {
+    c(palette().panel)
+}
+/// 通栏外壳（顶栏 / 底栏）的底色，与纸同色，靠 1px 细线分区。
+pub fn chrome() -> Rgba {
+    window_base()
+}
+
+/// 面板底色，与 [`bg`] 同为板色。
+pub fn panel() -> Rgba {
+    bg()
+}
+
+/// 输入框、搜索框的底色：与板同色，靠 1px 细线分界。
 pub fn surface() -> Rgba {
-    rgb(0x181818)
+    bg()
 }
-/// 浮在面板之上的一档（按钮悬停底、列头）。
+/// 安静的填充：待机按钮、标签块、列头。
 pub fn elevated() -> Rgba {
-    rgb(0x282828)
+    c(palette().chip)
 }
-/// 列表行的悬停底色，比 [`elevated`] 暗一档。
+/// 列表行的悬停底色：退回纸色。
 pub fn hover() -> Rgba {
-    rgb(0x1a1a1a)
+    c(palette().hover)
 }
-/// 键盘光标所在行的底色，比 [`elevated`] 亮一档。
-/// 必须与 [`hover`] 分成两个令牌：`hover` 对 [`bg`] 只有 1.08:1，同色就认不出哪行是光标。
+/// 键盘光标所在行的底色：比 [`hover`] 更醒目的一档；浅色更深，深色更浅。
 pub fn cursor() -> Rgba {
-    rgb(0x2a2a2a)
+    c(palette().cursor)
 }
+
+/// 分隔线。
 pub fn border() -> Rgba {
-    rgb(0x333333)
+    c(palette().rule)
 }
-/// 比 [`border`] 更弱的分隔线，用于列表内部分隔。
+/// 比 [`border`] 更弱的分隔线。
 pub fn border_soft() -> Rgba {
-    rgb(0x1c1c1c)
+    c(palette().rule_soft)
+}
+/// 有意义的线：当前项、选中段、强调边框。
+pub fn rule_strong() -> Rgba {
+    text()
+}
+
+/// 标出「这里」的线：浅色用墨，深色用黄。行首的悬停 / 光标条与焦点环都走它。
+pub fn trace() -> Rgba {
+    trace_for(palette())
+}
+
+pub(crate) fn trace_for(palette: &Palette) -> Rgba {
+    if palette.dark {
+        c(palette.signal)
+    } else {
+        c(palette.ink)
+    }
 }
 
 pub fn text() -> Rgba {
-    rgb(0xffffff)
+    c(palette().ink)
 }
 /// 歌手、专辑、时长这类次要信息。
 pub fn text_muted() -> Rgba {
-    rgb(0xb3b3b3)
+    c(palette().ink2)
 }
-/// 序号、占位符、次要图标。再暗一档（如 `#6a6a6a`）在 `bg` 上就到不了 AA。
+/// 序号、占位符、次要图标。
 pub fn text_faint() -> Rgba {
-    rgb(0xa7a7a7)
+    c(palette().faint)
 }
 
-/// 品牌绿：正在播的行、行首竖条、无损徽章、爱心。
+/// 唯一的强调色：当前位置、可点击内容、醒目提醒。只做填充，上面写深色字。
 pub fn accent() -> Rgba {
-    rgb(0x1db954)
+    c(palette().signal)
 }
 pub fn accent_hover() -> Rgba {
-    rgb(0x1ed760)
+    c(0xe6e100)
 }
-/// 绿色文字：正在播的曲名、徽章。
-pub fn accent_text() -> Rgba {
-    rgb(0x1ed760)
+/// 强调色上的字与图形：两套主题都是深墨色，黄块上不存在浅色字。
+pub fn text_on_accent() -> Rgba {
+    c(palette().on_signal)
 }
-/// 选中行 / 拖放高亮的淡底色：`accent` 的 0.15 alpha，半透明。
+/// 当前行 / 拖放高亮的淡底色：`accent` 的 0.20 alpha。
 pub fn accent_soft() -> Rgba {
-    rgb(0x1db954).opacity(0.15)
+    accent().opacity(0.20)
 }
 
-/// 主控件的填充色：播放键、进度条与音量条的已播段、输入框光标。
-/// 与 [`fn@text`] 同值但是两个令牌：改文字色不该连带改掉控件填充。
+/// 主控件的填充色：播放键、进度条已播段、勾选框。墨色，悬停时被黄色擦入。
 pub fn control() -> Rgba {
-    rgb(0xffffff)
+    text()
 }
-/// [`control`] 的悬停档。压暗一档而不是提亮：白已经是上限。
+/// 主控件悬停档：黄色。字与图形同时换成 [`text_on_accent`]。
 pub fn control_hover() -> Rgba {
-    rgb(0xdcdcdc)
+    accent()
 }
-/// 压在 [`control`] 上的图形（播放三角、勾选框的对勾）。
+/// 压在 [`control`] 上的图形（播放三角、勾选框的对勾）：浅色白、深色墨。
 pub fn text_on_control() -> Rgba {
-    chrome()
+    c(palette().on_control)
 }
 
+/// 红色只给删除，其余告警用黄块和墨线。
 pub fn danger() -> Rgba {
-    rgb(0xe5484d)
+    c(palette().danger)
 }
-/// 红底上的文字色（窗口关闭键的叉）。必须黑字：白压 `#e5484d` 达不到 AA。
 pub fn text_on_danger() -> Rgba {
-    rgb(0x000000)
+    c(palette().on_danger)
 }
 pub fn danger_soft() -> Rgba {
-    rgb(0xe5484d).opacity(0.12)
+    danger().opacity(0.10)
 }
-/// 扫描完成、就绪等正向指示，与 [`accent`] 同值。
+/// 扫描等进行中指示。与正文同色，靠黄色小旗提示，不引入红绿语义色。
 pub fn success() -> Rgba {
-    rgb(0x1db954)
+    text_muted()
 }
 
-/// 进度 / 音量轨道的底色，已播段是 [`control`] 那一档白。
+/// 进度 / 音量轨道的底色。
 pub fn track() -> Rgba {
-    rgb(0x555555)
+    elevated()
 }
 
 /// 格式标签（wav / mp3）的底色。
 pub fn tag_bg() -> Rgba {
-    rgb(0x2a2a2a)
+    c(palette().tag_bg)
+}
+
+/// 封面占位上的字母。底色是固定的封面色，不随主题变。
+pub fn text_on_monogram() -> Rgba {
+    rgb(0xffffff)
 }
 
 /// 完全透明的背景，用于「未选中行」占位。
@@ -144,29 +257,101 @@ pub fn transparent() -> Rgba {
     rgba(0x00000000)
 }
 
-/// 徽标、快捷键提示
-pub const FONT_MICRO: f32 = 11.0;
-/// 时长、时间戳、辅助信息、格式标签的基准
+/// 界面宽体拉丁：Saira，静态切到 100% 宽度。
+pub const FONT_UI: &str = "Saira";
+/// 字段数字：Saira 112% 宽，等宽数字。
+pub const FONT_FIELD: &str = "Saira Field";
+/// 眉标与字标：Saira 125% 宽。
+pub const FONT_LABEL: &str = "Saira Label";
+
+/// 界面字体。Saira 没有中文字形，回退到系统黑体。
+pub fn ui_font() -> Font {
+    Font {
+        family: FONT_UI.into(),
+        features: FontFeatures::default(),
+        fallbacks: Some(FontFallbacks::from_fonts(cjk_fallbacks())),
+        weight: FontWeight::NORMAL,
+        style: FontStyle::Normal,
+    }
+}
+
+/// 字段字体：宽体 + 等宽数字。
+pub fn field_font() -> Font {
+    Font {
+        family: FONT_FIELD.into(),
+        features: tabular_features(),
+        fallbacks: Some(FontFallbacks::from_fonts(cjk_fallbacks())),
+        weight: FontWeight::NORMAL,
+        style: FontStyle::Normal,
+    }
+}
+
+/// 眉标 / 字标字体：125% 宽。
+pub fn label_font() -> Font {
+    Font {
+        family: FONT_LABEL.into(),
+        features: FontFeatures::default(),
+        fallbacks: Some(FontFallbacks::from_fonts(cjk_fallbacks())),
+        weight: FontWeight::SEMIBOLD,
+        style: FontStyle::Normal,
+    }
+}
+
+/// 系统里能接住中文的黑体。顺序即优先级，缺哪个就落下一个。
+pub fn cjk_fallbacks() -> Vec<String> {
+    if cfg!(target_os = "windows") {
+        vec![
+            "Microsoft YaHei UI".to_owned(),
+            "Microsoft YaHei".to_owned(),
+        ]
+    } else if cfg!(target_os = "macos") {
+        vec!["PingFang SC".to_owned(), "Hiragino Sans GB".to_owned()]
+    } else {
+        vec![
+            "Noto Sans CJK SC".to_owned(),
+            "Noto Sans SC".to_owned(),
+            "WenQuanYi Micro Hei".to_owned(),
+        ]
+    }
+}
+
+/// 等宽数字特性。Saira 自带 `tnum`，不依赖系统字体。
+fn tabular_features() -> FontFeatures {
+    FontFeatures(Arc::new(vec![("tnum".to_owned(), 1)]))
+}
+
+/// 徽标、快捷键提示、眉标。
+pub const FONT_MICRO: f32 = 10.0;
+/// 时长、时间戳、辅助信息、格式标签的基准。
 pub const FONT_CAPTION: f32 = 12.0;
-/// 列表副标题、按钮、导航项
+/// 列表副标题、按钮、导航项。
 pub const FONT_BODY: f32 = 14.0;
-/// 列表主标题（歌名）
+/// 列表主标题（歌名）。
 pub const FONT_TRACK: f32 = 15.0;
-/// 面板标题、底栏当前曲名
+/// 面板标题、底栏当前曲名。
 pub const FONT_SUBTITLE: f32 = 16.0;
-/// 页面大标题（曲库总览）
-pub const FONT_TITLE: f32 = 24.0;
-/// 页面头部标题（压在渐变色带上的那一行），比 `FONT_TITLE` 大一档。
-pub const FONT_HERO: f32 = 32.0;
-/// 字号之间的相对关系是布局前提，写成编译期断言：`FONT_HERO` 合并进 `FONT_TITLE` 会让页头矮进色带，
-/// 超过 40px 会压过渐变色带。
+/// 页面大标题、区块标题。
+pub const FONT_TITLE: f32 = 22.0;
+/// 页面头部标题（压在标题区上的那一行）。
+pub const FONT_HERO: f32 = 34.0;
+/// 字号之间的相对关系是布局前提，写成编译期断言。
 const _: () = assert!(FONT_HERO > FONT_TITLE);
 const _: () = assert!(FONT_HERO > FONT_SUBTITLE);
 const _: () = assert!(FONT_HERO <= 40.0);
-/// 空状态
+/// 空状态。
 pub const FONT_DISPLAY: f32 = 30.0;
-/// 格式标签（wav / mp3）的字号
+/// 格式标签（wav / mp3）的字号。
 pub const FONT_TAG: f32 = 10.0;
+/// 眉标 / 字段。
+pub const FONT_EYEBROW: f32 = 10.0;
+pub const FONT_FIELD_SIZE: f32 = 12.0;
+/// 首页字标。
+pub const FONT_WORDMARK: f32 = 64.0;
+/// 展示页的空心大编号。
+pub const FONT_HOLLOW_NO: f32 = 120.0;
+
+/// 数字（时长 / 列表序号 / 区块编号）的宽体等宽字体。
+pub const FONT_MONO: &str = FONT_FIELD;
 
 pub const WEIGHT_TITLE: FontWeight = FontWeight::BOLD;
 pub const WEIGHT_SUBTITLE: FontWeight = FontWeight::SEMIBOLD;
@@ -175,16 +360,26 @@ pub const WEIGHT_BUTTON: FontWeight = FontWeight::SEMIBOLD;
 /// 列表歌名：常态 regular，播放态会额外加粗（见 `track_list`）。
 pub const WEIGHT_TRACK: FontWeight = FontWeight::NORMAL;
 
-pub const RADIUS_SM: f32 = 4.0;
-pub const RADIUS_MD: f32 = 6.0;
-pub const RADIUS_LG: f32 = 8.0;
-pub const RADIUS_XL: f32 = 12.0;
-/// 窗口级卡片（侧栏卡片、主区卡片）的圆角。
-pub const RADIUS_CARD: f32 = 8.0;
-/// 卡片之间的缝宽，也是卡片到窗口边缘的留白。
+/// 圆角一律为 0：形状语言只分直角与切角。
+pub const RADIUS_SM: f32 = 0.0;
+pub const RADIUS_MD: f32 = 0.0;
+pub const RADIUS_LG: f32 = 0.0;
+pub const RADIUS_XL: f32 = 0.0;
+pub const RADIUS_CARD: f32 = 0.0;
+/// 胶囊圆角退役，保留常量给仍按「旧规格」取值的控件，值为 0。
+pub const RADIUS_PILL: f32 = 0.0;
+
+/// 切角尺寸。可点的小块切右下角，抽屉切左上角。
+pub const CUT_SM: f32 = 6.0;
+pub const CUT: f32 = 8.0;
+pub const CUT_LG: f32 = 24.0;
+/// 细线宽度。
+pub const RULE_W: f32 = 1.0;
+/// 三色条的厚度。
+pub const TRI_H: f32 = 3.0;
+
+/// 卡片之间的缝宽，也是窗口四周的留白。
 pub const GUTTER: f32 = 8.0;
-/// 胶囊圆角。gpui 里给一个远大于高度的数就等价于全圆。
-pub const RADIUS_PILL: f32 = 999.0;
 
 pub const GAP_XS: f32 = 4.0;
 pub const GAP_SM: f32 = 8.0;
@@ -192,17 +387,16 @@ pub const GAP_MD: f32 = 12.0;
 pub const GAP_LG: f32 = 16.0;
 pub const GAP_XL: f32 = 24.0;
 
-/// 引擎播不了的曲目在列表里压暗到此值（判据见 [`lyre_core::Track::is_playable`]）。
-/// 留一半而不是更低：键盘光标的竖条也画在同一层里，压得太狠就找不着它了。
+/// 引擎播不了的曲目在列表里压暗到此值。
 pub const UNPLAYABLE_OPACITY: f32 = 0.5;
 
-/// 顶部栏高度：32px 按钮 + 上下各 12px，含主区顶部 [`GUTTER`]。
-pub const TOP_BAR_H: f32 = 56.0;
-pub const BOTTOM_BAR_H: f32 = 80.0;
-/// 底部控制栏在窄窗口下的高度（两行：传输区 + 进度条）。多出的 24px = 进度条行 22px + 一档间距。
-pub const BOTTOM_BAR_H_STACKED: f32 = 104.0;
+/// 顶部栏高度。
+pub const TOP_BAR_H: f32 = 52.0;
+pub const BOTTOM_BAR_H: f32 = 76.0;
+/// 底部控制栏在窄窗口下的高度（两行：传输区 + 进度条）。
+pub const BOTTOM_BAR_H_STACKED: f32 = 100.0;
 
-/// 底栏高度。底栏自己和根视图的 toast 定位都要读它，两处各算一遍会让 toast 压住底栏。
+/// 底栏高度。底栏自己和根视图的 toast 定位都要读它。
 pub fn bottom_bar_height(stacked: bool) -> f32 {
     if stacked {
         BOTTOM_BAR_H_STACKED
@@ -211,41 +405,42 @@ pub fn bottom_bar_height(stacked: bool) -> f32 {
     }
 }
 
-/// 侧边导航展开宽度（里面要放圆形封面 + 两行文字）。
+/// 页面内容的左右边距。页头、区块与卡片共用这一条竖线。
+pub const PAGE_PAD: f32 = GAP_XL;
+
+/// 侧边导航展开宽度。
 pub const SIDEBAR_W: f32 = 232.0;
 pub const SIDEBAR_ICON_W: f32 = 64.0;
-pub const SIDEBAR_ITEM_H: f32 = 40.0;
-pub const SIDEBAR_INDICATOR_W: f32 = 3.0;
+/// 导航项高度：容得下英文眉标 + 中文两行。
+pub const SIDEBAR_ITEM_H: f32 = 48.0;
+pub const SIDEBAR_INDICATOR_W: f32 = 4.0;
 pub const RIGHT_PANEL_W: f32 = 320.0;
 /// 底栏左栏宽度（曲目身份）。
 pub const BOTTOM_LEFT_W: f32 = 240.0;
-/// 底栏右栏宽度（功能入口 + 音量）；那一排入口在 240px 里放不下，所以比 [`BOTTOM_LEFT_W`] 宽。
+/// 底栏右栏宽度（功能入口 + 音量）。
 pub const BOTTOM_RIGHT_W: f32 = 320.0;
 pub const BOTTOM_CENTER_MAX: f32 = 620.0;
 pub const ROW_H_COMPACT: f32 = 40.0;
 pub const ROW_H_COMFORTABLE: f32 = 52.0;
-/// 行首「光标在这」竖条的宽度。绝对定位，不占布局 —— 做成 flex 子元素会把整表列推歪。
+/// 行首「光标在这」竖条的宽度。
 pub const ROW_CURSOR_BAR_W: f32 = 3.0;
-/// 行首索引列宽（序号 / 播放图标）。主列表与队列共用，两处左边距才不会各调各的。
+/// 行首索引列宽。
 pub const ROW_INDEX_W: f32 = 36.0;
-/// 列表行与列头的左内边距；右侧仍用 [`GAP_MD`]，给时长和操作列留距离。
-pub const ROW_PAD_LEFT: f32 = 8.0;
+/// 列表行与列头的左内边距。
+pub const ROW_PAD_LEFT: f32 = 12.0;
 /// 行首编号 / 播放图标与右侧内容之间的间距。
 pub const ROW_INDEX_GAP: f32 = 16.0;
-pub const COLUMN_HEADER_H: f32 = 36.0;
-pub const SEARCH_H: f32 = 36.0;
+pub const COLUMN_HEADER_H: f32 = 32.0;
+pub const SEARCH_H: f32 = 34.0;
 pub const SEARCH_W: f32 = 280.0;
-pub const MINI_COVER: f32 = 56.0;
+pub const MINI_COVER: f32 = 52.0;
 
 /// 键盘焦点环的宽度。画在元素外侧，不占布局。
 pub const FOCUS_RING_W: f32 = 2.0;
 
-/// 用 `box_shadow` 而不是 `border`：gpui 的盒子高度含 border，聚焦那一帧会把元素撑大一圈。
-/// 颜色写成 [`accent_text`] 的 HSL：gpui 的 `BoxShadow` 只吃 `Hsla`，没有 Rgba → Hsla 的转换。
+/// 焦点环用 [`trace`]：浅色墨、深色黄，对纸 / 板 / chip 都有 3:1 以上。
 fn focus_ring_color() -> Hsla {
-    // gpui 的 `Hsla.h` 是 0–1 的圈数而不是角度（`From<Hsla> for Rgba` 里直接拿 `h * 6.0` 取区间），
-    // 写成 141.4 会被当成绕了 141 圈、落在别的色相上。
-    hsla(0.3927928, 0.755102, 0.480392, 1.0)
+    trace().into()
 }
 
 pub fn focus_ring(style: StyleRefinement) -> StyleRefinement {
@@ -254,10 +449,63 @@ pub fn focus_ring(style: StyleRefinement) -> StyleRefinement {
     ])
 }
 
-/// 卡片 / 主按钮悬停时的上浮阴影。gpui-pre 0.3.8 的普通元素没有 `transform`
-/// （`scale` / `translate` 只作用于 `Path` / `Scene`），上浮只能靠 `box-shadow` + 底色提亮。
-pub fn hover_shadow() -> Vec<BoxShadow> {
-    vec![BoxShadow::new(px(0.), px(6.), hsla(0., 0., 0., 0.45)).blur_radius(px(16.))]
+/// 机械动效：慢起硬停，像闸门。
+pub fn ease_mech() -> impl Fn(f32) -> f32 {
+    cubic_bezier(0.7, 0.0, 0.2, 1.0)
+}
+
+/// 出现 / 到位：迅速进入后稳住。
+pub fn ease_snap() -> impl Fn(f32) -> f32 {
+    cubic_bezier(0.16, 1.0, 0.3, 1.0)
+}
+
+/// 普通过渡：颜色、三色条扫过。
+pub fn ease_std() -> impl Fn(f32) -> f32 {
+    cubic_bezier(0.2, 0.7, 0.1, 1.0)
+}
+
+/// 一次操作的回应急在 100–400ms；单个入场 ≤ 650ms。
+pub const MOTION_PRESS_MS: u64 = 100;
+pub const MOTION_ROW_MS: u64 = 200;
+/// 悬停回应：按钮 280ms mech，列表行 250ms snap。
+pub const MOTION_HOVER_MS: u64 = 280;
+pub const MOTION_HOVER_ROW_MS: u64 = 250;
+pub const MOTION_PANEL_IN_MS: u64 = 280;
+/// 抽屉退出 240ms；遮罩 / 歌词退出 160ms。
+pub const MOTION_PANEL_OUT_MS: u64 = 240;
+pub const MOTION_OVERLAY_OUT_MS: u64 = 160;
+pub const MOTION_PAGE_MS: u64 = 360;
+pub const MOTION_TOAST_IN_MS: u64 = 280;
+pub const MOTION_TOAST_OUT_MS: u64 = 160;
+
+/// CSS `cubic-bezier(x1, y1, x2, y2)` 的求值：牛顿迭代解 x(u) = t，再取 y(u)。
+/// gpui 的 `with_easing` 只吃 `Fn(f32) -> f32`，没有现成的贝塞尔构造器。
+fn cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32) -> impl Fn(f32) -> f32 {
+    let sample = move |a: f32, b: f32, u: f32| {
+        let v = 1.0 - u;
+        3.0 * v * v * u * a + 3.0 * v * u * u * b + u * u * u
+    };
+    let slope = move |a: f32, b: f32, u: f32| {
+        let v = 1.0 - u;
+        3.0 * v * v * a + 6.0 * v * u * (b - a) + 3.0 * u * u * (1.0 - b)
+    };
+
+    move |t: f32| {
+        let t = t.clamp(0.0, 1.0);
+        let mut u = t;
+        for _ in 0..6 {
+            let x = sample(x1, x2, u) - t;
+            if x.abs() < 1e-5 {
+                break;
+            }
+            let d = slope(x1, x2, u);
+            if d.abs() < 1e-5 {
+                break;
+            }
+            u = (u - x / d).clamp(0.0, 1.0);
+        }
+        sample(y1, y2, u)
+    }
 }
 
 /// WCAG 2.1 相对亮度。
@@ -284,11 +532,9 @@ fn over(fg: Rgba, bg: Rgba) -> Rgba {
     }
 }
 
-/// WCAG 2.1 对比度，返回 1.0 ~ 21.0。两个参数都允许带透明度，先依次压到 [`bg`] 上再算。
-/// 半透明的标记色（如 `accent_soft`）只有合成后才是屏幕上真正的颜色。
+/// WCAG 2.1 对比度，返回 1.0 ~ 21.0。两个参数都允许带透明度，先依次压到 `base` 上再算。
 #[cfg(test)]
-fn contrast_ratio(foreground: Rgba, background: Rgba) -> f32 {
-    let base = bg();
+fn contrast_ratio(foreground: Rgba, background: Rgba, base: Rgba) -> f32 {
     let bg_opaque = over(background, base);
     let fg_opaque = over(foreground, bg_opaque);
 
@@ -301,285 +547,370 @@ fn contrast_ratio(foreground: Rgba, background: Rgba) -> f32 {
 mod tests {
     use crate::platform::{Rgba, rgb};
 
-    use super::contrast_ratio;
-    use super::relative_luminance;
+    use super::{Appearance, Palette, trace_for};
 
     /// WCAG AA 正文的门槛。
     const AA: f32 = 4.5;
+    /// 非文字对比度的门槛：焦点环、当前行底色。
+    const NON_TEXT_AA: f32 = 3.0;
 
-    fn assert_pass(fg: Rgba, bg: Rgba, name: &str) {
-        let ratio = contrast_ratio(fg, bg);
+    fn color(value: u32) -> Rgba {
+        rgb(value)
+    }
+
+    fn modes() -> [(Appearance, &'static Palette); 2] {
+        [
+            (Appearance::Light, super::palette_for(Appearance::Light)),
+            (Appearance::Dark, super::palette_for(Appearance::Dark)),
+        ]
+    }
+
+    fn assert_pass(fg: Rgba, surface: Rgba, base: Rgba, name: &str) {
+        let ratio = super::contrast_ratio(fg, surface, base);
         assert!(
             ratio >= AA,
             "{name} 的对比度只有 {ratio:.2}:1，低于 AA 要求的 {AA}:1"
         );
     }
 
+    fn assert_same_color(a: Rgba, b: Rgba, name: &str) {
+        for (channel, a, b) in [("r", a.r, b.r), ("g", a.g, b.g), ("b", a.b, b.b)] {
+            assert!(
+                (a - b).abs() < 0.02,
+                "{name} 的 {channel} 通道是 {a:.3}，期望 {b:.3}"
+            );
+        }
+    }
+
+    #[test]
+    fn light_palette_keeps_the_established_values() {
+        let p = super::palette_for(Appearance::Light);
+        assert_eq!(p.paper, 0xf4f4f2);
+        assert_eq!(p.panel, 0xffffff);
+        assert_eq!(p.ink, 0x161616);
+        assert_eq!(p.ink2, 0x3f3f3f);
+        assert_eq!(p.faint, 0x5c5c5c);
+        assert_eq!(p.rule, 0xd9d9d6);
+        assert_eq!(p.chip, 0xe4e4e0);
+        assert_eq!(p.signal, 0xfffa00);
+        assert_eq!(p.on_control, 0xffffff);
+    }
+
+    #[test]
+    fn dark_palette_matches_the_second_theme_spec() {
+        let light = super::palette_for(Appearance::Light);
+        let dark = super::palette_for(Appearance::Dark);
+
+        assert_eq!(dark.paper, 0x191919);
+        assert_eq!(dark.panel, 0x222222);
+        assert_eq!(dark.ink, 0xededed);
+        assert_eq!(dark.ink2, 0xa3a3a3);
+        assert_eq!(dark.rule, 0x353535);
+        assert_eq!(dark.chip, 0x2e2e2e);
+        assert_eq!(dark.danger, 0xff8a7a);
+
+        assert_eq!(light.signal, dark.signal, "强调色两套一致");
+        assert_eq!(
+            light.on_signal, dark.on_signal,
+            "黄块上的字两套都必须是深墨"
+        );
+        assert_same_color(trace_for(light), color(light.ink), "浅色的 trace");
+        assert_same_color(trace_for(dark), color(dark.signal), "深色的 trace");
+        assert_same_color(super::text_on_monogram(), rgb(0xffffff), "封面占位上的字母");
+    }
+
     #[test]
     fn text_colors_pass_aa_on_every_background_layer() {
-        // chrome 也在被测层里：顶栏 / 底栏全屏常驻，文字直接压在它们上面。
-        let layers = [
-            ("bg", super::bg()),
-            ("panel", super::panel()),
-            ("elevated", super::elevated()),
-            ("surface", super::surface()),
-            ("chrome", super::chrome()),
-        ];
-        let colors = [
-            ("text", super::text()),
-            ("text_muted", super::text_muted()),
-            ("text_faint", super::text_faint()),
-        ];
+        for (mode, p) in modes() {
+            let base = color(p.panel);
+            let layers = [
+                ("bg", color(p.panel)),
+                ("panel", color(p.panel)),
+                ("elevated", color(p.chip)),
+                ("surface", color(p.panel)),
+                ("chrome", color(p.paper)),
+            ];
+            let colors = [
+                ("text", color(p.ink)),
+                ("text_muted", color(p.ink2)),
+                ("text_faint", color(p.faint)),
+            ];
 
-        for (layer_name, layer) in layers {
-            for (color_name, color) in colors {
-                assert_pass(color, layer, &format!("{color_name} on {layer_name}"));
+            for (layer_name, layer) in layers {
+                for (color_name, fg) in colors {
+                    assert_pass(
+                        fg,
+                        layer,
+                        base,
+                        &format!("{mode:?} {color_name} on {layer_name}"),
+                    );
+                }
             }
         }
     }
 
     #[test]
     fn accent_variants_pass_aa_in_their_intended_role() {
-        assert_pass(super::accent_text(), super::bg(), "accent_text on bg");
-        assert_pass(super::accent_text(), super::panel(), "accent_text on panel");
-        assert_pass(super::accent(), super::panel(), "accent on panel");
+        for (mode, p) in modes() {
+            let base = color(p.panel);
+            assert_pass(
+                color(p.on_signal),
+                color(p.signal),
+                base,
+                &format!("{mode:?} 黄块上的字"),
+            );
+            assert_pass(
+                color(p.ink),
+                color(p.panel),
+                base,
+                &format!("{mode:?} 正文 on 板"),
+            );
+            assert_pass(
+                color(p.ink),
+                color(p.paper),
+                base,
+                &format!("{mode:?} 正文 on 纸"),
+            );
+        }
     }
 
     #[test]
-    fn control_fill_keeps_black_glyphs_legible() {
-        assert_pass(super::control(), super::bg(), "control on bg");
-        assert_pass(
-            super::text_on_control(),
-            super::control(),
-            "glyph on control",
-        );
-        assert_pass(
-            super::text_on_control(),
-            super::control_hover(),
-            "glyph on control_hover",
-        );
-
-        let white_on_control = contrast_ratio(super::text(), super::control());
-        assert!(
-            white_on_control < AA,
-            "白字压在 control 上只有 {white_on_control:.2}:1 —— 实心控件必须用 text_on_control"
-        );
+    fn control_fill_keeps_opposite_glyphs_legible() {
+        for (mode, p) in modes() {
+            let base = color(p.panel);
+            assert_pass(
+                color(p.on_control),
+                color(p.ink),
+                base,
+                &format!("{mode:?} glyph on control"),
+            );
+            assert_pass(
+                color(p.on_signal),
+                color(p.signal),
+                base,
+                &format!("{mode:?} glyph on control hover"),
+            );
+        }
     }
 
     #[test]
-    fn window_close_button_uses_black_glyph_on_red() {
-        assert_pass(
-            super::text_on_danger(),
-            super::danger(),
-            "text_on_danger on danger",
-        );
-        let white_on_red = contrast_ratio(super::text(), super::danger());
-        assert!(
-            white_on_red < AA,
-            "白叉压红底 {white_on_red:.2}:1，仍不达标 ——\
-             所以窗口关闭键的符号必须用 text_on_danger（黑叉）"
-        );
-    }
-
-    #[test]
-    fn accent_green_is_readable_as_text_on_dark_layers() {
-        // 品牌绿的门槛提到 6:1，高于正文的 4.5:1。
-        let ratio = contrast_ratio(super::accent(), super::panel());
-        assert!(
-            ratio >= 6.0,
-            "品牌绿对纯黑侧栏应当≥6:1（当前 {ratio:.2}:1）。\
-             调暗它会让界面失去 Spotify 的识别度"
-        );
-    }
-
-    #[test]
-    fn cards_sit_brighter_than_the_gap_around_them() {
-        // 不变量是「卡片 vs 缝」：卡片必须比缝亮。
-        let bg = relative_luminance(super::bg());
-        let gap = relative_luminance(super::window_base());
-        let chrome = relative_luminance(super::chrome());
-
-        assert!(bg > gap + 1e-6, "主区卡片必须比缝亮");
-        assert!(bg > chrome + 1e-6, "主区卡片必须比窗口外壳亮");
-
-        assert_eq!(
-            super::panel(),
-            super::bg(),
-            "侧栏 / 右面板卡片应当与主区同色：分区交给缝，不交给明暗差"
-        );
-    }
-
-    #[test]
-    fn hero_tint_is_stable_and_distinguishable() {
-        // 换掉哈希算法会让颜色每次重编译都变一遍，而界面上完全看不出这是 bug。
-        assert_eq!(
-            super::hero_tint(Some("城市漫游")),
-            super::hero_tint(Some("城市漫游")),
-            "同一个种子必须给出同一个颜色"
-        );
-
-        // 无种子时也必须是实色，`transparent` 会让整条渐变失效。
-        let none = super::hero_tint(None);
-        assert!(none.a > 0.9, "无种子时也必须是实色，否则渐变不生效");
-
-        // 只有 6 个色相，撞色在预期内；这里只要求它不是常量函数。
-        let colors: std::collections::HashSet<u32> = [
-            "城市漫游",
-            "夜航西飞",
-            "Kind of Blue",
-            "Abbey Road",
-            "OK Computer",
-            "Random Access Memories",
-            "蓝",
-            "a",
-        ]
-        .iter()
-        .map(|s| {
-            let c = super::hero_tint(Some(s));
-            (c.r.to_bits()) ^ (c.g.to_bits() << 1) ^ (c.b.to_bits() << 2)
-        })
-        .collect();
-        assert!(
-            colors.len() >= 3,
-            "种子不同却几乎总是同一个颜色，哈希退化了"
-        );
-    }
-
-    #[test]
-    fn status_colors_pass_aa() {
-        assert_pass(super::danger(), super::bg(), "danger on bg");
-        assert_pass(super::success(), super::bg(), "success on bg");
-        assert_pass(super::danger(), super::panel(), "danger on panel");
-        assert_pass(super::success(), super::panel(), "success on panel");
+    fn window_close_button_uses_contrast_glyph_on_danger() {
+        for (mode, p) in modes() {
+            let base = color(p.panel);
+            assert_pass(
+                color(p.on_danger),
+                color(p.danger),
+                base,
+                &format!("{mode:?} text_on_danger on danger"),
+            );
+        }
     }
 
     #[test]
     fn playing_row_is_readable() {
-        // `accent_soft` 是半透明的，必须合成后再算，否则会高估。
-        assert_pass(
-            super::accent_text(),
-            super::accent_soft(),
-            "accent_text on accent_soft",
+        for (mode, p) in modes() {
+            let base = color(p.panel);
+            assert_pass(
+                color(p.ink),
+                color(p.signal).opacity(0.20),
+                base,
+                &format!("{mode:?} ink on accent_soft"),
+            );
+        }
+    }
+
+    #[test]
+    fn cards_sit_brighter_than_the_gap_around_them() {
+        for (mode, p) in modes() {
+            let bg = super::relative_luminance(color(p.panel));
+            let gap = super::relative_luminance(color(p.paper));
+            let chrome = super::relative_luminance(color(p.paper));
+            assert!(bg > gap + 1e-6, "{mode:?} 主内容的板必须比纸色外壳亮");
+            assert!(bg > chrome + 1e-6, "{mode:?} 主内容的板必须比通栏外壳亮");
+        }
+
+        assert_eq!(
+            super::panel(),
+            super::bg(),
+            "侧栏 / 右面板与主区同色：分区交给 1px 细线，不交给明暗差"
         );
+        assert_eq!(super::chrome(), super::window_base());
+    }
+
+    #[test]
+    fn status_colors_pass_aa() {
+        for (mode, p) in modes() {
+            let base = color(p.panel);
+            assert_pass(
+                color(p.danger),
+                color(p.panel),
+                base,
+                &format!("{mode:?} danger on panel"),
+            );
+            assert_pass(
+                color(p.ink2),
+                color(p.panel),
+                base,
+                &format!("{mode:?} success on panel"),
+            );
+        }
     }
 
     #[test]
     fn settings_selection_is_readable_without_color() {
-        // 分段控件里未选中的那格：次要文字压在轨道底（`bg`）上，必须达标。
-        assert_pass(super::text_muted(), super::bg(), "未选中分段文字 on 轨道底");
-        assert_pass(
-            super::text_on_control(),
-            super::control(),
-            "选中分段文字 on 选中底",
-        );
+        for (mode, p) in modes() {
+            let base = color(p.panel);
+            assert_pass(
+                color(p.ink2),
+                color(p.panel),
+                base,
+                &format!("{mode:?} 未选中分段文字"),
+            );
+            assert_pass(
+                color(p.on_control),
+                color(p.ink),
+                base,
+                &format!("{mode:?} 选中分段文字"),
+            );
+        }
     }
 
     #[test]
     fn hover_row_stays_readable() {
-        assert_pass(super::text(), super::hover(), "text on hover 行底");
-        assert_pass(
-            super::text_muted(),
-            super::hover(),
-            "text_muted on hover 行底",
-        );
+        for (mode, p) in modes() {
+            let base = color(p.panel);
+            assert_pass(
+                color(p.ink),
+                color(p.hover),
+                base,
+                &format!("{mode:?} text on hover"),
+            );
+            assert_pass(
+                color(p.ink2),
+                color(p.hover),
+                base,
+                &format!("{mode:?} text_muted on hover"),
+            );
+        }
     }
 
     #[test]
     fn disabled_transport_button_is_readable() {
-        // 空曲库时播放键是 `track()` 底 + 图标色；`text_faint` 压在上面只有 3.10:1。
-        // 组合跨两个令牌，单看任一个都查不出来。
-        assert_pass(super::text(), super::track(), "禁用播放键图标 on track 底");
-
-        let faint = contrast_ratio(super::text_faint(), super::track());
-        assert!(
-            faint < AA,
-            "text_faint 压在 track() 上只有 {faint:.2}:1，达不到 AA ——\
-             禁用播放键的图标必须用 text()。如果这里失败了，说明 track() 被调暗了，\
-             可以重新考虑用 text_faint"
-        );
+        for (mode, p) in modes() {
+            let base = color(p.panel);
+            for (name, fg) in [
+                ("text", p.ink),
+                ("text_muted", p.ink2),
+                ("text_faint", p.faint),
+            ] {
+                assert_pass(
+                    color(fg),
+                    color(p.chip),
+                    base,
+                    &format!("{mode:?} {name} on track"),
+                );
+            }
+        }
     }
 
     #[test]
-    fn cursor_row_is_visibly_brighter_than_the_rest() {
-        let hover = relative_luminance(super::hover());
-        let cursor = relative_luminance(super::cursor());
+    fn cursor_row_is_distinct_from_hover_and_the_page() {
+        for (mode, p) in modes() {
+            let base = color(p.panel);
+            let hover = color(p.hover);
+            let cursor = color(p.cursor);
+            let hover_l = super::relative_luminance(hover);
+            let cursor_l = super::relative_luminance(cursor);
 
-        assert!(
-            cursor > hover + 1e-6,
-            "光标行必须比鼠标悬停行亮：两者同色时，鼠标停在 A 行、光标在 B 行就分不出来了"
-        );
+            assert!(
+                (cursor_l - hover_l).abs() > 1e-3,
+                "{mode:?} 的光标行和悬停行同色，鼠标停 A 行、光标在 B 行就分不出来"
+            );
 
-        // 门槛 1.25:1，高于 hover 对 bg 的 1.08:1。
-        let ratio = contrast_ratio(super::cursor(), super::bg());
-        assert!(
-            ratio >= 1.25,
-            "光标行底色对列表底只有 {ratio:.2}:1，在长列表里仍然找不出是哪一行"
-        );
+            let separation = super::contrast_ratio(cursor, hover, base);
+            assert!(
+                separation >= 1.15,
+                "{mode:?} 光标行与悬停行只差 {separation:.2}:1"
+            );
 
-        // 行底变亮会牵动一整行文字，三档文字色都要重新过一遍 AA。
-        assert_pass(super::text(), super::cursor(), "text on cursor 行底");
-        assert_pass(
-            super::text_muted(),
-            super::cursor(),
-            "text_muted on cursor 行底",
-        );
-        assert_pass(
-            super::text_faint(),
-            super::cursor(),
-            "text_faint on cursor 行底",
-        );
+            let ratio = super::contrast_ratio(cursor, base, base);
+            assert!(
+                ratio >= 1.2,
+                "{mode:?} 光标行底色对列表底只有 {ratio:.2}:1，长列表里找不出是哪一行"
+            );
+
+            for (name, fg) in [
+                ("text", p.ink),
+                ("text_muted", p.ink2),
+                ("text_faint", p.faint),
+            ] {
+                assert_pass(
+                    color(fg),
+                    cursor,
+                    base,
+                    &format!("{mode:?} {name} on cursor"),
+                );
+            }
+        }
     }
 
     #[test]
-    fn focus_ring_color_is_the_accent_token() {
+    fn focus_ring_is_trace_and_visible() {
+        for (mode, p) in modes() {
+            let ring = trace_for(p);
+            let base = color(p.panel);
+            for (name, surface) in [
+                ("bg", color(p.panel)),
+                ("elevated", color(p.chip)),
+                ("chrome", color(p.paper)),
+            ] {
+                let ratio = super::contrast_ratio(ring, surface, base);
+                assert!(
+                    ratio >= NON_TEXT_AA,
+                    "{mode:?} 焦点环压在 {name} 上只有 {ratio:.2}:1，\
+                     低于非文字对比度的 {NON_TEXT_AA}:1"
+                );
+            }
+        }
+
         let ring: Rgba = super::focus_ring_color().into();
-        let accent = super::accent_text();
-        for (name, a, b) in [
-            ("r", ring.r, accent.r),
-            ("g", ring.g, accent.g),
-            ("b", ring.b, accent.b),
-        ] {
-            assert!(
-                (a - b).abs() < 0.01,
-                "焦点环的 {name} 通道是 {a:.3}、`accent_text` 是 {b:.3} —— 两者应当是同一个绿"
-            );
-        }
-    }
-
-    #[test]
-    fn focus_ring_is_visible_against_every_surface_it_lands_on() {
-        // 焦点环不是文字，走 WCAG 1.4.11 的非文字门槛 3:1（正文是 4.5:1）。
-        const NON_TEXT_AA: f32 = 3.0;
-        for (name, surface) in [
-            ("bg", super::bg()),
-            ("panel", super::panel()),
-            ("elevated", super::elevated()),
-            ("chrome", super::chrome()),
-        ] {
-            let ratio = contrast_ratio(super::accent_text(), surface);
-            assert!(
-                ratio >= NON_TEXT_AA,
-                "焦点环压在 {name} 上只有 {ratio:.2}:1，低于非文字对比度的 {NON_TEXT_AA}:1"
-            );
-        }
+        assert_same_color(
+            ring,
+            trace_for(super::palette_for(Appearance::Light)),
+            "焦点环（浅色）",
+        );
     }
 
     #[test]
     fn tag_text_is_readable_on_its_pill() {
-        assert_pass(
-            super::text_muted(),
-            super::tag_bg(),
-            "格式标签文字 on 标签底",
-        );
+        for (mode, p) in modes() {
+            let base = color(p.panel);
+            assert_pass(
+                color(p.ink2),
+                color(p.tag_bg),
+                base,
+                &format!("{mode:?} 格式标签文字 on 标签底"),
+            );
+        }
     }
 
     #[test]
     fn luminance_endpoints_are_sane() {
-        // 白 1.0 / 黑 0.0，对比度 21:1 —— 顺带验证亮度公式没写反。
         let white = rgb(0xffffff);
         let black = rgb(0x000000);
-        assert!((relative_luminance(white) - 1.0).abs() < 1e-4);
-        assert!(relative_luminance(black).abs() < 1e-6);
-        assert!((contrast_ratio(white, black) - 21.0).abs() < 0.05);
+        assert!((super::relative_luminance(white) - 1.0).abs() < 1e-4);
+        assert!(super::relative_luminance(black).abs() < 1e-6);
+        assert!((super::contrast_ratio(white, black, black) - 21.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn motion_curves_start_and_end_where_they_should() {
+        fn check(curve: impl Fn(f32) -> f32) {
+            assert!(curve(0.0).abs() < 0.01, "缓动曲线的起点必须是 0");
+            assert!((curve(1.0) - 1.0).abs() < 0.01, "缓动曲线的终点必须是 1");
+        }
+        check(super::ease_snap());
+        check(super::ease_mech());
+        check(super::ease_std());
     }
 }

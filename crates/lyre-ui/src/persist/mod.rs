@@ -473,7 +473,8 @@ mod tests {
 
         // settings.json：对象，每个设置项一个字段。
         let settings = render_pretty(&Settings::default()).unwrap();
-        assert!(settings.starts_with("{\n  \"density\""), "{settings}");
+        assert!(settings.starts_with("{\n  \"appearance\""), "{settings}");
+        assert!(settings.contains("\"density\""), "{settings}");
         assert!(settings.contains("\"default_view\""), "{settings}");
 
         // likes.json / recents.json：裸数字数组（`TrackId` 是单字段元组结构体）。

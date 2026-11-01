@@ -124,7 +124,7 @@ fn device_menu(
 }
 
 impl Render for BottomBar {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (show_mini, stacked, left_width) = {
             let shell = self.shell.read(cx);
             (
@@ -142,7 +142,9 @@ impl Render for BottomBar {
             .flex_none()
             .w_full()
             .h(px(theme::bottom_bar_height(stacked)))
-            .bg(theme::chrome());
+            .bg(theme::chrome())
+            .border_t_1()
+            .border_color(theme::border());
 
         // 曲库为空时三个控件仍常驻、只降级为禁用态：整栏消失会让布局跳动。
         let enabled = count > 0;
@@ -154,7 +156,7 @@ impl Render for BottomBar {
         let queue_open = panel == Some(PanelTab::Queue);
         let lyrics_open = self.shell.read(cx).shows_lyrics();
 
-        let right = |fixed_width: Option<f32>| {
+        let right = |fixed_width: Option<f32>, window: &mut Window, cx: &mut App| {
             let now_playing =
                 crate::common::button::IconButton::new("bar-now-playing", Glyph::PanelRight)
                     .label(if enabled {
@@ -174,6 +176,7 @@ impl Render for BottomBar {
                             });
                         }
                     })
+                    .hover_progress(window, cx)
                     .render();
 
             let lyrics = crate::common::button::IconButton::new("bar-lyrics", Glyph::Lyrics)
@@ -192,6 +195,7 @@ impl Render for BottomBar {
                         shell.update(cx, ShellEntity::toggle_lyrics);
                     }
                 })
+                .hover_progress(window, cx)
                 .render();
 
             let queue = crate::common::button::IconButton::new("bar-queue", Glyph::Queue)
@@ -210,6 +214,7 @@ impl Render for BottomBar {
                         shell.update(cx, |shell, cx| shell.toggle_panel(PanelTab::Queue, cx));
                     }
                 })
+                .hover_progress(window, cx)
                 .render();
 
             let devices = crate::common::menu::dropdown(
@@ -217,6 +222,7 @@ impl Render for BottomBar {
                     .label("播放设备")
                     .box_size(32.)
                     .glyph_size(16.)
+                    .hover_progress(window, cx)
                     .render(),
                 Anchor::TopRight,
                 {
@@ -266,7 +272,7 @@ impl Render for BottomBar {
                             repeat,
                             enabled,
                         ))
-                        .child(right(None)),
+                        .child(right(None, window, cx)),
                 )
                 .child(
                     div()
@@ -316,7 +322,7 @@ impl Render for BottomBar {
             );
 
         row.child(center)
-            .child(right(Some(theme::BOTTOM_RIGHT_W)))
+            .child(right(Some(theme::BOTTOM_RIGHT_W), window, cx))
             .into_any_element()
     }
 }

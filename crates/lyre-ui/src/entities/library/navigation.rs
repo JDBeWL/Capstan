@@ -125,7 +125,8 @@ impl LibraryEntity {
     /// 光标停在一首引擎播不了的曲目上时返回 `None`（并弹一条说明）。
     pub fn play_focused(&mut self, cx: &mut Context<Self>) -> Option<Track> {
         let id = self.focus?;
-        self.activate(id, cx)
+        // 和点击列表行走同一条路：先把队列换成当前可见区，否则从别的分组切过来时会跳不进原队列。
+        self.activate_in_view(id, cx)
     }
 
     /// 从可见行里挑第一首引擎能播的并开始播放；一首都没有时只提示。
@@ -138,7 +139,8 @@ impl LibraryEntity {
         });
 
         if let Some(id) = found {
-            return self.activate(id, cx);
+            // 详情页的播放键同样要先换队列：从别处切进来时旧队列里没有这张专辑 / 艺术家的歌。
+            return self.activate_in_view(id, cx);
         }
 
         cx.emit(LibraryEvent::Failed(

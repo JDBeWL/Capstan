@@ -2,11 +2,13 @@
 //! 由 [`LibraryEntity::effective_mode`] 折算成 `PlayMode`、[`LibraryEntity::set_mode`] 拆回来，
 //! 两个方向必须成对改。
 
-use lyre_core::{Advance, PlayMode, Track, TrackId};
+use lyre_core::{Advance, PlayMode, Track, TrackId, album_key, artist_keys};
 
 use crate::platform::*;
 
-use super::{LibraryEntity, LibraryEvent};
+use super::LibraryEntity;
+use super::LibraryEvent;
+use super::scope::Scope;
 
 /// 队列推进的结论，由 `RootView` 翻译成对 `PlaybackEntity` 的实际操作。
 #[derive(Clone, Debug, PartialEq)]
@@ -53,6 +55,23 @@ impl LibraryEntity {
     /// 列表用来标注「播放中」的那一首。
     pub fn now_playing(&self) -> Option<TrackId> {
         self.now_playing
+    }
+
+    /// 正在播放的那首是否落在这个分组里。侧栏的喇叭只认这个，不把「正在浏览」当成「正在播放」。
+    pub fn is_playing_scope(&self, scope: &Scope) -> bool {
+        let Some(track) = self.now_playing.and_then(|id| self.playlist.by_id(id)) else {
+            return false;
+        };
+        match scope {
+            Scope::All => true,
+            Scope::Album(title) => album_key(track) == title,
+            Scope::Artist(name) => artist_keys(track).iter().any(|key| *key == name),
+            Scope::Collection(id) => self
+                .collections
+                .get(*id)
+                .is_some_and(|list| list.contains(track.id)),
+            Scope::Favorites => self.liked.contains(track.id),
+        }
     }
 
     /// 上层「把某首送进播放器」时调用，只在真的变了时 `notify`，顺带把光标也挪过来。

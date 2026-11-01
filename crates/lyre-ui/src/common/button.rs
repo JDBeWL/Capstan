@@ -14,9 +14,10 @@ pub struct IconButton {
     hover_color: Rgba,
     base_bg: Rgba,
     hover_bg: Rgba,
-    radius: f32,
     enabled: bool,
     label: Option<&'static str>,
+    /// 悬停擦入进度；`None` 表示这个按钮不参与动效（调用方没给 window）。
+    hover: Option<f32>,
     on_click: Option<ClickHandler>,
 }
 
@@ -34,9 +35,9 @@ impl IconButton {
             hover_color: theme::text(),
             base_bg: theme::transparent(),
             hover_bg: theme::elevated(),
-            radius: theme::RADIUS_PILL,
             enabled: true,
             label: None,
+            hover: None,
             on_click: None,
         }
     }
@@ -69,13 +70,19 @@ impl IconButton {
         self
     }
 
-    /// 选中态：绿色图标 + 淡绿底。只靠白 / 灰两档认不出开关是开是关。
+    /// 采样悬停进度，让悬停底色从左擦入。必须在渲染期调用。
+    pub fn hover_progress(mut self, window: &mut Window, cx: &mut App) -> Self {
+        self.hover = Some(crate::common::hover::progress(self.id.clone(), window, cx));
+        self
+    }
+
+    /// 选中态：整块黄底墨字。只靠白 / 灰两档认不出开关是开是关。
     pub fn active(mut self, active: bool) -> Self {
         if active {
-            self.base_bg = theme::accent_soft();
-            self.hover_bg = theme::accent_soft();
-            self.color = theme::accent_text();
-            self.hover_color = theme::accent_hover();
+            self.base_bg = theme::accent();
+            self.hover_bg = theme::accent_hover();
+            self.color = theme::text_on_accent();
+            self.hover_color = theme::text_on_accent();
         }
         self
     }
@@ -99,29 +106,46 @@ impl IconButton {
             hover_color,
             base_bg,
             hover_bg,
-            radius,
             enabled,
             label,
+            hover,
             on_click,
         } = self;
 
         let effective_color = if enabled { color } else { theme::text_faint() };
+        let hover_id = id.clone();
 
         let mut element = div()
             .id(id)
+            .relative()
             .flex_none()
             .size(px(box_size))
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(radius))
-            .text_color(effective_color)
-            .child(icon_inherit(glyph, glyph_size));
+            .text_color(effective_color);
+
+        if let Some(progress) = hover {
+            element = element.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .bottom_0()
+                    .w(relative(progress))
+                    .bg(hover_bg),
+            );
+        }
+
+        element = element.child(icon_inherit(glyph, glyph_size));
 
         if enabled {
             element = element
                 .cursor_pointer()
-                .hover(move |style| style.bg(hover_bg).text_color(hover_color))
+                .on_hover(crate::common::hover::bind(hover_id))
+                .hover(move |style| style.text_color(hover_color))
+                // 按下就下沉一像素：100ms 级的回应，不做过渡。
+                .active(|style| style.top(px(1.)).opacity(0.92))
                 // 进 Tab 序列。gpui 没有默认的 Tab 绑定（`lyre-app::keymap` 自己绑），
                 // 但聚焦后按 Enter / Space 触发 `on_click` 是内建的，不用自己接。
                 .tab_index(TAB_STOP)
@@ -192,14 +216,14 @@ impl ButtonKind {
             Self::Primary => (
                 theme::control(),
                 theme::text_on_control(),
-                theme::control_hover(),
-                theme::text_on_control(),
+                theme::accent(),
+                theme::text_on_accent(),
             ),
             Self::Secondary => (
                 theme::elevated(),
                 theme::text(),
-                theme::border(),
-                theme::text(),
+                theme::accent(),
+                theme::text_on_accent(),
             ),
             // Ghost 与 Outline 的差别只在描边（由 `pad_y` / `frame_height` 处理），颜色完全一致。
             Self::Ghost | Self::Outline => (
@@ -212,19 +236,42 @@ impl ButtonKind {
     }
 }
 
-/// 按钮外壳：胶囊、内边距、字级、悬停反馈；内容用 `.child`、行为用 `.on_click` 补。
+/// 按钮外壳：直角、右下切角、内边距、字级、悬停反馈；内容用 `.child`、行为用 `.on_click` 补。
+/// 切角里不压字：右侧内边距 = 常态内边距 + 切角宽度。
 pub fn button_shell(id: impl Into<ElementId>, kind: ButtonKind) -> Stateful<Div> {
-    let (base_bg, base_color, hover_bg, hover_color) = kind.colors();
+    button_shell_with_hover(id, kind, None)
+}
 
-    let shell = div()
-        .id(id)
+/// 与 [`button_shell`] 相同，但悬停底色从左擦入。
+pub fn button_shell_animated(
+    id: impl Into<ElementId>,
+    kind: ButtonKind,
+    window: &mut Window,
+    cx: &mut App,
+) -> Stateful<Div> {
+    let id = id.into();
+    let hover = crate::common::hover::progress(id.clone(), window, cx);
+    button_shell_with_hover(id, kind, Some(hover))
+}
+
+fn button_shell_with_hover(
+    id: impl Into<ElementId>,
+    kind: ButtonKind,
+    hover: Option<f32>,
+) -> Stateful<Div> {
+    let (base_bg, base_color, hover_bg, hover_color) = kind.colors();
+    let id = id.into();
+
+    let mut shell = div()
+        .id(id.clone())
+        .relative()
         .flex_none()
         .flex()
         .items_center()
         .gap(px(theme::GAP_XS))
-        .px(px(BTN_PX))
+        .pl(px(BTN_PX))
+        .pr(px(BTN_PX + theme::CUT))
         .py(px(kind.pad_y()))
-        .rounded(px(theme::RADIUS_PILL))
         .text_size(px(BTN_FONT))
         .font_weight(theme::WEIGHT_BUTTON)
         .text_color(base_color)
@@ -232,8 +279,29 @@ pub fn button_shell(id: impl Into<ElementId>, kind: ButtonKind) -> Stateful<Div>
         .cursor_pointer()
         .tab_index(TAB_STOP)
         .focus_visible(theme::focus_ring)
-        .role(Role::Button)
-        .hover(move |style| style.bg(hover_bg).text_color(hover_color));
+        .role(Role::Button);
+
+    shell = match hover {
+        Some(progress) => shell
+            // 黄块从左擦入，盖在常态底色上、切角和文字之下
+            .on_hover(crate::common::hover::bind(id))
+            .hover(move |style| style.text_color(hover_color))
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .bottom_0()
+                    .w(relative(progress))
+                    .bg(hover_bg),
+            ),
+        None => shell.hover(move |style| style.bg(hover_bg).text_color(hover_color)),
+    };
+
+    // 切角画在背景之后、内容之前；右侧留白保证内容不进入切角
+    shell = shell
+        .active(|style| style.top(px(1.)).opacity(0.92))
+        .child(crate::common::ornament::cut_br(theme::CUT, theme::bg()));
 
     if kind == ButtonKind::Outline {
         shell.border_1().border_color(theme::border())
@@ -244,13 +312,13 @@ pub fn button_shell(id: impl Into<ElementId>, kind: ButtonKind) -> Stateful<Div>
 
 pub fn chip_colors(active: bool) -> (Rgba, Rgba) {
     if active {
-        (theme::control(), theme::text_on_control())
+        (theme::accent(), theme::text_on_accent())
     } else {
         (theme::elevated(), theme::text_muted())
     }
 }
 
-/// 胶囊「开关」按钮：图标 + 文字，选中态走 [`chip_colors`]。
+/// 「开关」小块：图标 + 文字，选中态走 [`chip_colors`]。右下切角、计数是真实数字。
 pub fn toggle_chip(
     id: impl Into<ElementId>,
     glyph: Glyph,
@@ -262,28 +330,34 @@ pub fn toggle_chip(
 
     div()
         .id(id)
+        .relative()
         // 可收缩而不是 `flex_none`：详情页头图那一排在 560px 窗口下放不下四件东西，
         // 不肯收缩就会被主区卡片裁掉最右的「更多」。文字由下面的 `truncate` 兜住。
         .min_w_0()
         .flex()
         .items_center()
         .gap(px(theme::GAP_SM))
-        .px(px(theme::GAP_MD))
+        .pl(px(theme::GAP_MD))
+        .pr(px(theme::GAP_MD + theme::CUT))
         .py(px(6.))
-        .rounded(px(theme::RADIUS_PILL))
         .tab_index(TAB_STOP)
         .focus_visible(theme::focus_ring)
-        // `active` 时除配色外还用 `aria_selected` 向读屏报「已按下」。
         .role(Role::Button)
         .aria_selected(active)
         .bg(base_bg)
         .text_color(base_color)
         .cursor_pointer()
         .when(!active, |chip| {
-            chip.hover(|style| style.bg(theme::border()).text_color(theme::text()))
+            chip.hover(|style| {
+                style
+                    .bg(theme::accent())
+                    .text_color(theme::text_on_accent())
+            })
         })
+        .active(|style| style.top(px(1.)).opacity(0.92))
         .text_size(px(theme::FONT_CAPTION))
         .font_weight(theme::WEIGHT_BUTTON)
+        .child(crate::common::ornament::cut_br(theme::CUT, theme::bg()))
         // 图标跟随父级 `text_color`（[`icon_inherit`]）。
         .child(icon_inherit(glyph, 14.))
         .child(div().min_w_0().truncate().child(label))
@@ -298,6 +372,21 @@ pub fn text_button(
     // `IntoElement` 只对具体类型实现，泛型 `impl Into<SharedString>` 要先落成 `SharedString`
     let label: SharedString = label.into();
     button_shell(id, kind).on_click(on_click).child(label)
+}
+
+/// 与 [`text_button`] 相同，但悬停底色从左擦入。
+pub fn text_button_animated(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    kind: ButtonKind,
+    window: &mut Window,
+    cx: &mut App,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let label: SharedString = label.into();
+    button_shell_animated(id, kind, window, cx)
+        .on_click(on_click)
+        .child(label)
 }
 
 #[cfg(test)]

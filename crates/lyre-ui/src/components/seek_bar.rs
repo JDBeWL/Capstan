@@ -9,8 +9,8 @@ use crate::entities::PlaybackEntity;
 use crate::platform::*;
 use crate::theme;
 
-const TRACK_H: f32 = 4.0;
-const TRACK_H_ACTIVE: f32 = 8.0;
+const TRACK_H: f32 = 3.0;
+const TRACK_H_ACTIVE: f32 = 6.0;
 /// 命中区高度：不能高到盖住底栏里上下的其它元素。
 const HIT_H: f32 = 22.0;
 
@@ -18,8 +18,8 @@ pub struct SeekBar {
     playback: Entity<PlaybackEntity>,
     /// 拖动中的预览比例；`Some` 表示用户正按着。
     drag: Option<f32>,
-    /// 鼠标悬停的位置比例。与 `drag` 分开，因为两者可以不同时成立。
-    hover: Option<f32>,
+    /// 只用来显示滑柄 / 加粗轨道，不参与进度预览。
+    hovered: bool,
     /// 轨道在窗口中的绝对几何，由 `canvas` 的 prepaint 捕获。
     track_bounds: Option<Bounds<Pixels>>,
     _sub: Subscription,
@@ -31,7 +31,7 @@ impl SeekBar {
         Self {
             playback,
             drag: None,
-            hover: None,
+            hovered: false,
             track_bounds: None,
             _sub: subscription,
         }
@@ -71,16 +71,13 @@ impl Render for SeekBar {
             )
         };
 
-        let ratio = self.drag.or(self.hover).unwrap_or(playing_ratio);
+        let ratio = self.drag.unwrap_or(playing_ratio);
         let shown = match self.drag {
             Some(preview) => duration.mul_f32(preview),
-            None => match self.hover {
-                Some(preview) => duration.mul_f32(preview),
-                None => position,
-            },
+            None => position,
         };
 
-        let active = self.drag.is_some() || self.hover.is_some();
+        let active = self.hovered || self.drag.is_some();
         let track_height = if active { TRACK_H_ACTIVE } else { TRACK_H };
 
         let weak = cx.entity().downgrade();
@@ -126,12 +123,10 @@ impl Render for SeekBar {
                         }),
                     )
                     .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
-                        let ratio = this.ratio_at(event.position.x);
-                        this.hover = Some(ratio);
                         if this.drag.is_some() {
-                            this.drag = Some(ratio);
+                            this.drag = Some(this.ratio_at(event.position.x));
+                            cx.notify();
                         }
-                        cx.notify();
                     }))
                     .on_mouse_up(
                         MouseButton::Left,
@@ -147,10 +142,9 @@ impl Render for SeekBar {
                             this.commit_drag(cx);
                         }),
                     )
-                    // 移出要清掉 hover，否则预览会一直挂着不走。
                     .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
-                        if !*hovered && this.hover.is_some() {
-                            this.hover = None;
+                        if this.hovered != *hovered {
+                            this.hovered = *hovered;
                             cx.notify();
                         }
                     }))
@@ -159,7 +153,6 @@ impl Render for SeekBar {
                             .relative()
                             .w_full()
                             .h(px(track_height))
-                            .rounded_full()
                             .bg(theme::track())
                             .child(
                                 div()
@@ -168,20 +161,18 @@ impl Render for SeekBar {
                                     .top_0()
                                     .h_full()
                                     .w(relative(ratio))
-                                    .rounded_full()
                                     .bg(theme::control()),
                             )
                             .child(
-                                // 滑块用 50% + 负 margin 居中，轨道增厚时自动跟着走。
+                                // 当前位置用一枚黄色小方块标出；静止时不显示，悬停 / 拖动才出现。
                                 div()
                                     .absolute()
                                     .top(relative(0.5))
-                                    .mt(px(-6.))
+                                    .mt(px(-5.))
                                     .left(relative(ratio))
-                                    .ml(px(-6.))
-                                    .size(px(12.))
-                                    .rounded_full()
-                                    .bg(theme::text())
+                                    .ml(px(-5.))
+                                    .size(px(10.))
+                                    .bg(theme::accent())
                                     .opacity(if active { 1.0 } else { 0.0 }),
                             ),
                     )
@@ -207,6 +198,7 @@ fn time_label(value: Duration, color: Rgba, align_right: bool) -> impl IntoEleme
         .flex_none()
         .w(px(52.))
         .flex()
+        .font(theme::field_font())
         .text_size(px(theme::FONT_CAPTION))
         .text_color(color)
         .child(format_duration(value));

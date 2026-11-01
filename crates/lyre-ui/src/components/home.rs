@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use chrono::Timelike as _;
 use lyre_core::{AlbumGroup, TrackId};
 
-use crate::common::thousands;
+use crate::common::{anim, thousands};
 use crate::components::detail::{HeroInfo, hero_for};
 use crate::cover::{CoverCache, CoverCacheEvent};
 // `Scope` 必须显式导入：`platform::*` 里带着 `gpui::Scope<'_>`，靠 glob 引进来会撞名。
@@ -24,9 +24,11 @@ mod sections;
 pub use cards::{RecentCard, popular_cards, recent_cards, recommend_cards};
 
 use entries::entry_card;
-use sections::{grid_columns_in, horizontal_section, list_section, recent_card, section_title};
+use sections::{
+    grid_columns_in, horizontal_section, list_section, recent_card, section_title, showcase_frame,
+};
 
-const PAD: f32 = theme::GAP_LG;
+const PAD: f32 = theme::PAGE_PAD;
 const RECENT_MAX: usize = 8;
 const SECTION_MAX: usize = 12;
 
@@ -49,9 +51,9 @@ fn greeting_hint(empty: bool, has_recents: bool) -> &'static str {
     if empty {
         "把音频文件拖进窗口，或者点侧栏的「导入音乐」"
     } else if has_recents {
-        "接着上次的继续，或者从下面挑一个方向"
+        "接着上次的继续，或者从下面挑一个"
     } else {
-        "曲库已经就绪 —— 从下面挑一个方向开始听"
+        "曲库已经就绪 —— 从下面挑一个开始听"
     }
 }
 
@@ -190,7 +192,7 @@ impl HomeView {
 }
 
 impl Render for HomeView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 横向区块的箭头要点完就重绘，所以拿的是本视图的句柄，不是 &mut self
         let view = cx.entity();
         let loading = self.library.read(cx).loading();
@@ -214,37 +216,128 @@ impl Render for HomeView {
             .px(px(PAD))
             .pb(px(PAD));
 
-        page = page.child(
-            div()
-                .flex_none()
-                .flex()
-                .flex_col()
-                .gap(px(theme::GAP_XS))
-                .pt(px(theme::GAP_XL))
-                .pb(px(theme::GAP_MD))
-                .child(
-                    div()
-                        .flex_none()
-                        .text_size(px(theme::FONT_HERO))
-                        .font_weight(theme::WEIGHT_TITLE)
-                        .text_color(theme::text())
-                        .child(greeting(local_hour())),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .text_size(px(theme::FONT_BODY))
-                        .text_color(theme::text_muted())
-                        .child(if loading {
-                            "正在读取曲库…".to_owned()
-                        } else {
-                            greeting_hint(tracks == 0, !recents.is_empty()).to_owned()
-                        }),
-                ),
-        );
+        let center_width = self.shell.read(cx).center_width();
+        let stamp = chrono::Local::now().format("%Y.%m.%d").to_string();
+        let mut hero = div()
+            .flex_none()
+            .flex()
+            .gap(px(theme::GAP_XL * 2.0))
+            .pt(px(theme::GAP_XL))
+            .pb(px(theme::GAP_XL))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap(px(theme::GAP_MD))
+                    // 骨架（眉标）硬切；字标两行错开推入，数据晚 160ms 才落位。
+                    .child(crate::common::section::eyebrow("LYRE / ARCHIVE"))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(anim::drive(
+                                "home-wordmark-solid",
+                                0,
+                                div()
+                                    .font(theme::label_font())
+                                    .text_size(px(theme::FONT_WORDMARK))
+                                    .font_weight(FontWeight::EXTRA_BOLD)
+                                    .text_color(theme::text())
+                                    .child("LYRE"),
+                            ))
+                            .child(anim::drive(
+                                "home-wordmark-outline",
+                                anim::WORDMARK_STAGGER_MS,
+                                div()
+                                    .font(theme::label_font())
+                                    .text_size(px(theme::FONT_TITLE + 6.))
+                                    .font_weight(theme::WEIGHT_BUTTON)
+                                    .text_color(theme::border())
+                                    .child(".COLLECTION"),
+                            )),
+                    )
+                    .child(anim::scramble_content(
+                        SharedString::from(format!("home-fields-{tracks}-{albums}-{artists}")),
+                        anim::DATA_DELAY_MS + 40,
+                        anim::MOTION_SCRAMBLE_MS,
+                        div(),
+                        move |progress| {
+                            let stamp = stamp.clone();
+                            crate::common::section::fields([
+                                anim::scramble(&format!("{} 首", thousands(tracks)), progress),
+                                anim::scramble(&format!("{} 张专辑", thousands(albums)), progress),
+                                anim::scramble(
+                                    &format!("{} 位艺术家", thousands(artists)),
+                                    progress,
+                                ),
+                                stamp,
+                            ])
+                            .into_any_element()
+                        },
+                    ))
+                    .child(anim::enter(
+                        "home-greeting",
+                        420,
+                        anim::MOTION_COME_MS,
+                        10.0,
+                        div()
+                            .pt(px(theme::GAP_SM))
+                            .text_size(px(theme::FONT_TITLE))
+                            .font_weight(theme::WEIGHT_TITLE)
+                            .text_color(theme::text())
+                            .child(greeting(local_hour())),
+                    ))
+                    .child(anim::enter(
+                        "home-hint",
+                        460,
+                        anim::MOTION_COME_MS,
+                        10.0,
+                        div()
+                            .min_w_0()
+                            .text_size(px(theme::FONT_BODY))
+                            .text_color(theme::text_muted())
+                            .child(if loading {
+                                "正在读取曲库…".to_owned()
+                            } else {
+                                greeting_hint(tracks == 0, !recents.is_empty()).to_owned()
+                            }),
+                    ))
+                    .when(loading, |col| {
+                        col.child(crate::common::anim::unknown_progress())
+                    }),
+            );
+
+        if center_width >= 760.0 {
+            hero = hero.child(anim::enter(
+                "home-showcase",
+                anim::DATA_DELAY_MS + 40,
+                anim::MOTION_SCRAMBLE_MS,
+                10.0,
+                div().child(showcase_frame(
+                    recents.first(),
+                    &self.library,
+                    &self.covers,
+                    cx,
+                )),
+            ));
+        }
+        page = page.child(hero);
+
+        // 区块编号按出现顺序从 01 起：最近播放为空时，下一个区块就是 01。
+        let mut section_no = 0usize;
 
         if !recents.is_empty() {
-            page = page.child(section_title("最近播放"));
+            section_no += 1;
+            page = page.child(anim::enter(
+                "home-recent-title",
+                anim::DATA_DELAY_MS,
+                anim::MOTION_COME_MS,
+                10.0,
+                section_title(section_no, "RECENT", "最近播放"),
+            ));
             // gpui 0.3.8 没有 flex_wrap，手工分行；每行几张由可用宽度反推，
             // 写死 4 会在刚进 Wide 断点时把第 4 张切掉
             let grid_cols = grid_columns_in(self.shell.read(cx).center_width() - PAD * 2.0);
@@ -253,6 +346,7 @@ impl Render for HomeView {
                 .flex()
                 .flex_col()
                 .gap(px(theme::GAP_MD))
+                .pt(px(theme::GAP_MD))
                 .pb(px(theme::GAP_XL));
             for (row, chunk) in recents.chunks(grid_cols).enumerate() {
                 grid = grid.child(div().flex_none().flex().gap(px(theme::GAP_MD)).children(
@@ -267,72 +361,134 @@ impl Render for HomeView {
                     }),
                 ));
             }
-            page = page.child(grid);
+            page = page.child(anim::enter(
+                "home-recent-grid",
+                anim::DATA_DELAY_MS,
+                anim::MOTION_COME_MS,
+                10.0,
+                grid,
+            ));
         }
 
         if !lists.is_empty() {
-            page = page.child(list_section(
-                "home-my-lists",
-                "你的歌单",
-                lists,
-                self,
-                view.clone(),
-                cx,
+            section_no += 1;
+            page = page.child(anim::enter(
+                "home-lists",
+                anim::DATA_DELAY_MS + anim::STAGGER_BLOCK_MS,
+                anim::MOTION_COME_MS,
+                10.0,
+                div().flex_none().flex().flex_col().child(list_section(
+                    section_no,
+                    "PLAYLISTS",
+                    "home-my-lists",
+                    "你的歌单",
+                    lists,
+                    self,
+                    view.clone(),
+                    window,
+                    cx,
+                )),
             ));
         }
 
         if !recommended.is_empty() {
-            page = page.child(horizontal_section(
+            section_no += 1;
+            page = page.child(anim::enter(
                 "home-recommend",
-                "为你推荐",
-                recommended,
-                self,
-                view.clone(),
-                cx,
+                anim::DATA_DELAY_MS + anim::STAGGER_BLOCK_MS * 2,
+                anim::MOTION_COME_MS,
+                10.0,
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .child(horizontal_section(
+                        section_no,
+                        "FOR YOU",
+                        "home-recommend",
+                        "为你推荐",
+                        recommended,
+                        self,
+                        view.clone(),
+                        window,
+                        cx,
+                    )),
             ));
         }
 
         if !popular.is_empty() {
-            page = page.child(horizontal_section(
+            section_no += 1;
+            page = page.child(anim::enter(
                 "home-popular",
-                "热门专辑",
-                popular,
-                self,
-                view.clone(),
-                cx,
+                anim::DATA_DELAY_MS + anim::STAGGER_BLOCK_MS * 3,
+                anim::MOTION_COME_MS,
+                10.0,
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .child(horizontal_section(
+                        section_no,
+                        "TRENDING",
+                        "home-popular",
+                        "热门专辑",
+                        popular,
+                        self,
+                        view.clone(),
+                        window,
+                        cx,
+                    )),
             ));
         }
 
-        page = page.child(section_title("浏览"));
-        page = page.child(div().flex_none().flex().gap(px(theme::GAP_MD)).children([
-            entry_card(
-                "home-entry-tracks",
-                Glyph::List,
-                "曲目",
-                format!("{} 首", thousands(tracks)),
-                NavSection::Tracks,
-                &self.shell,
-                &self.library,
-            ),
-            entry_card(
-                "home-entry-albums",
-                Glyph::Album,
-                "专辑",
-                format!("{} 张", thousands(albums)),
-                NavSection::Albums,
-                &self.shell,
-                &self.library,
-            ),
-            entry_card(
-                "home-entry-artists",
-                Glyph::Artist,
-                "艺术家",
-                format!("{} 位", thousands(artists)),
-                NavSection::Artists,
-                &self.shell,
-                &self.library,
-            ),
-        ]));
+        section_no += 1;
+        page = page.child(anim::enter(
+            "home-browse-title",
+            anim::DATA_DELAY_MS + anim::STAGGER_BLOCK_MS * 4,
+            anim::MOTION_COME_MS,
+            10.0,
+            section_title(section_no, "BROWSE", "浏览"),
+        ));
+        page = page.child(anim::enter(
+            "home-browse-row",
+            anim::DATA_DELAY_MS + anim::STAGGER_BLOCK_MS * 4,
+            anim::MOTION_COME_MS,
+            10.0,
+            div()
+                .flex_none()
+                .flex()
+                .gap(px(theme::GAP_MD))
+                .pt(px(theme::GAP_MD))
+                .children([
+                    entry_card(
+                        "home-entry-tracks",
+                        Glyph::List,
+                        "曲目",
+                        format!("{} 首", thousands(tracks)),
+                        NavSection::Tracks,
+                        &self.shell,
+                        &self.library,
+                    ),
+                    entry_card(
+                        "home-entry-albums",
+                        Glyph::Album,
+                        "专辑",
+                        format!("{} 张", thousands(albums)),
+                        NavSection::Albums,
+                        &self.shell,
+                        &self.library,
+                    ),
+                    entry_card(
+                        "home-entry-artists",
+                        Glyph::Artist,
+                        "艺术家",
+                        format!("{} 位", thousands(artists)),
+                        NavSection::Artists,
+                        &self.shell,
+                        &self.library,
+                    ),
+                ]),
+        ));
 
         page.into_any_element()
     }
@@ -410,7 +566,7 @@ mod tests {
             greeting_hint(true, false).contains("导入"),
             "空曲库应当引导去导入"
         );
-        assert!(greeting_hint(false, false).contains("挑一个方向"));
+        assert!(greeting_hint(false, false).contains("挑一个开始听"));
         assert!(greeting_hint(false, true).contains("接着上次"));
     }
 }

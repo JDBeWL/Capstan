@@ -58,22 +58,46 @@ impl Transport {
 }
 
 impl Render for Transport {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let enabled = self.has_track;
+        let prev_hover =
+            enabled.then(|| crate::common::hover::progress("transport-prev", window, cx));
+        let play_hover =
+            enabled.then(|| crate::common::hover::progress("transport-play", window, cx));
+        let next_hover =
+            enabled.then(|| crate::common::hover::progress("transport-next", window, cx));
 
         // 三个按钮共享的外观壳子。tooltip 同时充当悬停提示和无障碍名称。
-        let round = |id: &'static str, size: f32| {
-            div()
+        let round = |id: &'static str, size: f32, hover: Option<f32>, fill: Rgba| {
+            let hover_id = ElementId::from(id);
+            let mut button = div()
                 .id(id)
+                .relative()
                 .flex_none()
                 .size(px(size))
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded_full()
+                .child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top_0()
+                        .bottom_0()
+                        .w(relative(hover.unwrap_or(0.0)))
+                        .bg(fill),
+                )
+                .child(crate::common::ornament::cut_br(
+                    theme::CUT_SM,
+                    theme::chrome(),
+                ));
+            if hover.is_some() {
+                button = button.on_hover(crate::common::hover::bind(hover_id));
+            }
+            button
         };
 
-        let mut prev = round("transport-prev", 32.).child(icon(
+        let mut prev = round("transport-prev", 32., prev_hover, theme::elevated()).child(icon(
             Glyph::SkipBack,
             16.,
             if enabled {
@@ -82,8 +106,8 @@ impl Render for Transport {
                 theme::text_faint()
             },
         ));
-        // 实心底配深色图标：黑压白 21:1，白三角压绿底只有 2.59:1，达不到 AA。
-        let mut play = round("transport-play", 40.)
+        // 柠檬黄实心底配近黑三角，同官网播放钮：黑压黄远超 AA，反过来黄三角在浅底上太弱。
+        let mut play = round("transport-play", 40., play_hover, theme::text_muted())
             .bg(if enabled {
                 theme::control()
             } else {
@@ -99,11 +123,11 @@ impl Render for Transport {
                 if enabled {
                     theme::text_on_control()
                 } else {
-                    // 禁用态图标必须白字：`text_faint` 压 `track()` 底上只有 3.10:1，达不到 AA。
+                    // 禁用态图标必须用 `text()`：`text_faint` 压 `track()` 底达不到 AA。
                     theme::text()
                 },
             ));
-        let mut next = round("transport-next", 32.).child(icon(
+        let mut next = round("transport-next", 32., next_hover, theme::elevated()).child(icon(
             Glyph::SkipForward,
             16.,
             if enabled {
@@ -116,7 +140,7 @@ impl Render for Transport {
         if enabled {
             prev = prev
                 .cursor_pointer()
-                .hover(|style| style.bg(theme::elevated()).text_color(theme::text()))
+                .hover(|style| style.text_color(theme::text()))
                 .on_click(cx.listener(|_this, _: &ClickEvent, _window, cx| {
                     cx.emit(TransportEvent::Prev);
                 }))
@@ -124,7 +148,6 @@ impl Render for Transport {
             // 播放键的事件只看 `enabled`，不看 `playing`。
             play = play
                 .cursor_pointer()
-                .hover(|style| style.bg(theme::control_hover()))
                 .on_click(cx.listener(|_this, _: &ClickEvent, _window, cx| {
                     cx.emit(TransportEvent::TogglePlay);
                 }))
@@ -135,7 +158,7 @@ impl Render for Transport {
                 }));
             next = next
                 .cursor_pointer()
-                .hover(|style| style.bg(theme::elevated()).text_color(theme::text()))
+                .hover(|style| style.text_color(theme::text()))
                 .on_click(cx.listener(|_this, _: &ClickEvent, _window, cx| {
                     cx.emit(TransportEvent::Next);
                 }))

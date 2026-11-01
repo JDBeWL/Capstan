@@ -8,8 +8,8 @@ use crate::theme;
 
 use super::entries::{SideEntry, SideScope};
 
-/// 行内封面缩略图边长（行高 48 减上下各 8）。与 `entries.rs` 的 `LIB_ROW_H` 互相约束。
-const LIB_COVER: f32 = 32.0;
+/// 行内封面缩略图边长（行高 52 减上下各 8）。与 `entries.rs` 的 `LIB_ROW_H` 互相约束。
+const LIB_COVER: f32 = 36.0;
 
 /// 行首那一格：歌单走 [`crate::common::cover::list_cover`]，专辑 / 艺术家走 [`crate::common::cover::thumb`]，
 /// 收藏与「新建」画图标。

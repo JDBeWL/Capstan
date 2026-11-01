@@ -261,13 +261,8 @@ fn active_center_from_top(heights: &[f32], active: usize) -> f32 {
 }
 
 impl Render for LyricsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let track = self.playback.read(cx).current().cloned();
-        let seed = track
-            .as_ref()
-            .and_then(|track| track.album.clone())
-            .or_else(|| track.as_ref().map(|track| track.title.clone()));
-        let tint = theme::hero_tint(seed.as_deref());
         let active = self.active;
         let word = self.word;
         let budget = {
@@ -313,38 +308,21 @@ impl Render for LyricsView {
             .px(px(theme::GAP_XL))
             .pt(px(theme::GAP_XL))
             .pb(px(theme::GAP_LG))
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .bottom_0()
-                    .bg(linear_gradient(
-                        0.0,
-                        linear_color_stop(tint.opacity(0.0), 0.0),
-                        linear_color_stop(tint.opacity(0.5), 1.0),
-                    )),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .bottom_0()
-                    .bg(linear_gradient(
-                        90.0,
-                        linear_color_stop(tint.opacity(0.22), 0.0),
-                        linear_color_stop(tint.opacity(0.0), 1.0),
-                    )),
-            )
+            .child(crate::common::ornament::page_backdrop())
             .child(header(
                 track.as_ref().map(|track| track.title.as_str()),
                 track.as_ref().and_then(|track| track.artist.as_deref()),
                 self.shell.clone(),
+                window,
+                cx,
             ))
             .child(div().flex_1().min_h_0().flex().child(body))
+            // 遮罩淡入 200ms；退出时 shell 直接移除，和 skill 的 overlay 时长一致。
+            .with_animation(
+                "lyrics-overlay-in",
+                Animation::new(Duration::from_millis(200)).with_easing(theme::ease_std()),
+                Styled::opacity,
+            )
     }
 }
 
@@ -353,6 +331,8 @@ fn header(
     title: Option<&str>,
     artist: Option<&str>,
     shell: Entity<ShellEntity>,
+    window: &mut Window,
+    cx: &mut App,
 ) -> impl IntoElement {
     let close = crate::common::button::IconButton::new("lyrics-close", Glyph::Cross)
         .label("关闭歌词")
@@ -360,6 +340,7 @@ fn header(
         .glyph_size(15.)
         .color(theme::text_muted())
         .on_click(move |_, _, cx| shell.update(cx, ShellEntity::toggle_lyrics))
+        .hover_progress(window, cx)
         .render();
 
     div()
@@ -373,13 +354,7 @@ fn header(
                 .flex()
                 .flex_col()
                 .min_w_0()
-                .child(
-                    div()
-                        .flex_none()
-                        .text_size(px(theme::FONT_MICRO))
-                        .text_color(theme::text_faint())
-                        .child("歌词"),
-                )
+                .child(crate::common::section::eyebrow("Lyrics / 歌词"))
                 .child(
                     div()
                         .flex_none()

@@ -18,8 +18,8 @@ use super::Sidebar;
 use super::menu::collection_menu;
 use super::thumb::row_thumb;
 
-/// 一行是「标题 + 副标题」两行，`SIDEBAR_ITEM_H`（40）塞不下；48 = 上下各 6px + 32px 缩略图。
-const LIB_ROW_H: f32 = 48.0;
+/// 一行是「标题 + 副标题」两行，`SIDEBAR_ITEM_H`（40）塞不下；52 = 上下各 8px + 36px 缩略图。
+const LIB_ROW_H: f32 = 52.0;
 
 /// 侧栏列表该列哪一种粒度。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -91,7 +91,7 @@ impl SideEntry {
         let subtitle = if artist.is_empty() {
             format!("{} 首", thousands(group.track_count()))
         } else {
-            format!("{} · {} 首", artist, thousands(group.track_count()))
+            format!("{} │ {} 首", artist, thousands(group.track_count()))
         };
         Self {
             key: format!("album:{}", group.title),
@@ -126,7 +126,7 @@ impl SideEntry {
             cover_id: None,
             cover_file: None,
             title: crate::entities::FAVORITES_NAME.to_owned(),
-            subtitle: format!("歌单 · {count} 首"),
+            subtitle: format!("歌单 │ {count} 首"),
             scope: SideScope::Favorites,
         }
     }
@@ -139,7 +139,7 @@ impl SideEntry {
             cover_id: summary.cover_id,
             cover_file: summary.cover_file,
             title: name.to_owned(),
-            subtitle: format!("歌单 · {} 首", summary.count),
+            subtitle: format!("歌单 │ {} 首", summary.count),
             scope: SideScope::Collection(id),
         }
     }
@@ -203,23 +203,31 @@ pub(super) fn lib_row(
     shell: Entity<ShellEntity>,
     library: Entity<LibraryEntity>,
     covers: &Entity<CoverCache>,
+    window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     // 判据只有「作用域标签等于这一行标题，且种类对得上」—— 不掺 `nav_section`：
-    // 同名的专辑和艺术家不是同一个东西。
-    let selected = {
-        let scope = App::update_entity(cx, &library, |library, _| library.scope().clone());
-        match (&entry.scope, &scope) {
+    // 同名的专辑和艺术家不是同一个东西。喇叭另算：正在浏览不等于正在播放。
+    let row_scope = entry.scope.scope_of(&entry.title);
+    let (selected, playing) = App::update_entity(cx, &library, |library, _| {
+        let scope = library.scope();
+        let selected = match (&entry.scope, scope) {
             (SideScope::Album, Scope::Album(title)) => title == &entry.title,
             (SideScope::Artist, Scope::Artist(name)) => name == &entry.title,
             (SideScope::Collection(id), Scope::Collection(known)) => id == known,
             (SideScope::Favorites, Scope::Favorites) => true,
             _ => false,
-        }
-    };
+        };
+        let playing = row_scope
+            .as_ref()
+            .is_some_and(|row| library.is_playing_scope(row));
+        (selected, playing)
+    });
 
     let thumb = row_thumb(&entry, covers, &library, cx);
     let group = SharedString::from(format!("side-row-group-{}", entry.key));
+    let hover_id = ElementId::from(SharedString::from(format!("side-row-{}", entry.key)));
+    let hover = crate::common::hover::row_progress(hover_id.clone(), window, cx);
     let play_title = entry.title.clone();
     let play_library = library.clone();
     let menu_library = library.clone();
@@ -227,8 +235,9 @@ pub(super) fn lib_row(
     let row_scope = entry.scope;
 
     let mut row = div()
-        .id(SharedString::from(format!("side-row-{}", entry.key)))
+        .id(hover_id.clone())
         .group(group.clone())
+        .relative()
         .flex_none()
         .h(px(LIB_ROW_H))
         // `w_full` + `min_w_0` 缺一不可：`uniform_list` 的行默认按内容定宽，
@@ -238,15 +247,56 @@ pub(super) fn lib_row(
         .flex()
         .items_center()
         .gap(px(theme::GAP_SM))
-        .rounded(px(theme::RADIUS_MD))
         .cursor_pointer()
-        .px(px(theme::GAP_XS))
-        .bg(if selected {
-            theme::elevated()
+        .px(px(theme::GAP_SM))
+        .pl(px(theme::GAP_SM + 6.0 * hover))
+        .pr(px(if selected {
+            theme::GAP_SM + theme::CUT_SM
         } else {
-            theme::transparent()
+            theme::GAP_SM
+        }))
+        .when(selected, |row| {
+            row.bg(theme::accent()).text_color(theme::text_on_accent())
         })
-        .hover(|style| style.bg(theme::elevated()))
+        .when(!selected, |row| row.bg(theme::transparent()))
+        .on_hover(crate::common::hover::bind(hover_id))
+        .hover(|style| {
+            style.text_color(if selected {
+                theme::text_on_accent()
+            } else {
+                theme::text()
+            })
+        })
+        // 悬停底色从左擦入；选中行用深一档的黄。
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .bg(if selected {
+                    theme::accent_hover()
+                } else {
+                    theme::panel()
+                })
+                .opacity(hover),
+        )
+        // 非选中行落一道 3px 墨条
+        .when(!selected, |row| {
+            row.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .w(px(3.))
+                    .h(relative(hover))
+                    .bg(theme::trace()),
+            )
+        })
+        .when(selected, |row| {
+            row.child(crate::common::ornament::cut_br(
+                theme::CUT_SM,
+                theme::window_base(),
+            ))
+        })
         .on_click({
             let entry = entry.clone();
             move |_, _, cx| {
@@ -289,9 +339,9 @@ pub(super) fn lib_row(
                             theme::WEIGHT_TRACK
                         })
                         .text_color(if selected {
-                            theme::text()
+                            theme::text_on_accent()
                         } else {
-                            theme::text_muted()
+                            theme::text()
                         })
                         .truncate()
                         .tooltip(crate::common::tooltip::builder(entry.title.clone()))
@@ -300,22 +350,37 @@ pub(super) fn lib_row(
                 .child(
                     div()
                         .text_size(px(theme::FONT_CAPTION))
-                        .text_color(theme::text_faint())
+                        .text_color(if selected {
+                            theme::text_on_accent().opacity(0.70)
+                        } else {
+                            theme::text_faint()
+                        })
                         .truncate()
                         .child(entry.subtitle),
                 ),
         );
 
-    if selected {
+    if playing {
         row = row.child(
             div()
                 .flex_none()
                 .pr(px(theme::GAP_XS))
-                .text_color(theme::accent_text())
+                .text_color(if selected {
+                    theme::text_on_accent()
+                } else {
+                    theme::text()
+                })
                 .child(icon_inherit(Glyph::VolumeHigh, 14.)),
         );
     } else if let Some(id) = entry.id {
-        row = row.child(row_play_button(group, id, &play_title, play_library));
+        // 选中只代表正在看这一组，播放键仍然要能起播
+        row = row.child(row_play_button(
+            group,
+            id,
+            entry.scope,
+            &play_title,
+            play_library,
+        ));
     }
 
     // 只有自建歌单有右键菜单：收藏不能改名也不能删（成员由爱心决定），
@@ -333,28 +398,40 @@ pub(super) fn lib_row(
 fn row_play_button(
     group: SharedString,
     id: TrackId,
+    scope: SideScope,
     title: &str,
     library: Entity<LibraryEntity>,
 ) -> AnyElement {
+    // 起播前把队列换成这一组：当前队列可能停在别的专辑 / 艺术家，直接 `activate` 会跳不进去。
+    let play_title = title.to_owned();
     div()
         .id(SharedString::from(format!("side-play-{}", id.0)))
+        .relative()
         .flex_none()
         .mr(px(theme::GAP_XS))
         .size(px(28.))
         .flex()
         .items_center()
         .justify_center()
-        .rounded_full()
-        .bg(theme::control())
+        .bg(theme::accent())
         .opacity(0.0)
         .cursor_pointer()
         .group_hover(group, |style| style.opacity(1.0))
-        .hover(|style| style.bg(theme::control_hover()))
+        .hover(|style| style.bg(theme::accent_hover()))
         .on_click(move |_, _, cx| {
             cx.stop_propagation();
-            library.update(cx, |library, cx| library.activate(id, cx));
+            let title = play_title.clone();
+            library.update(cx, |library, cx| match scope {
+                SideScope::Album => library.activate_album(&title, id, cx),
+                SideScope::Artist => library.activate_artist(&title, id, cx),
+                _ => library.activate(id, cx),
+            });
         })
         .tooltip(tooltip::builder(format!("播放《{title}》")))
-        .child(icon(Glyph::Play, 14., theme::text_on_control()))
+        .child(crate::common::ornament::cut_br(
+            theme::CUT_SM,
+            theme::window_base(),
+        ))
+        .child(icon(Glyph::Play, 14., theme::text_on_accent()))
         .into_any_element()
 }

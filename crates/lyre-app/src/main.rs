@@ -17,7 +17,7 @@ fn main() {
         lyre_ui::platform::init(cx);
         keymap::bind(cx);
 
-        let bounds = Bounds::centered(None, size(px(1120.), px(740.)), cx);
+        let bounds = Bounds::centered(None, size(px(1160.), px(750.)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             // 底栏左右两栏各 240px、进度条两端时间标签各 52px。

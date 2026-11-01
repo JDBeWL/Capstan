@@ -50,6 +50,8 @@ impl Render for TopBar {
             .flex()
             .items_center()
             .bg(theme::chrome())
+            .border_b_1()
+            .border_color(theme::border())
             // 左组余量是拖拽区，与右组同为 `flex_1` 才让搜索框居中。
             .child(
                 div()
@@ -159,24 +161,28 @@ fn nav_button(
 
     let mut button = div()
         .id(id)
+        .relative()
         .flex_none()
         .size(px(TOP_NAV_BTN))
         .flex()
         .items_center()
         .justify_center()
-        .rounded_full()
-        .bg(theme::elevated())
+        .bg(theme::transparent())
         .text_color(if enabled {
             theme::text()
         } else {
             theme::text_faint()
         })
+        .child(crate::common::ornament::cut_br(
+            theme::CUT_SM,
+            theme::chrome(),
+        ))
         .child(icon_inherit(glyph, 18.));
 
     if let Some(on_click) = on_click {
         button = button
             .cursor_pointer()
-            .hover(|style| style.bg(theme::hover()))
+            .hover(|style| style.bg(theme::elevated()))
             .on_click(on_click);
     }
 
@@ -194,17 +200,25 @@ fn settings_button(
 ) -> AnyElement {
     div()
         .id("top-settings")
+        .relative()
         .flex_none()
         .size(px(TRIGGER_PX))
         .flex()
         .items_center()
         .justify_center()
-        .rounded_full()
         .cursor_pointer()
+        .role(Role::Button)
+        .aria_label("设置")
         .text_color(if active {
-            theme::text()
+            theme::text_on_accent()
         } else {
             theme::text_muted()
+        })
+        .when(active, |button| button.bg(theme::accent()))
+        .child(if active {
+            crate::common::ornament::cut_br(theme::CUT_SM, theme::chrome()).into_any_element()
+        } else {
+            div().into_any_element()
         })
         .hover(|style| style.bg(theme::elevated()).text_color(theme::text()))
         .on_click(move |_: &ClickEvent, _: &mut Window, cx: &mut App| {

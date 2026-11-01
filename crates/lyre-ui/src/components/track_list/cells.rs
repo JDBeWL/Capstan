@@ -9,12 +9,7 @@ use crate::platform::*;
 use crate::theme;
 
 use super::row::RowState;
-use super::{
-    ACTIONS_W, ALBUM_W, CHECK_BOX, CHECK_W, RowEnv, THUMB, THUMB_COMPACT, TrackList, TrackListEvent,
-};
-
-/// 双行阈值：行高 >= 它才画两行。必须落在 [`Density`](crate::shell::Density) 的两档之间（紧凑 40px / 舒适 52px）。
-const TWO_LINE_MIN: f32 = 48.0;
+use super::{ACTIONS_W, ALBUM_W, CHECK_BOX, CHECK_W, RowEnv, TrackList, TrackListEvent};
 
 pub(super) fn check_cell(
     index: usize,
@@ -78,9 +73,9 @@ pub(super) fn title_cell(
     track_id: TrackId,
     cx: &mut App,
 ) -> impl IntoElement {
-    let two_lines = env.row_height >= TWO_LINE_MIN;
+    let two_lines = env.two_lines();
     let artist = track.artist.clone().unwrap_or_default();
-    let thumb_size = if two_lines { THUMB } else { THUMB_COMPACT };
+    let thumb_size = env.thumb_size();
     let cover = crate::common::cover::thumb(
         covers,
         library,
@@ -130,7 +125,7 @@ pub(super) fn title_cell(
                 .truncate()
                 .text_size(px(theme::FONT_TRACK))
                 .font_weight(state.title_weight())
-                .text_color(state.title_color())
+                .text_color(RowState::title_color())
                 // 只给标题文字挂提示：挂在整个标题格上会盖住下面的艺术家 / 专辑链接
                 .tooltip(crate::common::tooltip::builder(track.title.clone()))
                 .child(track.title.clone()),
@@ -143,11 +138,7 @@ pub(super) fn title_cell(
                 .flex()
                 .items_center()
                 .text_size(px(theme::FONT_CAPTION))
-                .text_color(if state.is_playing() {
-                    theme::accent_text()
-                } else {
-                    theme::text_muted()
-                })
+                .text_color(theme::text_muted())
                 .children(segments),
         );
     } else {
@@ -160,11 +151,7 @@ pub(super) fn title_cell(
                     .flex_shrink(2.0)
                     .truncate()
                     .text_size(px(theme::FONT_CAPTION))
-                    .text_color(if state.is_playing() {
-                        theme::accent_text()
-                    } else {
-                        theme::text_muted()
-                    })
+                    .text_color(theme::text_muted())
                     .child(artist),
             );
         }
@@ -293,7 +280,7 @@ pub(super) fn actions_cell(
     group: SharedString,
     track_id: TrackId,
     liked: bool,
-    library: Entity<LibraryEntity>,
+    library: &Entity<LibraryEntity>,
     list: WeakEntity<TrackList>,
     menu: impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static,
 ) -> impl IntoElement {
@@ -307,7 +294,6 @@ pub(super) fn actions_cell(
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(theme::RADIUS_PILL))
             .text_color(theme::text_faint())
             .cursor_pointer()
             .opacity(if visible { 1.0 } else { 0.0 })
@@ -322,14 +308,8 @@ pub(super) fn actions_cell(
         liked || always_visible,
         group.clone(),
     )
-    .when(liked, |button| button.text_color(theme::accent_text()))
-    .hover(|style| {
-        style.bg(theme::elevated()).text_color(if liked {
-            theme::accent_hover()
-        } else {
-            theme::text()
-        })
-    })
+    .when(liked, |button| button.text_color(theme::text()))
+    .hover(|style| style.bg(theme::elevated()).text_color(theme::text()))
     .tooltip(crate::common::tooltip::builder(if liked {
         "取消收藏"
     } else {
@@ -363,14 +343,11 @@ pub(super) fn actions_cell(
     );
 
     let remove = round(("track-remove", index), always_visible, group)
-        .hover(|style| style.bg(theme::elevated()).text_color(theme::danger()))
+        .hover(|style| style.bg(theme::elevated()).text_color(theme::text()))
         .tooltip(crate::common::tooltip::builder("从曲库移除"))
         .on_click(move |_, _, cx| {
-            let removed = library.update(cx, |library, cx| library.remove(track_id, cx));
-            if let Some((track, at)) = removed {
-                list.update(cx, |_, cx| cx.emit(TrackListEvent::Removed(track, at)))
-                    .ok();
-            }
+            list.update(cx, |list, cx| list.begin_remove(track_id, index, cx))
+                .ok();
         })
         .child(icon_inherit(Glyph::Cross, 12.));
 
@@ -384,24 +361,4 @@ pub(super) fn actions_cell(
         .child(heart)
         .child(more)
         .child(remove)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::TWO_LINE_MIN;
-    use crate::shell::Density;
-
-    #[test]
-    fn the_two_line_threshold_separates_the_two_densities() {
-        assert!(
-            Density::Comfortable.row_height() >= TWO_LINE_MIN,
-            "舒适档（{}px）应当画两行（阈值 {TWO_LINE_MIN}px）",
-            Density::Comfortable.row_height()
-        );
-        assert!(
-            Density::Compact.row_height() < TWO_LINE_MIN,
-            "紧凑档（{}px）应当只有一行（阈值 {TWO_LINE_MIN}px）",
-            Density::Compact.row_height()
-        );
-    }
 }

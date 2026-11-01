@@ -2,7 +2,7 @@
 //! [`HEADER_BACK_INSET`] 由 [`BACK_BTN`] 算出，各页头都靠它让位。
 
 use crate::entities::{LibraryEntity, Scope};
-use crate::icon::{Glyph, icon};
+use crate::icon::{Glyph, icon_inherit};
 use crate::platform::*;
 use crate::shell::{NavSection, ShellEntity};
 use crate::theme;
@@ -88,11 +88,17 @@ pub(super) fn floating_back(
     hint: SharedString,
     shell: Entity<ShellEntity>,
     library: Entity<LibraryEntity>,
+    window: &mut Window,
+    cx: &mut App,
 ) -> impl IntoElement {
     let on_click = nav_click(shell, library, NavDirection::Back);
+    let id = ElementId::from(FLOATING_BACK_ID);
+    let hover = crate::common::hover::progress(id.clone(), window, cx);
+    // 黄底擦入到一半时图标跨在黑 / 黄之间，颜色跟着进度走才不会有一瞬间看不清
+    let glyph_color = theme::text_on_control().blend(theme::text_on_accent().opacity(hover));
 
     div()
-        .id(FLOATING_BACK_ID)
+        .id(id.clone())
         .absolute()
         .left(px(theme::GAP_LG))
         .top(px(BACK_INSET_TOP))
@@ -100,13 +106,25 @@ pub(super) fn floating_back(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_full()
-        .bg(rgba(0x000000d9))
-        .text_color(theme::text())
+        .bg(theme::control())
         .cursor_pointer()
-        .hover(|style| style.bg(rgba(0x000000ff)))
+        .on_hover(crate::common::hover::bind(id))
         .on_click(on_click)
-        .child(icon(Glyph::ArrowLeft, 20., theme::text()))
+        .child(
+            div()
+                .absolute()
+                .left_0()
+                .top_0()
+                .bottom_0()
+                .w(relative(hover))
+                .bg(theme::accent()),
+        )
+        .child(crate::common::ornament::cut_br(theme::CUT_SM, theme::bg()))
+        .child(
+            div()
+                .text_color(glyph_color)
+                .child(icon_inherit(Glyph::ArrowLeft, 20.)),
+        )
         .tooltip(crate::common::tooltip::builder(hint))
 }
 

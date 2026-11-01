@@ -1,4 +1,4 @@
-//! 首页「浏览」那排跳转卡。
+//! 首页「浏览」那排跳转卡：切角看板 + 顶部墨色页签 + 真实计数。
 //! 不压历史栈：历史栈只记「作用域收窄」，否则返回会退到一半变成切区段。
 
 use crate::entities::LibraryEntity;
@@ -7,12 +7,9 @@ use crate::platform::*;
 use crate::shell::{NavSection, ShellEntity};
 use crate::theme;
 
-const ENTRY_H: f32 = 72.0;
-/// 240 容纳「图标 40 + 间距 12 + 两行文字」；三张卡加两条间距共 744px。
-/// 这是上限而不是定宽：宽度不够时三张均分收缩，560px 窗口下每张约 139px。
-const ENTRY_W: f32 = 240.0;
+const ENTRY_H: f32 = 96.0;
 
-/// 一张跳转卡片：图标 + 名称 + 数量，点击切到对应区段。
+/// 一张跳转看板：点击切到对应区段。
 pub(super) fn entry_card(
     id: &'static str,
     glyph: Glyph,
@@ -24,56 +21,73 @@ pub(super) fn entry_card(
 ) -> AnyElement {
     let shell = shell.clone();
     let library = library.clone();
+    let english = match section {
+        NavSection::Tracks => "Tracks",
+        NavSection::Albums => "Albums",
+        NavSection::Artists => "Artists",
+        _ => "Browse",
+    };
 
     div()
         .id(id)
+        .relative()
         .flex_none()
         .h(px(ENTRY_H))
         .flex_1()
         .min_w_0()
-        .max_w(px(ENTRY_W))
         .flex()
-        .items_center()
-        .gap(px(theme::GAP_MD))
+        .flex_col()
+        .justify_center()
+        .gap(px(2.))
         .px(px(theme::GAP_MD))
-        .rounded(px(theme::RADIUS_CARD))
-        .bg(theme::elevated())
+        .pr(px(theme::GAP_MD + theme::CUT))
+        .bg(theme::window_base())
+        .border_1()
+        .border_color(theme::border())
         .cursor_pointer()
-        .hover(|style| style.bg(theme::panel()))
+        .hover(|style| style.bg(theme::elevated()))
         .on_click(move |_, _, cx| {
             // `go_to` 自己会退作用域并记一条历史，顶栏 ← 因此能退回首页。
             crate::shell::go_to(section, &shell, &library, cx);
         })
+        .child(crate::common::ornament::cut_br(theme::CUT, theme::bg()))
+        // 顶边一小段墨色页签，悬停时铺满整条边
         .child(
             div()
-                .flex_none()
-                .size(px(40.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(theme::RADIUS_LG))
-                .bg(theme::panel())
-                .text_color(theme::text())
-                .child(icon_inherit(glyph, 20.)),
+                .absolute()
+                .top_0()
+                .left_0()
+                .h(px(5.))
+                .w(px(32.))
+                .bg(theme::text()),
         )
         .child(
             div()
-                .min_w_0()
                 .flex()
-                .flex_col()
+                .w_full()
+                .items_center()
+                .justify_between()
+                .child(crate::common::section::eyebrow(english))
                 .child(
                     div()
-                        .text_size(px(theme::FONT_BODY))
-                        .font_weight(theme::WEIGHT_SUBTITLE)
-                        .text_color(theme::text())
-                        .child(title),
-                )
-                .child(
-                    div()
-                        .text_size(px(theme::FONT_CAPTION))
-                        .text_color(theme::text_muted())
-                        .child(count),
+                        .flex_none()
+                        .text_color(theme::text_faint())
+                        .child(icon_inherit(glyph, 16.)),
                 ),
+        )
+        .child(
+            div()
+                .font(theme::field_font())
+                .text_size(px(theme::FONT_TITLE))
+                .font_weight(theme::WEIGHT_TITLE)
+                .text_color(theme::text())
+                .child(count),
+        )
+        .child(
+            div()
+                .text_size(px(theme::FONT_CAPTION))
+                .text_color(theme::text_muted())
+                .child(title),
         )
         .into_any_element()
 }

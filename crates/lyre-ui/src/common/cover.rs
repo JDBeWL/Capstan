@@ -1,6 +1,7 @@
 //! 封面槽的共用取图流程：查缓存 → 未命中且并非「确定无封面」才发请求 → 否则由调用方画占位。
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use lyre_core::TrackId;
 
@@ -10,18 +11,9 @@ use crate::icon::{Glyph, icon_inherit};
 use crate::platform::*;
 use crate::theme;
 
-/// 无封面占位 / 分类块的稳定取色：按首字符在调色板上取值。
-pub fn monogram_color(initial: char) -> Rgba {
-    const PALETTE: [(u8, u8, u8); 6] = [
-        (0x6d, 0x5b, 0x9c),
-        (0x4a, 0x6c, 0x8c),
-        (0x8c, 0x5a, 0x5a),
-        (0x5a, 0x7a, 0x6a),
-        (0x7a, 0x6a, 0x8c),
-        (0x8c, 0x7a, 0x5a),
-    ];
-    let (r, g, b) = PALETTE[u32::from(initial) as usize % PALETTE.len()];
-    rgb(u32::from(r) << 16 | u32::from(g) << 8 | u32::from(b))
+/// 无封面占位的底色：墨色块配白字，像一张编号标签。不引入第二种强调色。
+pub fn monogram_color(_initial: char) -> Rgba {
+    theme::text()
 }
 
 /// 封面槽的三态。必须区分「排队中」与「没有封面」：
@@ -78,18 +70,13 @@ pub fn cover_image(
     }
 }
 
-/// 解码期间的骨架块：暗灰对角渐变。宽度交给父容器（`w_full`），高度由调用方给。
-/// 不做动画：一屏常有几十张同时排队，逐帧 shimmer 会让这些槽位每帧重绘。
+/// 解码期间的骨架块：浅灰 chip 色，不闪光、不渐变。
 pub fn skeleton(height: f32, radius: f32) -> Div {
     div()
         .w_full()
         .h(px(height))
         .rounded(px(radius))
-        .bg(linear_gradient(
-            135.0,
-            linear_color_stop(theme::surface(), 0.0),
-            linear_color_stop(theme::elevated(), 1.0),
-        ))
+        .bg(theme::elevated())
 }
 
 /// 歌单封面的一格：用户指定的图 → 成员的内嵌封面 → 按名字派生的渐变块。
@@ -172,7 +159,8 @@ pub fn thumb(
 
 /// 一张已解码的封面铺满那一格。
 pub fn image_cell(image: Arc<RenderImage>, size: f32, radius: f32) -> AnyElement {
-    div()
+    let key = Arc::as_ptr(&image);
+    let cell = div()
         .flex_none()
         .size(px(size))
         .rounded(px(radius))
@@ -182,30 +170,50 @@ pub fn image_cell(image: Arc<RenderImage>, size: f32, radius: f32) -> AnyElement
                 .size_full()
                 .rounded(px(radius))
                 .object_fit(ObjectFit::Cover),
-        )
-        .into_any_element()
+        );
+    fade_in_key(key, cell).into_any_element()
 }
 
-fn derived_cover(size: f32, radius: f32, seed: &str) -> AnyElement {
+/// 解码完成的一格淡入。key 带图片指针：换图重播，同一张图重绘不重播。
+pub fn fade_in<E>(image: &Arc<RenderImage>, el: E) -> AnimationElement<E>
+where
+    E: Styled + IntoElement + 'static,
+{
+    fade_in_key(Arc::as_ptr(image), el)
+}
+
+fn fade_in_key<E>(key: *const RenderImage, el: E) -> AnimationElement<E>
+where
+    E: Styled + IntoElement + 'static,
+{
+    el.with_animation(
+        SharedString::from(format!("cover-{key:p}")),
+        Animation::new(Duration::from_millis(crate::common::anim::MOTION_COVER_MS))
+            .with_easing(theme::ease_std()),
+        Styled::opacity,
+    )
+}
+
+fn derived_cover(size: f32, radius: f32, _seed: &str) -> AnyElement {
     div()
+        .relative()
         .flex_none()
         .size(px(size))
         .rounded(px(radius))
-        .border_1()
-        .border_color(theme::border())
         .overflow_hidden()
         .flex()
         .items_center()
         .justify_center()
-        .bg(linear_gradient(
-            135.0,
-            linear_color_stop(theme::hero_tint(Some(seed)).opacity(0.55), 0.0),
-            linear_color_stop(theme::elevated(), 1.0),
+        .bg(theme::elevated())
+        .border_1()
+        .border_color(theme::border())
+        .child(crate::common::ornament::hatch_fill(
+            theme::text().opacity(0.06),
         ))
         .child(crate::icon::icon(
             crate::icon::Glyph::Music,
             (size * 0.25).round(),
-            theme::text_faint(),
+            theme::text(),
         ))
         .into_any_element()
 }

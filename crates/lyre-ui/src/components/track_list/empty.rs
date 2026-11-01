@@ -1,6 +1,6 @@
 //! 三种空状态：曲库本来就是空的、作用域里没有曲目、搜索没有匹配。
 
-use crate::common::button::{ButtonKind, text_button};
+use crate::common::button::{ButtonKind, text_button_animated};
 use crate::entities::LibraryEntity;
 use crate::platform::*;
 use crate::theme;
@@ -8,13 +8,21 @@ use crate::theme;
 /// 三种空状态共用的外框。
 fn empty_frame() -> Div {
     div()
-        .size_full()
+        .relative()
+        .mt(px(theme::GAP_XL * 2.0))
+        .mx(px(theme::GAP_XL))
+        .max_w(px(560.))
         .flex()
         .flex_col()
         .items_start()
-        .pt(px(theme::GAP_XL * 3.0))
-        .px(px(theme::GAP_XL * 2.0))
         .gap(px(theme::GAP_MD))
+        .p(px(theme::GAP_XL))
+        .border_1()
+        .border_color(theme::border())
+        .child(crate::common::ornament::hatch_fill(
+            theme::text().opacity(0.05),
+        ))
+        .child(crate::common::section::eyebrow("Empty"))
 }
 
 fn empty_title(text: impl Into<SharedString>) -> impl IntoElement {
@@ -38,20 +46,27 @@ pub(super) fn loading_library() -> impl IntoElement {
     empty_frame()
         .child(empty_title("正在读取曲库…"))
         .child(empty_hint("窗口先显示，曲目会在后台核对完成后出现。"))
+        .child(crate::common::anim::unknown_progress())
 }
 
 /// 空状态：曲库本来就是空的。
-pub(super) fn empty_library(library: Entity<LibraryEntity>) -> impl IntoElement {
+pub(super) fn empty_library(
+    library: Entity<LibraryEntity>,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
     empty_frame()
         .child(empty_title("曲库还是空的"))
         .child(empty_hint(
             "把音频文件或文件夹拖进窗口，也可以点下面的按钮。\
              支持 MP3 / FLAC / M4A / WAV / OGG / Opus 等常见格式。",
         ))
-        .child(div().mt(px(theme::GAP_SM)).child(text_button(
+        .child(div().mt(px(theme::GAP_SM)).child(text_button_animated(
             "empty-import",
             "导入音乐",
             ButtonKind::Primary,
+            window,
+            cx,
             move |_, _, cx| {
                 library.update(cx, LibraryEntity::open_dialog);
             },
@@ -63,6 +78,8 @@ pub(super) fn empty_scope(
     library: Entity<LibraryEntity>,
     scope: Option<String>,
     from_list: bool,
+    window: &mut Window,
+    cx: &mut App,
 ) -> impl IntoElement {
     let name = scope.unwrap_or_else(|| "这里".to_owned());
     // 「可能已被移除」只对专辑 / 艺术家成立：歌单的成员不会随曲库消失，新歌单从来没装过东西
@@ -80,10 +97,12 @@ pub(super) fn empty_scope(
     empty_frame()
         .child(empty_title(title))
         .child(empty_hint(hint))
-        .child(div().mt(px(theme::GAP_SM)).child(text_button(
+        .child(div().mt(px(theme::GAP_SM)).child(text_button_animated(
             "exit-scope",
             "返回曲库",
             ButtonKind::Primary,
+            window,
+            cx,
             move |_, _, cx| {
                 library.update(cx, LibraryEntity::exit_scope);
             },
@@ -94,16 +113,20 @@ pub(super) fn no_matches(
     library: Entity<LibraryEntity>,
     total: usize,
     query: &str,
+    window: &mut Window,
+    cx: &mut App,
 ) -> impl IntoElement {
     empty_frame()
         .child(empty_title(format!("没有匹配「{query}」的曲目")))
         .child(empty_hint(format!(
             "曲库里有 {total} 首，试试别的关键词，或者清空搜索看全部。"
         )))
-        .child(div().mt(px(theme::GAP_SM)).child(text_button(
+        .child(div().mt(px(theme::GAP_SM)).child(text_button_animated(
             "clear-search",
             "清空搜索",
             ButtonKind::Primary,
+            window,
+            cx,
             move |_, _, cx| {
                 library.update(cx, LibraryEntity::clear_query);
             },
