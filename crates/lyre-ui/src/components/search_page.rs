@@ -772,10 +772,13 @@ impl SearchPage {
                     .id(SharedString::from(format!("search-all-{title}")))
                     .flex_none()
                     .cursor_pointer()
+                    // 悬停给 chip 底，不给黄字：黄在浅色下压纸只有 1.05:1。
+                    .mx(px(-4.))
+                    .px(px(4.))
                     .text_size(px(theme::FONT_CAPTION))
                     .font_weight(theme::WEIGHT_BUTTON)
                     .text_color(theme::text())
-                    .hover(|style| style.text_color(theme::control_hover()))
+                    .hover(|style| style.bg(theme::elevated()))
                     .on_click(move |_, _, cx| crate::shell::go_to(section, &shell, &library, cx))
                     .child("查看全部"),
             );

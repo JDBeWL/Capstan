@@ -110,9 +110,9 @@ pub fn set_appearance(appearance: crate::theme::Appearance, cx: &mut App) {
         theme.colors.primary_foreground = crate::theme::text_on_control().into();
         theme.colors.primary_hover = crate::theme::text_muted().into();
         theme.colors.primary_active = crate::theme::text_muted().into();
-        theme.colors.ring = crate::theme::text().into();
+        theme.colors.ring = crate::theme::trace().into();
         theme.colors.caret = crate::theme::text().into();
-        theme.colors.selection = crate::theme::control().opacity(0.24).into();
+        theme.colors.selection = crate::theme::mark().into();
         theme.colors.scrollbar_thumb = crate::theme::border().into();
         theme.colors.scrollbar_thumb_hover = crate::theme::text_faint().into();
     });

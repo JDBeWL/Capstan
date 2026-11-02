@@ -27,6 +27,8 @@ pub enum NavSection {
 impl NavSection {
     /// 出现在主区区段切换器里的那三个，不含 `Home` / `Search`。
     pub const LIBRARY: [NavSection; 3] = [Self::Tracks, Self::Albums, Self::Artists];
+    pub const DEFAULT_VIEWS: [NavSection; 4] =
+        [Self::Home, Self::Tracks, Self::Albums, Self::Artists];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -54,6 +56,15 @@ impl NavSection {
     /// 这个区段是不是「曲库的一个切面」（`Tracks` / `Albums` / `Artists`）。
     pub fn in_library(self) -> bool {
         matches!(self, Self::Tracks | Self::Albums | Self::Artists)
+    }
+
+    /// 存档里的默认视图可能来自手改的 JSON，落到选项之外时回到曲目。
+    pub fn as_default_view(self) -> Self {
+        if Self::DEFAULT_VIEWS.contains(&self) {
+            self
+        } else {
+            Self::Tracks
+        }
     }
 }
 
@@ -213,6 +224,38 @@ mod tests {
     use super::{NavSection, ShellEntity};
     use crate::entities::Scope;
     use crate::shell::{Breakpoint, Density};
+
+    /// 设置里的「默认视图」直接铺这张表，漏一个区段就是设置项少一格。
+    #[test]
+    fn default_views_cover_the_sections_you_can_land_on() {
+        assert_eq!(NavSection::DEFAULT_VIEWS[0], NavSection::Home);
+        for section in [
+            NavSection::Home,
+            NavSection::Tracks,
+            NavSection::Albums,
+            NavSection::Artists,
+        ] {
+            assert!(
+                NavSection::DEFAULT_VIEWS.contains(&section),
+                "{} 能当默认视图，却没出现在设置里",
+                section.label()
+            );
+        }
+        for section in [NavSection::Search, NavSection::Settings] {
+            assert!(
+                !NavSection::DEFAULT_VIEWS.contains(&section),
+                "{} 由一次操作进入，不该出现在默认视图里",
+                section.label()
+            );
+        }
+    }
+
+    #[test]
+    fn a_default_view_outside_the_offered_list_falls_back_to_tracks() {
+        assert_eq!(NavSection::Home.as_default_view(), NavSection::Home);
+        assert_eq!(NavSection::Search.as_default_view(), NavSection::Tracks);
+        assert_eq!(NavSection::Settings.as_default_view(), NavSection::Tracks);
+    }
 
     /// 不启动窗口订阅的实例；`ShellEntity::new` 需要 `&mut Window`。
     fn shell_for_history() -> ShellEntity {

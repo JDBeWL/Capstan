@@ -216,13 +216,13 @@ impl ButtonKind {
             Self::Primary => (
                 theme::control(),
                 theme::text_on_control(),
-                theme::accent(),
+                theme::control_hover(),
                 theme::text_on_accent(),
             ),
             Self::Secondary => (
                 theme::elevated(),
                 theme::text(),
-                theme::accent(),
+                theme::control_hover(),
                 theme::text_on_accent(),
             ),
             // Ghost 与 Outline 仅在描边上有别，由 `pad_y` / `frame_height` 处理；颜色完全一致。

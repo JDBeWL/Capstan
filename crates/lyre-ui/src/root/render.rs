@@ -454,7 +454,7 @@ impl RootView {
             .top_0()
             .left_0()
             .size_full()
-            .bg(theme::text().opacity(0.5))
+            .bg(theme::scrim())
             // 命中测试默认会包含下层元素；若不拦截，点击遮罩会同时命中底层卡片。
             .occlude()
             .on_click(move |_, _, cx| {
@@ -579,7 +579,7 @@ fn drop_hint() -> impl IntoElement {
         .flex()
         .items_center()
         .justify_center()
-        .bg(theme::text().opacity(0.85))
+        .bg(theme::scrim_heavy())
         .child(
             div()
                 .relative()
@@ -594,7 +594,7 @@ fn drop_hint() -> impl IntoElement {
                 .bg(theme::panel())
                 .child(crate::common::ornament::cut_br(
                     theme::CUT_LG,
-                    theme::text().opacity(0.85),
+                    theme::scrim_heavy(),
                 ))
                 .child(
                     div()

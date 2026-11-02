@@ -25,6 +25,10 @@ impl Appearance {
 
 /// 一套完整的主题取值，字段是原始 sRGB。函数只负责按当前明暗取色。
 /// 两套的层级关系一致。板比纸亮，切角露出的始终是更暗的纸。
+///
+/// 带 alpha 的颜色也在这里定值，不在调用处叠 `text().opacity(..)`：
+/// 墨色本身会随主题翻成浅色，派生出来的遮罩、荧光笔就会跟着翻，
+/// 深色下变成一层白雾。`scrim` 与 `mark_alpha` 就是为此单列的。
 #[derive(Clone, Copy)]
 pub(crate) struct Palette {
     pub(crate) dark: bool,
@@ -38,9 +42,14 @@ pub(crate) struct Palette {
     pub(crate) chip: u32,
     pub(crate) signal: u32,
     pub(crate) on_signal: u32,
+    pub(crate) accent_hover: u32,
+    pub(crate) mark_alpha: f32,
     pub(crate) hover: u32,
     pub(crate) cursor: u32,
     pub(crate) tag_bg: u32,
+    pub(crate) tag_fg: u32,
+    pub(crate) scrim: u32,
+    pub(crate) scrim_alpha: f32,
     pub(crate) danger: u32,
     pub(crate) on_danger: u32,
     pub(crate) on_control: u32,
@@ -58,30 +67,44 @@ const LIGHT: Palette = Palette {
     chip: 0xe4e4e0,
     signal: 0xfffa00,
     on_signal: 0x161616,
+    accent_hover: 0xe6e100,
+    mark_alpha: 0.55,
     hover: 0xf4f4f2,
     cursor: 0xe4e4e0,
     tag_bg: 0xe4e4e0,
+    tag_fg: 0x3f3f3f,
+    scrim: 0x161616,
+    scrim_alpha: 0.50,
     danger: 0xb3_26_1e,
     on_danger: 0xffffff,
     on_control: 0xffffff,
 };
 
 /// 深色。纸 #191919、板 #222222、墨 #EDEDED，黄不变。
+///
+/// 三级文字各自留出一档台阶：ink → ink2 → faint 依次为 #EDEDED → #C0C0C0 → #A3A3A3。
+///
+/// 遮罩 #000000 @ 0.63、荧光笔黄 @ 0.22 也在这里定，不从墨色派生。
 const DARK: Palette = Palette {
     dark: true,
     paper: 0x191919,
     panel: 0x222222,
     ink: 0xededed,
-    ink2: 0xa3a3a3,
-    faint: 0x9c9c9c,
+    ink2: 0xc0c0c0,
+    faint: 0xa3a3a3,
     rule: 0x353535,
     rule_soft: 0x2a2a2a,
     chip: 0x2e2e2e,
     signal: 0xfffa00,
     on_signal: 0x161616,
+    accent_hover: 0xfff84d,
+    mark_alpha: 0.22,
     hover: 0x191919,
     cursor: 0x303030,
     tag_bg: 0x3a3a3a,
+    tag_fg: 0xededed,
+    scrim: 0x000000,
+    scrim_alpha: 0.63,
     danger: 0xff8a7a,
     on_danger: 0x161616,
     on_control: 0x161616,
@@ -146,11 +169,13 @@ pub fn surface() -> Rgba {
 pub fn elevated() -> Rgba {
     c(palette().chip)
 }
-/// 列表行的悬停底色，退回纸色。
+/// 列表行的悬停底色，退回纸色 —— 像被按下去一层。
 pub fn hover() -> Rgba {
     c(palette().hover)
 }
-/// 键盘光标所在行的底色。比 [`hover`] 更醒目的一档；浅色更深，深色更浅。
+/// 键盘光标所在行的底色，从板色往外再走一档。
+/// 纸与板之间只有 1.10:1 的余量，塞不下两级「压下去」：浅色的板是纯白，只能都往下走；
+/// 深色的板上方还有空间，于是悬停退到纸色、光标抬到 chip 一侧，两个状态隔着板色各占一边。
 pub fn cursor() -> Rgba {
     c(palette().cursor)
 }
@@ -162,10 +187,6 @@ pub fn border() -> Rgba {
 /// 比 [`border`] 更弱的分隔线。
 pub fn border_soft() -> Rgba {
     c(palette().rule_soft)
-}
-/// 有意义的线，用于当前项、选中段与强调边框。
-pub fn rule_strong() -> Rgba {
-    text()
 }
 
 /// 标出「这里」的线。浅色用墨，深色用黄。行首的悬停、光标条与焦点环都走它。
@@ -197,16 +218,18 @@ pub fn text_faint() -> Rgba {
 pub fn accent() -> Rgba {
     c(palette().signal)
 }
+/// 黄块被指到时的填充。浅色压暗一档，深色提亮一档：两套主题里黄都是各自最亮的东西，
+/// 再压暗就等于说「这块不活跃了」。
 pub fn accent_hover() -> Rgba {
-    c(0xe6e100)
+    c(palette().accent_hover)
 }
 /// 强调色上的字与图形。两套主题都是深墨色，黄块上不存在浅色字。
 pub fn text_on_accent() -> Rgba {
     c(palette().on_signal)
 }
-/// 当前行与拖放高亮的淡底色，`accent` 的 0.20 alpha。
-pub fn accent_soft() -> Rgba {
-    accent().opacity(0.20)
+/// 荧光笔：输入框里选中的文字、搜索命中的片段。底色是黄的，上面照常写墨字。
+pub fn mark() -> Rgba {
+    accent().opacity(palette().mark_alpha)
 }
 
 /// 主控件的填充色。播放键、进度条已播段、勾选框。墨色，悬停时被黄色擦入。
@@ -214,6 +237,7 @@ pub fn control() -> Rgba {
     text()
 }
 /// 主控件悬停档，黄色。字与图形同时换成 [`text_on_accent`]。
+/// 与 [`accent`] 同值，单列是为了让按钮那边读起来是「控件被指到的样子」。
 pub fn control_hover() -> Rgba {
     accent()
 }
@@ -229,13 +253,6 @@ pub fn danger() -> Rgba {
 pub fn text_on_danger() -> Rgba {
     c(palette().on_danger)
 }
-pub fn danger_soft() -> Rgba {
-    danger().opacity(0.10)
-}
-/// 扫描等进行中指示。与正文同色，靠黄色小旗提示，不引入红绿语义色。
-pub fn success() -> Rgba {
-    text_muted()
-}
 
 /// 进度与音量轨道的底色。
 pub fn track() -> Rgba {
@@ -245,6 +262,25 @@ pub fn track() -> Rgba {
 /// 格式标签（wav / mp3）的底色。
 pub fn tag_bg() -> Rgba {
     c(palette().tag_bg)
+}
+/// 格式标签上的字。深色的标签底压到 #3A3A3A，字必须跟着提到墨色，
+/// 否则 10px 的规格字只有 4.5:1，正好踩在 AA 线上。
+pub fn tag_fg() -> Rgba {
+    c(palette().tag_fg)
+}
+
+/// 盖在内容上的遮罩。两套主题都是暗的，不从墨色派生：
+/// 墨色在深色里是 #EDEDED，派生出来的遮罩就是一层白雾，主区被洗成中灰。
+pub fn scrim() -> Rgba {
+    veil(palette().scrim, palette().scrim_alpha)
+}
+/// 拖放提示这类全窗遮罩，比 [`scrim`] 更重。颜色仍跟着 `scrim` 走。
+pub fn scrim_heavy() -> Rgba {
+    veil(palette().scrim, 0.85)
+}
+
+fn veil(color: u32, alpha: f32) -> Rgba {
+    c(color).opacity(alpha)
 }
 
 /// 完全透明的背景，用于「未选中行」占位。
@@ -608,10 +644,12 @@ mod tests {
         assert_eq!(dark.paper, 0x191919);
         assert_eq!(dark.panel, 0x222222);
         assert_eq!(dark.ink, 0xededed);
-        assert_eq!(dark.ink2, 0xa3a3a3);
         assert_eq!(dark.rule, 0x353535);
         assert_eq!(dark.chip, 0x2e2e2e);
         assert_eq!(dark.danger, 0xff8a7a);
+        // 三级文字。第三级取 ink-2，第二级比它亮一档，否则两级只差 1.09:1。
+        assert_eq!(dark.faint, 0xa3a3a3);
+        assert_eq!(dark.ink2, 0xc0c0c0);
         // 封面占位是墨块 + 反白字。深色的墨是浅色，字必须跟着翻成深墨，
         // 否则浅墨底压白字，整张占位只剩一块空白色块。
         assert_eq!(
@@ -624,9 +662,39 @@ mod tests {
             light.on_signal, dark.on_signal,
             "黄块上的字两套都必须是深墨"
         );
+        // 黄块悬停档各走各的：浅色压暗，深色提亮。
+        assert_eq!(light.accent_hover, 0xe6e100);
+        assert_eq!(dark.accent_hover, 0xfff84d);
+        // 遮罩两套都是暗的。浅色是墨 50%，深色是纯黑 63%。
+        assert_eq!(light.scrim, 0x161616);
+        assert_eq!(light.scrim_alpha, 0.50);
+        assert_eq!(dark.scrim, 0x000000);
+        assert_eq!(dark.scrim_alpha, 0.63);
+        // 荧光笔浅色重、深色轻，免得吞掉浅色字。
+        assert_eq!(light.mark_alpha, 0.55);
+        assert_eq!(dark.mark_alpha, 0.22);
+
         assert_same_color(trace_for(light), color(light.ink), "浅色的 trace");
         assert_same_color(trace_for(dark), color(dark.signal), "深色的 trace");
-        assert_same_color(super::text_on_control(), rgb(0xffffff), "封面占位上的字母");
+        assert_same_color(color(light.on_control), rgb(0xffffff), "浅色封面占位上的字母");
+    }
+
+    #[test]
+    fn scrim_is_dark_in_both_themes() {
+        for (mode, p) in modes() {
+            let paper = super::relative_luminance(color(p.paper));
+            for (name, veil) in [
+                ("scrim", super::veil(p.scrim, p.scrim_alpha)),
+                ("scrim_heavy", super::veil(p.scrim, 0.85)),
+            ] {
+                let under = super::relative_luminance(super::over(veil, color(p.panel)));
+                assert!(
+                    under < paper,
+                    "{mode:?} 的 {name} 把主区留在 {under:.3}，比纸色 {paper:.3} 还亮：\
+                     遮罩必须压暗内容，不能跟着墨色翻成浅色"
+                );
+            }
+        }
     }
 
     #[test]
@@ -700,6 +768,12 @@ mod tests {
                 base,
                 &format!("{mode:?} glyph on control hover"),
             );
+            assert_pass(
+                color(p.on_signal),
+                color(p.accent_hover),
+                base,
+                &format!("{mode:?} glyph on accent hover"),
+            );
         }
     }
 
@@ -717,14 +791,23 @@ mod tests {
     }
 
     #[test]
-    fn playing_row_is_readable() {
+    fn mark_keeps_text_readable_and_stays_yellow() {
         for (mode, p) in modes() {
             let base = color(p.panel);
+            let mark = super::veil(p.signal, p.mark_alpha);
             assert_pass(
                 color(p.ink),
-                color(p.signal).opacity(0.20),
+                mark,
                 base,
-                &format!("{mode:?} ink on accent_soft"),
+                &format!("{mode:?} ink on mark"),
+            );
+            // 荧光笔是强调色，不是灰色。若哪次改成墨色叠层，红蓝两个通道就会相等。
+            let composited = super::over(mark, color(p.panel));
+            assert!(
+                composited.r > composited.b + 0.15,
+                "{mode:?} 的选中高亮退成了灰（r={:.2} b={:.2}）",
+                composited.r,
+                composited.b
             );
         }
     }
@@ -756,12 +839,6 @@ mod tests {
                 color(p.panel),
                 base,
                 &format!("{mode:?} danger on panel"),
-            );
-            assert_pass(
-                color(p.ink2),
-                color(p.panel),
-                base,
-                &format!("{mode:?} success on panel"),
             );
         }
     }
@@ -895,11 +972,12 @@ mod tests {
     fn tag_text_is_readable_on_its_pill() {
         for (mode, p) in modes() {
             let base = color(p.panel);
-            assert_pass(
-                color(p.ink2),
-                color(p.tag_bg),
-                base,
-                &format!("{mode:?} 格式标签文字 on 标签底"),
+            let ratio = super::contrast_ratio(color(p.tag_fg), color(p.tag_bg), base);
+            // 标签是 10px 的小字，只满足 4.5 太紧：深色的标签底压到 #3A3A3A 时，
+            // 次要墨色正好落在 4.51:1，肉眼已经发虚。小字按 AAA 要求。
+            assert!(
+                ratio >= 7.0,
+                "{mode:?} 格式标签文字只有 {ratio:.2}:1，10px 的小字读不清"
             );
         }
     }

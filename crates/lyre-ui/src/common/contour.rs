@@ -1,5 +1,5 @@
 //! 等高线。缓坡上的涟漪，等值线从片的一边穿到另一边，不闭合成圈。
-//! 做法与 skill 里 `assets/contours/draw-contours.mjs` 同源，先在网格上算一层
+//! `assets/contours/draw-contours.mjs` 同源，先在网格上算一层
 //! 「坡度 + 波浪」的标量场，再用 marching squares 把等值线连成折线，只留横穿整片的开放线。
 //! 一片算一次就够，几何按像素尺寸缓存在线程里；换窗口大小时才重算。
 
@@ -356,7 +356,7 @@ fn bend(t: f32, frequency: f32, phase: f32) -> f32 {
     (std::f32::consts::TAU * frequency * t + phase).sin()
 }
 
-/// mulberry32。和 skill 里的生成器同一支，换个种子就换一片地形。
+/// mulberry32。换个种子就换一片地形。
 struct Rng(u32);
 
 impl Rng {

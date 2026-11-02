@@ -102,7 +102,9 @@ impl Default for Settings {
 impl Settings {
     /// 读不到（首次启动、文件损坏、目录不可读）或字段缺失时退回默认值。
     pub fn load() -> Self {
-        persist::load_or_default(FILE)
+        let mut settings: Self = persist::load_or_default(FILE);
+        settings.default_view = settings.default_view.as_default_view();
+        settings
     }
 
     pub fn save(&self) {

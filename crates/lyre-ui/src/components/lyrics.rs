@@ -317,7 +317,7 @@ impl Render for LyricsView {
                 cx,
             ))
             .child(div().flex_1().min_h_0().flex().child(body))
-            // 遮罩淡入 200ms；退出时 shell 直接移除，和 skill 的 overlay 时长一致。
+            // 遮罩淡入 200ms；退出时 shell 直接移除。
             .with_animation(
                 "lyrics-overlay-in",
                 Animation::new(Duration::from_millis(200)).with_easing(theme::ease_std()),

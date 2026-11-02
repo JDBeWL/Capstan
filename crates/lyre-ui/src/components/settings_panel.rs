@@ -119,11 +119,10 @@ impl Render for SettingsPanel {
         });
 
         let view: Picker = Rc::new(move |index: usize, cx: &mut App| {
-            let value = match index {
-                1 => NavSection::Albums,
-                2 => NavSection::Artists,
-                _ => NavSection::Tracks,
-            };
+            let value = NavSection::DEFAULT_VIEWS
+                .get(index)
+                .copied()
+                .unwrap_or(NavSection::Tracks);
             for_view.update(cx, |this, cx| this.set_default_view(value, cx));
         });
 
@@ -204,11 +203,8 @@ impl Render for SettingsPanel {
                 cx,
                 Glyph::Home,
                 "默认视图",
-                &[
-                    ("曲目", settings.default_view == NavSection::Tracks),
-                    ("专辑", settings.default_view == NavSection::Albums),
-                    ("艺术家", settings.default_view == NavSection::Artists),
-                ],
+                &NavSection::DEFAULT_VIEWS
+                    .map(|section| (section.label(), settings.default_view == section)),
                 &view,
             ))
             .child(choice_row(
@@ -308,7 +304,6 @@ impl Render for SettingsPanel {
             .child(data_section(&self.library, cx))
             .child(shortcuts_section(wide, self.shortcuts_open, cx));
 
-        // 内容比窗口高时会被裁掉且够不着，所以整块可滚；`track_scroll` 同时是滚动条读偏移量的来源。
         // 内容比窗口高时会被裁掉且够不着，所以整块可滚；`track_scroll` 同时是滚动条读偏移量的来源。
         // 左轨与曲库、首页对齐（都从 `PAGE_PAD` 起），但整行不铺到右边缘：
         // 设置是「标签 + 控件」的行，拉满一屏之后中间会空出七八百像素，读起来比收窄更累。

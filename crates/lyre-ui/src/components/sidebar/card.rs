@@ -476,10 +476,14 @@ fn empty_hint(library: Entity<LibraryEntity>) -> AnyElement {
             div()
                 .id("side-lib-empty-import")
                 .cursor_pointer()
+                // 悬停给一块 chip 底。黄只做填充：浅色下黄字压在纸色上只有 1.05:1，
+                // 鼠标一放上去字就没了。
+                .mx(px(-4.))
+                .px(px(4.))
                 .text_size(px(theme::FONT_CAPTION))
                 .font_weight(theme::WEIGHT_BUTTON)
                 .text_color(theme::text())
-                .hover(|style| style.text_color(theme::control_hover()))
+                .hover(|style| style.bg(theme::elevated()))
                 .on_click(move |_, _, cx| library.update(cx, LibraryEntity::open_dialog))
                 .child("导入音乐"),
         )

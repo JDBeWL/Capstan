@@ -355,7 +355,7 @@ fn quality_badge(quality: Quality, audio: AudioInfo, format: Option<String>) -> 
         .bg(theme::tag_bg())
         .text_size(px(theme::FONT_TAG))
         .font_weight(theme::WEIGHT_BUTTON)
-        .text_color(theme::text_muted())
+        .text_color(theme::tag_fg())
         .cursor_pointer()
         // 徽章落在「点开正在播放」的可点区域里，不拦下来会连面板一起弹开。
         .on_click(|_, _, cx| cx.stop_propagation())
