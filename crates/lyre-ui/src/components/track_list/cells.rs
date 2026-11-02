@@ -1,4 +1,4 @@
-//! 行内各格，含勾选框、标题与副标题、专辑，以及行尾操作区。
+//! 行内各格，含勾选框、标题与副标题、专辑，以及行尾收藏。
 
 use lyre_core::{Track, TrackId, UNKNOWN_ALBUM, UNKNOWN_ARTIST};
 
@@ -9,7 +9,8 @@ use crate::platform::*;
 use crate::theme;
 
 use super::row::RowState;
-use super::{ACTIONS_W, ALBUM_W, CHECK_BOX, CHECK_W, RowEnv, TrackList, TrackListEvent};
+use super::{CHECK_BOX, CHECK_W, LIKE_W, RowEnv, TrackList, TrackListEvent};
+use crate::components::track_drag::{DragGhost, DragTrack};
 
 pub(super) fn check_cell(
     index: usize,
@@ -99,6 +100,14 @@ pub(super) fn title_cell(
         .pr(px(theme::GAP_MD))
         .justify_center()
         .cursor_pointer()
+        // 拖到队列行或侧栏歌单。轻点仍是播放 / 勾选，gpui 只在真的拖出距离后才起拖。
+        .on_drag(
+            DragTrack {
+                id: track_id,
+                title: SharedString::from(track.title.clone()),
+            },
+            |drag: &DragTrack, _, _, cx| cx.new(|_| DragGhost::new(drag.title.clone())),
+        )
         .on_click(move |event, _, cx| {
             if selectable {
                 let shift = event.modifiers().shift;
@@ -158,13 +167,13 @@ pub(super) fn title_cell(
         cell = cell.child(title_line);
     }
 
-    // 点击区只覆盖文字块，封面不可点。
+    // 点击区只覆盖文字块，封面不可点。标题列是固定宽，拖表头分隔线才会变。
     div()
         .flex()
         .items_center()
         .gap(px(theme::GAP_MD))
-        .flex_1()
-        .min_w_0()
+        .flex_none()
+        .w(px(env.title_width))
         .child(cover)
         .child(cell)
 }
@@ -231,6 +240,7 @@ fn artist_link(
 pub(super) fn album_cell(
     index: usize,
     album: Option<&str>,
+    width: f32,
     library: Entity<LibraryEntity>,
     list: WeakEntity<TrackList>,
 ) -> AnyElement {
@@ -240,7 +250,9 @@ pub(super) fn album_cell(
 
     let mut cell = div()
         .flex_none()
-        .w(px(ALBUM_W))
+        .w(px(width))
+        // 给左缘的分隔线让出与标题侧相同的间距。
+        .pl(px(theme::GAP_MD))
         .pr(px(theme::GAP_MD))
         .text_size(px(theme::FONT_CAPTION))
         .text_color(theme::text_muted());
@@ -272,93 +284,63 @@ fn artist_sep() -> AnyElement {
     div().flex_none().child(" / ").into_any_element()
 }
 
-/// 更多与移除悬停才浮现，显隐由 `group_hover` 驱动而不是视图状态。
-#[allow(clippy::too_many_arguments)]
-pub(super) fn actions_cell(
+/// 收藏键。已收藏或正在播放时常显，其余悬停才浮现。
+/// 删除等操作留在右键菜单里，行内不再放会误触的按钮。
+pub(super) fn like_cell(
     index: usize,
     state: RowState,
     group: SharedString,
     track_id: TrackId,
     liked: bool,
     library: &Entity<LibraryEntity>,
-    list: WeakEntity<TrackList>,
-    menu: impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static,
 ) -> impl IntoElement {
-    let always_visible = state.is_playing();
-
-    let round = |id: (&'static str, usize), visible: bool, group: SharedString| {
-        div()
-            .id(id)
-            .flex_none()
-            .size(px(28.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_color(theme::text_faint())
-            .cursor_pointer()
-            .opacity(if visible { 1.0 } else { 0.0 })
-            .when(!visible, |button| {
-                button.group_hover(group, |style| style.opacity(1.0))
-            })
-    };
-
-    // 已收藏时常驻显示（那是收藏唯一的记号）；未收藏时悬停才浮现。
-    let heart = round(
-        ("track-like", index),
-        liked || always_visible,
-        group.clone(),
-    )
-    .when(liked, |button| button.text_color(theme::text()))
-    .hover(|style| style.bg(theme::elevated()).text_color(theme::text()))
-    .tooltip(crate::common::tooltip::builder(if liked {
-        "取消收藏"
-    } else {
-        "收藏"
-    }))
-    .on_click({
-        let library = library.clone();
-        move |_, _, cx| {
-            library.update(cx, |library, cx| {
-                library.toggle_like(track_id, cx);
-            });
-        }
-    })
-    .child(icon_inherit(
-        if liked {
-            Glyph::HeartFilled
-        } else {
-            Glyph::Heart
-        },
-        15.,
-    ));
-
-    let more = crate::common::menu::dropdown(
-        round(("track-more", index), always_visible, group.clone())
-            .hover(|style| style.bg(theme::elevated()).text_color(theme::text()))
-            .tooltip(crate::common::tooltip::builder("更多操作"))
-            .child(icon_inherit(Glyph::More, 15.)),
-        // 行尾贴近面板右缘，菜单右对齐才不会探出窗口。
-        Anchor::TopRight,
-        menu,
-    );
-
-    let remove = round(("track-remove", index), always_visible, group)
-        .hover(|style| style.bg(theme::elevated()).text_color(theme::text()))
-        .tooltip(crate::common::tooltip::builder("从曲库移除"))
-        .on_click(move |_, _, cx| {
-            list.update(cx, |list, cx| list.begin_remove(track_id, index, cx))
-                .ok();
-        })
-        .child(icon_inherit(Glyph::Cross, 12.));
+    let visible = liked || state.is_playing();
 
     div()
         .flex_none()
-        .w(px(ACTIONS_W))
+        .w(px(LIKE_W))
         .flex()
         .items_center()
-        .justify_end()
-        .gap(px(theme::GAP_XS))
-        .child(heart)
-        .child(more)
-        .child(remove)
+        .justify_center()
+        .child(
+            div()
+                .id(("track-like", index))
+                .flex_none()
+                .size(px(28.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(if liked {
+                    theme::text()
+                } else {
+                    theme::text_faint()
+                })
+                .cursor_pointer()
+                .opacity(if visible { 1.0 } else { 0.0 })
+                .when(!visible, |button| {
+                    button.group_hover(group, |style| style.opacity(1.0))
+                })
+                .hover(|style| style.bg(theme::elevated()).text_color(theme::text()))
+                .tooltip(crate::common::tooltip::builder(if liked {
+                    "取消收藏"
+                } else {
+                    "收藏"
+                }))
+                .on_click({
+                    let library = library.clone();
+                    move |_, _, cx| {
+                        library.update(cx, |library, cx| {
+                            library.toggle_like(track_id, cx);
+                        });
+                    }
+                })
+                .child(icon_inherit(
+                    if liked {
+                        Glyph::HeartFilled
+                    } else {
+                        Glyph::Heart
+                    },
+                    15.,
+                )),
+        )
 }

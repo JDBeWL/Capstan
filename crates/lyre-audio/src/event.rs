@@ -82,4 +82,7 @@ pub enum PlayerEvent {
         detail: String,
     },
     Error(String),
+    /// 出声没坏、但和用户当时的选择不一样的降级（选定设备被拔掉、独占退回共享）。
+    /// 与 [`Self::Error`] 分开：降级不该把播放状态打回 `Idle`。
+    Notice(String),
 }

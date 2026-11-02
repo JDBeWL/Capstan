@@ -38,18 +38,33 @@ impl LibraryEntity {
         cx.notify();
     }
 
-    /// 换曲时把光标挪到这一首，不发 `FocusMoved`，自动换曲不该把列表从用户手上拽走。
-    /// 那首不在可见列表里就清成 `None`，`↑↓` 与 `Enter` 都有兜底。
+    /// 换曲时把光标挪到这一首。默认不发 `FocusMoved`——自动换曲不该把列表从用户手上拽走；
+    /// 开着「跟随播放」时才发。那首不在可见列表里就清成 `None`，`↑↓` 与 `Enter` 都有兜底。
     pub(super) fn follow_playback(&mut self, id: TrackId, cx: &mut Context<Self>) {
         // 本次由播放推进引起，而非用户按键操作，底色不应随之出现。
         self.cursor_visible = false;
-        let target = if self.row_of(id).is_some() {
-            Some(id)
-        } else {
-            None
-        };
+        let row = self.row_of(id);
+        let target = if row.is_some() { Some(id) } else { None };
         if self.focus != target {
             self.focus = target;
+            cx.notify();
+        }
+        // 歌不在可见列表里时没什么可滚的，保持沉默而不是滚到开头。
+        if self.list_follows_playback
+            && let Some(row) = row
+        {
+            cx.emit(LibraryEvent::FocusMoved(row));
+        }
+    }
+
+    /// 自动切歌时列表是否跟着把当前曲滚进视野。手动点歌本来就会滚，这个开关只管自动推进。
+    pub fn list_follows_playback(&self) -> bool {
+        self.list_follows_playback
+    }
+
+    pub fn set_list_follows_playback(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.list_follows_playback != on {
+            self.list_follows_playback = on;
             cx.notify();
         }
     }

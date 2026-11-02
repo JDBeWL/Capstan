@@ -113,6 +113,8 @@ pub struct TrackMenuHooks {
     before_leave: Option<BeforeLeave>,
     after_remove: Option<AfterRemove>,
     remove: Option<OnRemove>,
+    /// 队列行的菜单：最后一项换成「从队列移除」，只动队列不动曲库。
+    in_queue: bool,
 }
 
 impl TrackMenuHooks {
@@ -143,6 +145,12 @@ impl TrackMenuHooks {
     /// 接管移除动作（曲库行用它先播删除动画）。返回 `false` 时退回立即移除。
     pub fn remove(mut self, hook: impl Fn(TrackId, &mut App) -> bool + 'static) -> Self {
         self.remove = Some(Rc::new(hook));
+        self
+    }
+
+    /// 队列行的菜单：最后一项从「从曲库移除」换成「从队列移除」，只动队列不动曲库。
+    pub fn in_queue(mut self) -> Self {
+        self.in_queue = true;
         self
     }
 
@@ -194,6 +202,20 @@ pub fn track_context_menu(
                 library.update(cx, |library, cx| {
                     library.activate_in_view(track_id, cx);
                 });
+            }));
+        }
+
+        {
+            let library = library.clone();
+            menu = menu.item(PopupMenuItem::new("下一首播放").on_click(move |_, _, cx| {
+                library.update(cx, |library, cx| library.play_next(&[track_id], cx));
+            }));
+        }
+        // 队列行本来就在队列里，「加入队列」放这儿是废话。
+        if !hooks.in_queue {
+            let library = library.clone();
+            menu = menu.item(PopupMenuItem::new("加入队列").on_click(move |_, _, cx| {
+                library.update(cx, |library, cx| library.add_to_queue(&[track_id], cx));
             }));
         }
 
@@ -277,7 +299,19 @@ pub fn track_context_menu(
             );
         }
 
-        {
+        if hooks.in_queue {
+            // 正在播的那首不给移除入口：移掉它光标会落到下一首，而声音还在放它。
+            if library.read(cx).current_id() != Some(track_id) {
+                let library = library.clone();
+                menu = menu.item(PopupMenuItem::separator()).item(
+                    PopupMenuItem::new("从队列移除").on_click(move |_, _, cx| {
+                        library.update(cx, |library, cx| {
+                            library.remove_from_queue(track_id, cx);
+                        });
+                    }),
+                );
+            }
+        } else {
             let library = library.clone();
             let hooks = hooks.clone();
             menu = menu.item(PopupMenuItem::separator()).item(

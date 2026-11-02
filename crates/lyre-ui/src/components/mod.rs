@@ -15,6 +15,7 @@ pub mod seek_bar;
 pub mod settings_panel;
 pub mod sidebar;
 pub mod top_bar;
+pub mod track_drag;
 pub mod track_list;
 pub mod transport;
 pub mod volume;

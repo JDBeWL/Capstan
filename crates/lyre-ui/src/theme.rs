@@ -414,7 +414,7 @@ pub const SIDEBAR_ICON_W: f32 = 64.0;
 /// 导航项高度，容得下英文眉标 + 中文两行。
 pub const SIDEBAR_ITEM_H: f32 = 48.0;
 pub const SIDEBAR_INDICATOR_W: f32 = 4.0;
-pub const RIGHT_PANEL_W: f32 = 320.0;
+pub const RIGHT_PANEL_W: f32 = 360.0;
 /// 底栏左栏宽度，即曲目身份区。
 pub const BOTTOM_LEFT_W: f32 = 240.0;
 /// 底栏右栏宽度，即功能入口与音量。
@@ -426,6 +426,9 @@ pub const ROW_H_COMFORTABLE: f32 = 52.0;
 pub const ROW_CURSOR_BAR_W: f32 = 3.0;
 /// 行首索引列宽。
 pub const ROW_INDEX_W: f32 = 36.0;
+/// 曲库列表专辑列与时长列的默认宽度。用户拖动表头后覆盖，落盘在 `settings.json`。
+pub const COLUMN_ALBUM_W: f32 = 220.0;
+pub const COLUMN_TIME_W: f32 = 60.0;
 /// 列表行与列头的左内边距。
 pub const ROW_PAD_LEFT: f32 = 12.0;
 /// 行首编号、播放图标与右侧内容之间的间距。

@@ -456,11 +456,12 @@ fn asking_for_exclusive_without_a_backend_falls_back_and_says_so() {
 
     // 注入式假后端没有独占实现。要独占必须如实退回共享，而不是让开关看起来生效了。
     // 两条事件按「先报原因、再报结果」的顺序发出，所以这里也按同样的顺序收。
+    // 走 Notice 而不是 Error：共享输出照常出声，界面不该因此把播放状态打回 Idle。
     handle.send(PlayerCommand::SetOutputMode { exclusive: true });
 
-    let event = wait_for(&rx, |e| matches!(e, PlayerEvent::Error(_))).expect("降级要让人知道原因");
+    let event = wait_for(&rx, |e| matches!(e, PlayerEvent::Notice(_))).expect("降级要让人知道原因");
     match event {
-        PlayerEvent::Error(message) => assert!(message.contains("独占"), "{message}"),
+        PlayerEvent::Notice(message) => assert!(message.contains("独占"), "{message}"),
         _ => unreachable!(),
     }
 

@@ -11,8 +11,7 @@ use crate::platform::*;
 use crate::theme;
 
 use super::{
-    ACTIONS_W, ALBUM_W, CHECK_W, DURATION_W, HANDLE_W, INDEX_W, RowEnv, TrackList, TrackListEvent,
-    cells, drag,
+    CHECK_W, HANDLE_W, LIKE_W, RowEnv, TrackList, TrackListEvent, cells, columns, drag,
 };
 
 /// 专辑列要不要画。断点允许，且专辑详情里永远不画（每行都是同一张专辑）。
@@ -20,8 +19,9 @@ pub(super) fn show_album_column(breakpoint_allows: bool, kind: ScopeKind) -> boo
     breakpoint_allows && kind != ScopeKind::Album
 }
 
-/// 列头。
-pub(super) fn column_header(env: &RowEnv) -> impl IntoElement {
+/// 列头。三处分隔线可拖：每根线管它左边那一列（NO./标题/专辑）。
+/// 主区多余宽度落在时长右侧的空白里，拖一列不会牵动别的列。
+pub(super) fn column_header(env: &RowEnv, list: WeakEntity<TrackList>) -> impl IntoElement {
     let mut row = div()
         .flex_none()
         .h(px(theme::COLUMN_HEADER_H))
@@ -44,42 +44,81 @@ pub(super) fn column_header(env: &RowEnv) -> impl IntoElement {
         })
         .child(
             div()
+                .relative()
                 .flex_none()
-                .w(px(INDEX_W))
+                .h_full()
+                .w(px(env.columns.index))
                 .flex()
+                .items_center()
                 .justify_end()
                 .pr(px(theme::ROW_INDEX_GAP))
-                .child("NO."),
+                .child("NO.")
+                .child(columns::handle(
+                    columns::ColumnEdge::Index,
+                    env.columns.index,
+                    env.gap,
+                    list.clone(),
+                )),
         )
         .child(
             div()
-                .flex_1()
-                .min_w_0()
+                .relative()
+                .flex_none()
+                .h_full()
+                .w(px(env.title_width))
+                .flex()
+                .items_center()
                 // 标题格前面还有封面缩略图；列头让出同一段宽度才和歌名同一条竖线。
                 .pl(px(env.thumb_size() + theme::GAP_MD))
-                .child("TITLE / 标题"),
+                .child(div().min_w_0().truncate().child("TITLE / 标题"))
+                .child(columns::handle(
+                    columns::ColumnEdge::Title,
+                    env.title_width,
+                    env.gap,
+                    list.clone(),
+                )),
         );
 
     if env.show_album {
-        row = row.child(div().flex_none().w(px(ALBUM_W)).child("ALBUM / 专辑"));
+        row = row.child(
+            div()
+                .relative()
+                .flex_none()
+                .h_full()
+                .w(px(env.album_width))
+                .flex()
+                .items_center()
+                // 给左缘的分隔线让出与标题侧相同的间距。
+                .pl(px(theme::GAP_MD))
+                .child(div().min_w_0().truncate().child("ALBUM / 专辑"))
+                .child(columns::handle(
+                    columns::ColumnEdge::Album,
+                    env.album_width,
+                    env.gap,
+                    list.clone(),
+                )),
+        );
     }
     row.child(
+        // 表头与行里的心形同宽同中心；心形居中，和右边时长留出间距。
         div()
             .flex_none()
-            .w(px(DURATION_W))
+            .w(px(LIKE_W))
             .flex()
-            .justify_end()
-            .pr(px(theme::GAP_MD))
-            .child("TIME / 时长"),
+            .items_center()
+            .justify_center()
+            .child("LIKE / 喜欢"),
     )
     .child(
         div()
             .flex_none()
-            .w(px(ACTIONS_W))
+            .w(px(theme::COLUMN_TIME_W))
             .flex()
             .items_center()
-            .justify_end(),
+            .justify_start()
+            .child("TIME / 时长"),
     )
+    .child(div().flex_1())
 }
 
 /// 行状态，四个态互斥。
@@ -242,7 +281,7 @@ pub(super) fn row(
     let index_cell: AnyElement = if state.is_playing() {
         div()
             .flex_none()
-            .w(px(INDEX_W))
+            .w(px(env.columns.index))
             .flex()
             .justify_end()
             .pr(px(theme::ROW_INDEX_GAP))
@@ -281,7 +320,7 @@ pub(super) fn row(
             .id(("track-index", index))
             .flex_none()
             .relative()
-            .w(px(INDEX_W))
+            .w(px(env.columns.index))
             .flex()
             .items_center()
             .justify_end()
@@ -329,6 +368,7 @@ pub(super) fn row(
         element = element.child(cells::album_cell(
             index,
             track.album.as_deref(),
+            env.album_width,
             library.clone(),
             list.clone(),
         ));
@@ -353,13 +393,21 @@ pub(super) fn row(
     let menu = || crate::common::menu::track_context_menu(library.clone(), track_id, hooks.clone());
 
     element = element
+        .child(cells::like_cell(
+            index,
+            state,
+            group,
+            track_id,
+            liked,
+            library,
+        ))
         .child(
             div()
                 .flex_none()
-                .w(px(DURATION_W))
+                .w(px(theme::COLUMN_TIME_W))
                 .flex()
-                .justify_end()
-                .pr(px(theme::GAP_MD))
+                .items_center()
+                .justify_start()
                 .font(theme::field_font())
                 .text_size(px(theme::FONT_CAPTION))
                 .text_color(theme::text_muted())
@@ -369,16 +417,8 @@ pub(super) fn row(
                         .map_or_else(|| "--:--".to_owned(), format_duration),
                 ),
         )
-        .child(cells::actions_cell(
-            index,
-            state,
-            group,
-            track_id,
-            liked,
-            library,
-            list.clone(),
-            menu(),
-        ));
+        // 剩下的宽度留在时长右侧，与列头的空白同一条位置。
+        .child(div().flex_1());
 
     // 落点高亮用 `drag_over` 而不是视图状态，拖到行外松手不会留下残留高亮。
     if env.reorderable {

@@ -71,7 +71,7 @@ struct AudioThread {
     /// 位置与播放状态本身从快照读，不另存一份，免得两份状态各自漂移。
     current: Option<PathBuf>,
     /// 用户选定的输出设备；`None` 表示跟随系统默认，拔掉时不清空。
-    /// 这是用户意图，插回来要自动切回；设备不在时由 [`AudioThread::target_now`] 用系统默认顶上。
+    /// 这是用户意图，插回来要自动切回；设备不在时由 [`AudioThread::target_now`] 用系统默认设备。
     device: Option<String>,
     /// 上一次真正开流用的目标。设备插回来时它和当前目标会不一样，据此判断要不要切回去。
     last_target: Option<String>,
@@ -135,12 +135,16 @@ impl AudioThread {
                     return Ok((backend, OutputMode::Exclusive, detail));
                 }
                 Some(Err(err)) => {
-                    log::warn!("独占输出不可用，退回共享输出：{err}");
-                    let _ = events.send(PlayerEvent::Error(err.to_string()));
+                    let reason = err.to_string();
+                    log::warn!("独占输出不可用，退回共享输出：{reason}");
+                    // 退回共享后声音照出，这是降级，不是故障。发 Error 会让界面把状态打回 Idle。
+                    let _ = events.send(PlayerEvent::Notice(format!(
+                        "独占输出不可用，已退回共享输出：{reason}"
+                    )));
                     self.output_mode = OutputMode::Shared;
                     let _ = events.send(PlayerEvent::OutputModeChanged {
                         mode: OutputMode::Shared,
-                        detail: err.to_string(),
+                        detail: reason,
                     });
                 }
                 // 本次运行没有注入独占后端，直接走共享。
@@ -166,7 +170,7 @@ impl AudioThread {
 
         if wanted == OutputMode::Exclusive && self.open_exclusive.is_none() {
             // 本次运行没有注入独占后端。不动正在播的那条流，但也不能让开关看起来生效了。
-            let _ = self.events.send(PlayerEvent::Error(
+            let _ = self.events.send(PlayerEvent::Notice(
                 AudioError::Exclusive("本次运行没有可用的独占后端".to_owned()).to_string(),
             ));
             let _ = self.events.send(PlayerEvent::OutputModeChanged {
@@ -358,9 +362,7 @@ impl AudioThread {
             .map(|device| device.id.clone());
 
         let target = Self::target_of(self.device.as_deref(), &devices);
-        if self.device.is_some() && target.is_none() {
-            log::info!("选定的输出设备已断开，暂用系统默认设备顶上");
-        }
+        let unplugged = self.device.is_some() && target.is_none();
 
         // 跟随默认时目标恒为「默认」，所以默认设备换掉要多判一次；其余情况看目标本身有没有变。
         let follows_default = self.device.is_none() && self.default_id != default_id;
@@ -368,6 +370,13 @@ impl AudioThread {
         self.default_id = default_id;
 
         if target_moved || follows_default {
+            // 顶替只在目标真的换掉这一刻播报。设备一直没插回来时，往后的拓扑变化不再重复提示。
+            if unplugged {
+                log::info!("选定的输出设备已断开，暂用系统默认设备");
+                let _ = self.events.send(PlayerEvent::Notice(
+                    "选定的输出设备已断开，暂用系统默认设备".to_owned(),
+                ));
+            }
             self.open_failed = false;
             self.switch_output(target.as_deref());
         }

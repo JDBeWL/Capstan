@@ -98,6 +98,27 @@ impl TrackList {
         rows.into_iter().map(|(_, id)| id).collect()
     }
 
+    /// 把勾选的曲目定成队列，从第一首开始播。
+    pub(super) fn play_chosen(&mut self, cx: &mut Context<Self>) {
+        let ids = self.chosen(cx);
+        if ids.is_empty() {
+            return;
+        }
+        let _ = self
+            .library
+            .update(cx, |library, cx| library.activate_selection(&ids, cx));
+    }
+
+    /// 把勾选的曲目追加到队列末尾。
+    pub(super) fn queue_chosen(&mut self, cx: &mut Context<Self>) {
+        let ids = self.chosen(cx);
+        if ids.is_empty() {
+            return;
+        }
+        self.library
+            .update(cx, |library, cx| library.add_to_queue(&ids, cx));
+    }
+
     pub(super) fn like_chosen(&mut self, cx: &mut Context<Self>) {
         let ids = self.chosen(cx);
         if ids.is_empty() {

@@ -2,7 +2,7 @@
 
 use lyre_core::SortKey;
 
-use crate::common::button::{ButtonKind, text_button_animated};
+use crate::common::button::{ButtonKind, button_shell_animated, text_button_animated};
 use crate::common::thousands;
 use crate::entities::{LibraryEntity, ScanProgress, ScopeKind};
 use crate::icon::{Glyph, icon_inherit};
@@ -35,6 +35,8 @@ pub(super) struct ToolbarState {
     pub(super) headed_elsewhere: bool,
     pub(super) in_search: bool,
     pub(super) selecting: bool,
+    /// 「跟随播放」开关的当前状态。
+    pub(super) follow: bool,
 }
 
 pub(super) fn can_reorder(in_collection: bool, has_query: bool, rows: usize) -> bool {
@@ -100,6 +102,7 @@ pub(super) fn toolbar(
         headed_elsewhere,
         in_search,
         selecting,
+        follow,
     } = state;
 
     // 进详情时让出左内边距，免得大标题被浮动返回按钮压住；与按钮位置同源于 `crate::root::HEADER_BACK_INSET`。
@@ -146,6 +149,9 @@ pub(super) fn toolbar(
                 .children(scanning.map(scan_indicator)),
         );
 
+    // 「跟随播放」的闭包要长期持有曲库，先克隆一份，让 `library` 本体留给「清空」。
+    let follow_library = library.clone();
+
     if shows_actions(scoped, in_search) {
         bar = bar.child(sort_menu(library.clone(), total, sort_key, window, cx));
 
@@ -166,12 +172,42 @@ pub(super) fn toolbar(
         }
     }
 
-    // 多选开关只留在曲库页工具条里。详情页走头图的「更多操作」，搜索页不提供多选。
+    // 两个视图级开关都只留在曲库页工具条里。详情页走头图的「更多操作」，搜索页不提供多选。
     if !headed_elsewhere && count > 0 {
+        bar = bar.child(follow_toggle(follow_library, follow, window, cx));
         bar = bar.child(selection_toggle(list, selecting, window, cx));
     }
 
     bar
+}
+
+/// 「跟随播放」开关。只管自动推进：手动点歌本来就会把那一行滚进视野。
+fn follow_toggle(
+    library: Entity<LibraryEntity>,
+    on: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
+    button_shell_animated(
+        "header-follow",
+        if on {
+            ButtonKind::Secondary
+        } else {
+            ButtonKind::Ghost
+        },
+        window,
+        cx,
+    )
+    .tooltip(crate::common::tooltip::builder(
+        "自动切歌时把当前曲滚进视野",
+    ))
+    .child("跟随播放")
+    .on_click(move |_, _, cx| {
+        library.update(cx, |library, cx| {
+            let on = !library.list_follows_playback();
+            library.set_list_follows_playback(on, cx);
+        });
+    })
 }
 
 /// 多选开关，只出现在曲库页工具条里。
@@ -197,8 +233,16 @@ pub(super) fn selection_toggle(
     )
 }
 
-/// 扫描进度指示。不确定进度（只报已找到数），因为扫描前不知道总文件数，百分比只能是假的。
-/// 黄块 + 墨字 = 需要注意，不用红绿。
+/// 扫描读数。目录走完之前分母不明，只能报「正在清点」；走到头了才给真比值，不画假进度。
+fn scan_counts(found: usize, total: usize) -> String {
+    if total == 0 {
+        "正在清点文件".to_owned()
+    } else {
+        format!("已读 {} / 共 {}", thousands(found), thousands(total))
+    }
+}
+
+/// 扫描进度指示。黄块 + 墨字 = 需要注意，不用红绿。
 fn scan_indicator(progress: ScanProgress) -> impl IntoElement {
     div()
         .flex_none()
@@ -214,9 +258,9 @@ fn scan_indicator(progress: ScanProgress) -> impl IntoElement {
                 .text_color(theme::text())
                 .child("正在扫描"),
         )
-        .child(crate::common::section::field(format!(
-            "已找到 {}",
-            thousands(progress.found)
+        .child(crate::common::section::field(scan_counts(
+            progress.found,
+            progress.total,
         )))
 }
 
@@ -263,8 +307,22 @@ fn sort_menu(
 
 #[cfg(test)]
 mod tests {
-    use super::{can_reorder, header_eyebrow, header_meta, header_title, shows_actions};
+    use super::{
+        can_reorder, header_eyebrow, header_meta, header_title, scan_counts, shows_actions,
+    };
     use crate::entities::ScopeKind;
+
+    /// 分母不明时不许编一个进度出来。
+    #[test]
+    fn scan_counts_stays_honest_until_the_total_is_known() {
+        assert_eq!(scan_counts(0, 0), "正在清点文件");
+        assert_eq!(scan_counts(34, 1200), "已读 34 / 共 1,200");
+        assert_eq!(
+            scan_counts(1195, 1195),
+            "已读 1,195 / 共 1,195",
+            "补扫的分母是真正要读的份数，不是磁盘上找到的份数"
+        );
+    }
 
     #[test]
     fn reorder_needs_a_playlist_a_still_list_and_something_to_move() {

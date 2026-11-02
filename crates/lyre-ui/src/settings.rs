@@ -9,6 +9,42 @@ use crate::theme::Appearance;
 
 const FILE: &str = "settings.json";
 
+/// 曲库列表的列宽（逻辑像素）。
+/// 编号与「空白」固定；标题和专辑分摊剩余宽度，窗口伸缩时按最后的比例一起变。
+/// 拖某一列的分隔线只改那一列与空白，专辑占比随后重新取样。
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TrackColumns {
+    pub index: f32,
+    /// 时长列右侧、窗口右缘之前的空白。拖窄某列时它会变宽，拖宽时先吃它。
+    pub gap: f32,
+    /// 专辑列宽；窗口伸缩时按当前占比跟着标题一起变。
+    pub album: f32,
+}
+
+impl Default for TrackColumns {
+    fn default() -> Self {
+        Self {
+            index: crate::theme::ROW_INDEX_W,
+            // 默认不留空白：标题把能用的宽度全吃掉。
+            gap: 0.0,
+            album: crate::theme::COLUMN_ALBUM_W,
+        }
+    }
+}
+
+impl TrackColumns {
+    /// 拖过头或存档被改坏时把宽度收回可用区间。索引列再窄会切掉三位数，
+    /// 专辑列允许拖到很窄，空白不能为负。
+    pub fn clamped(self) -> Self {
+        Self {
+            index: self.index.clamp(36.0, 88.0),
+            gap: self.gap.clamp(0.0, 4000.0),
+            album: self.album.clamp(64.0, 480.0),
+        }
+    }
+}
+
 /// 可持久化的界面偏好。播放模式、进度这类会话内的状态不在这里。
 /// 音量是例外。每次启动都该是用户上次要的那个值，包括当时是不是静音。
 // `#[serde(default)]`。缺字段用默认值补齐，否则新增设置项会让老配置文件整体失效。
@@ -38,6 +74,8 @@ pub struct Settings {
     pub smooth_device_switch: bool,
     /// 用 WASAPI 独占输出。默认关。独占会占住设备，其它程序一起听不到声音。
     pub exclusive_output: bool,
+    /// 曲库列表 NO./专辑两列的宽度与列尾空白。标题列吃剩余宽度，不单独存。
+    pub track_columns: TrackColumns,
 }
 
 impl Default for Settings {
@@ -56,6 +94,7 @@ impl Default for Settings {
             preferred_device: None,
             smooth_device_switch: false,
             exclusive_output: false,
+            track_columns: TrackColumns::default(),
         }
     }
 }
@@ -73,7 +112,7 @@ impl Settings {
 
 #[cfg(test)]
 mod tests {
-    use super::Settings;
+    use super::{Settings, TrackColumns};
     use crate::shell::{Density, NavSection, PanelTab, SidebarState};
     use crate::theme::Appearance;
 
@@ -104,6 +143,38 @@ mod tests {
             !settings.exclusive_output,
             "默认共享输出，因为独占会占住设备，不能默认打开"
         );
+        assert_eq!(settings.track_columns, TrackColumns::default());
+        assert_eq!(settings.track_columns.index, crate::theme::ROW_INDEX_W);
+        assert_eq!(settings.track_columns.gap, 0.0, "默认不留空白，标题吃满");
+        assert_eq!(settings.track_columns.album, crate::theme::COLUMN_ALBUM_W);
+    }
+
+    #[test]
+    fn column_widths_are_pulled_back_into_range() {
+        let wild = TrackColumns {
+            index: 2.0,
+            gap: -10.0,
+            album: 900.0,
+        }
+        .clamped();
+        assert_eq!(wild.index, 36.0);
+        assert_eq!(wild.gap, 0.0);
+        assert_eq!(wild.album, 480.0);
+
+        let tiny = TrackColumns {
+            album: 10.0,
+            ..TrackColumns::default()
+        }
+        .clamped();
+        assert_eq!(tiny.album, 64.0, "专辑列要能拖到很窄");
+
+        // 合法值原样保留，钳制不该顺手改动手动调好的宽度。
+        let fine = TrackColumns {
+            index: 48.0,
+            gap: 120.0,
+            album: 300.0,
+        };
+        assert_eq!(fine.clamped(), fine);
     }
 
     #[test]
@@ -121,6 +192,11 @@ mod tests {
             preferred_device: Some("wasapi:{0.0.0.00000000}.{abc}".to_owned()),
             smooth_device_switch: true,
             exclusive_output: true,
+            track_columns: TrackColumns {
+                index: 48.0,
+                gap: 120.0,
+                album: 300.0,
+            },
         };
         let text = serde_json::to_string(&settings).expect("序列化不该失败");
         let back: Settings = serde_json::from_str(&text).expect("反序列化不该失败");

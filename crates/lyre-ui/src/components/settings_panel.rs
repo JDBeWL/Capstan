@@ -9,7 +9,7 @@ use crate::entities::{LibraryEntity, PlaybackEntity, PlaybackEvent};
 use crate::icon::{Glyph, icon};
 use crate::persist::data_dir;
 use crate::platform::*;
-use crate::settings::Settings;
+use crate::settings::{Settings, TrackColumns};
 use crate::shell::{Density, NavSection, PanelTab, ShellEntity, SidebarState};
 use crate::theme;
 use lyre_audio::OutputMode;
@@ -1038,6 +1038,11 @@ impl SettingsEntity {
 
     pub fn set_exclusive_output(&mut self, exclusive: bool, cx: &mut Context<Self>) {
         self.update_and_save(cx, |settings| settings.exclusive_output = exclusive);
+    }
+
+    /// 列宽拖动时列表只在停手后调一次，这里落盘的也就是最终值。
+    pub fn set_track_columns(&mut self, columns: TrackColumns, cx: &mut Context<Self>) {
+        self.update_and_save(cx, |settings| settings.track_columns = columns.clamped());
     }
 }
 

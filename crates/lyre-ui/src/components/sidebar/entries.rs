@@ -17,6 +17,7 @@ use crate::theme;
 use super::Sidebar;
 use super::menu::collection_menu;
 use super::thumb::row_thumb;
+use crate::components::track_drag::DragTrack;
 
 /// 一行是「标题 + 副标题」两行，`SIDEBAR_ITEM_H`（40）塞不下；52 = 上下各 8px + 36px 缩略图。
 const LIB_ROW_H: f32 = 52.0;
@@ -386,9 +387,18 @@ pub(super) fn lib_row(
     // 只有自建歌单有右键菜单。收藏不能改名也不能删（成员由爱心决定），
     // 「新建歌单」那一行更是没有可操作的对象。
     match row_scope {
-        SideScope::Collection(id) => row
-            .context_menu(collection_menu(menu_library, id, menu_title))
-            .into_any_element(),
+        // 曲目拖到自建歌单上就是加入这个歌单。
+        SideScope::Collection(id) => {
+            let drop_library = menu_library.clone();
+            row.drag_over::<DragTrack>(|style, _, _, _| style.bg(theme::elevated()))
+                .on_drop::<DragTrack>(move |drag, _, cx| {
+                    drop_library.update(cx, |library, cx| {
+                        library.add_many_to_collection(id, &[drag.id], cx);
+                    });
+                })
+                .context_menu(collection_menu(menu_library, id, menu_title))
+                .into_any_element()
+        }
         _ => row.into_any_element(),
     }
 }

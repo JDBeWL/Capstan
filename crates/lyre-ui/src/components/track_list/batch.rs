@@ -82,6 +82,18 @@ pub(super) fn batch_bar(bar: BatchBar) -> impl IntoElement {
                 TrackList::clear_chosen,
             ))
             .child(batch_button(
+                "batch-play",
+                "播放",
+                list.clone(),
+                TrackList::play_chosen,
+            ))
+            .child(batch_button(
+                "batch-queue",
+                "加入队列",
+                list.clone(),
+                TrackList::queue_chosen,
+            ))
+            .child(batch_button(
                 "batch-like",
                 "收藏",
                 list.clone(),

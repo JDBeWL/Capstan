@@ -17,9 +17,11 @@ pub mod library_store;
 /// 「喜欢」集合与持久化。
 pub mod likes;
 pub mod logging;
-/// 统一的 JSON 持久化层，负责数据目录定位、原子替换，以及七份 store 共用的读写语义。
+/// 统一的 JSON 持久化层，负责数据目录定位、原子替换，以及八份 store 共用的读写语义。
 pub mod persist;
 pub mod platform;
+/// 播放队列（`queue.json`）读写。重启后接着上次那条显式队列。
+pub mod queue_store;
 pub mod recents;
 /// 上次播放位置的读写（`resume.json`）。
 pub mod resume;

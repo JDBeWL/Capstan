@@ -110,6 +110,7 @@ impl LibraryEntity {
             .find(|group| group.title == title)
             .map(|group| group.tracks.clone());
         self.playlist.set_queue(queue, self.seed);
+        self.persist_queue();
         self.activate(id, cx)
     }
 
@@ -129,6 +130,7 @@ impl LibraryEntity {
             .find(|group| group.name == name)
             .map(|group| group.tracks.clone());
         self.playlist.set_queue(queue, self.seed);
+        self.persist_queue();
         self.activate(id, cx)
     }
 
@@ -149,7 +151,57 @@ impl LibraryEntity {
             if rows.is_empty() { None } else { Some(rows) }
         };
         self.playlist.set_queue(queue, self.seed);
+        self.persist_queue();
         self.activate(id, cx)
+    }
+
+    /// 把一批曲目插到「下一首」。队列会因此冻结成显式列表，见 [`lyre_core::Playlist::queue_insert`]。
+    pub fn play_next(&mut self, ids: &[TrackId], cx: &mut Context<Self>) {
+        let at = self.playlist.cursor() + 1;
+        self.insert_in_queue(ids, at, cx);
+    }
+
+    /// 追加到播放队列末尾。
+    pub fn add_to_queue(&mut self, ids: &[TrackId], cx: &mut Context<Self>) {
+        let at = self.playlist.order().len();
+        self.insert_in_queue(ids, at, cx);
+    }
+
+    /// 插到播放顺序的第 `at` 位。队列行的拖拽落点用它。
+    pub fn insert_in_queue(&mut self, ids: &[TrackId], at: usize, cx: &mut Context<Self>) {
+        self.playlist.queue_insert(ids, at);
+        self.persist_queue();
+        cx.notify();
+    }
+
+    /// 从播放队列移除，曲目仍留在曲库。正在播的那首不提供，返回 `false`。
+    pub fn remove_from_queue(&mut self, id: TrackId, cx: &mut Context<Self>) -> bool {
+        if !self.playlist.queue_remove(id) {
+            return false;
+        }
+        self.persist_queue();
+        cx.notify();
+        true
+    }
+
+    /// 把一批曲目定成队列并从第一首开始播。批量条的「播放」用它。
+    pub fn activate_selection(&mut self, ids: &[TrackId], cx: &mut Context<Self>) -> Option<Track> {
+        let first = *ids.first()?;
+        // 先拦播不了的：`set_queue` 会换掉队列，播不出来就白换了。
+        if self.refuse_unplayable(first, cx) {
+            return None;
+        }
+        self.playlist.set_queue(Some(ids.to_vec()), self.seed);
+        self.persist_queue();
+        self.activate(first, cx)
+    }
+
+    /// 让播放队列的光标落在这一首上。续播时用：`set_now_playing` 只挪列表光标，
+    /// 队列光标不动的话，重启后「下一曲」会从队首而不是上次那首之后接着走。
+    pub fn sync_playlist_cursor(&mut self, id: TrackId, cx: &mut Context<Self>) {
+        if self.playlist.jump_to(id) {
+            cx.notify();
+        }
     }
 
     /// 选中某首并广播「该播它了」，返回被选中的曲目。只跳转，不改队列内容。

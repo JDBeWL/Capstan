@@ -25,13 +25,20 @@ const SCAN_CHUNK: usize = 64;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ScanProgress {
+    /// 已经读完标签的曲目数。
     pub found: usize,
+    /// 这一轮真正要读的曲目数，即进度分母。`0` 表示目录还没走完、分母还不明。
+    /// 不能用 `total_files`：补扫时磁盘上有 1200 首、库里已有 1195 首，
+    /// 分母写 1200 会被读成「还剩 1195 首没处理」。
+    pub total: usize,
 }
 
-/// 后台线程回主线程的两条消息。
+/// 后台线程回主线程的三条消息。
 enum ScanTick {
     /// 目录走完了，一共这么多音频文件（含已经在库的）。总数先报，界面才知道规模。
     Found(usize),
+    /// 筛掉库里已有的之后，这一轮实际要读的份数，即进度分母。
+    ToRead(usize),
     Tracks(Vec<Track>),
 }
 
@@ -275,6 +282,7 @@ impl LibraryEntity {
             let mut scanned = 0usize;
             let mut added = 0usize;
             let mut refreshed = 0usize;
+            let mut to_read: Option<usize> = None;
             loop {
                 executor.timer(SCAN_FLUSH_INTERVAL).await;
 
@@ -283,6 +291,7 @@ impl LibraryEntity {
                 loop {
                     match rx.try_recv() {
                         Ok(ScanTick::Found(total)) => scanned = total,
+                        Ok(ScanTick::ToRead(count)) => to_read = Some(count),
                         Ok(ScanTick::Tracks(tracks)) => batch.extend(tracks),
                         Err(TryRecvError::Empty) => break,
                         Err(TryRecvError::Disconnected) => {
@@ -292,12 +301,18 @@ impl LibraryEntity {
                     }
                 }
 
-                if batch.is_empty() && !done {
+                if batch.is_empty() && to_read.is_none() && !done {
                     continue;
                 }
 
                 let alive = this
                     .update(cx, |this, cx| {
+                        // 分母要立起来，界面才知道现在是「读到哪了」而不是「不知道读到哪」。
+                        if let Some(count) = to_read.take()
+                            && let Some(progress) = this.scanning.as_mut()
+                        {
+                            progress.total = count;
+                        }
                         if !batch.is_empty() {
                             let read = batch.len();
                             refreshed += read;
@@ -366,6 +381,10 @@ fn run_scan(
     }
 
     let fresh = fresh_paths(files, &known);
+    // 进度分母。用真正要读的份数，磁盘上找到多少首由 `Found` 报给结果汇总，两者不是一回事。
+    if tx.send(ScanTick::ToRead(fresh.len())).is_err() {
+        return;
+    }
     let context = ScanContext {
         known_artists: Some(&artists),
         cached: cached.as_ref(),

@@ -4,6 +4,7 @@
 
 mod batch;
 mod cells;
+mod columns;
 mod drag;
 mod empty;
 mod row;
@@ -20,13 +21,14 @@ use crate::common::anim;
 use crate::cover::CoverCache;
 use crate::entities::{LibraryEntity, LibraryEvent, Scope, ScopeKind};
 use crate::platform::*;
+use crate::settings::TrackColumns;
 use crate::shell::{Breakpoint, NavSection, ShellEntity};
 use crate::theme;
 
 use super::SearchPage;
+use super::SettingsEntity;
 use super::detail::{self, HeroInfo};
 
-const INDEX_W: f32 = crate::theme::ROW_INDEX_W;
 /// 拖拽手柄列宽，只在歌单作用域出现。
 const HANDLE_W: f32 = 26.0;
 /// 勾选列宽，只在多选模式出现。
@@ -38,12 +40,12 @@ const THUMB: f32 = 40.0;
 const THUMB_COMPACT: f32 = 32.0;
 /// 双行阈值。行高 >= 它才画两行，缩略图也用大号。必须落在两档行高（40 / 52）之间。
 const TWO_LINE_MIN: f32 = 48.0;
-/// 专辑列宽，窄窗口下整列隐藏。
-const ALBUM_W: f32 = 220.0;
-/// 时长列定宽，避免数字宽度跳动。
-const DURATION_W: f32 = 60.0;
-/// 三颗 28px 按钮 + 两道 4px 间隙；列头共用同一个常量。
-const ACTIONS_W: f32 = 92.0;
+/// 收藏列宽：容得下表头「LIKE / 喜欢」和居中的心形，并和右侧时长留出间隔。
+const LIKE_W: f32 = 88.0;
+/// 标题列的最小宽度。再窄就只剩封面，表头文字会竖着排。
+const TITLE_MIN_W: f32 = 140.0;
+/// 专辑列的硬下限。拖到最窄只剩几个截断字；主区连它都放不下就收起整列。
+const ALBUM_MIN_W: f32 = 64.0;
 
 /// 列表向上层汇报的事件。用事件而不是回调字段，列表不持有 `RootView`。
 #[derive(Clone, Debug, PartialEq)]
@@ -72,6 +74,12 @@ pub struct TrackList {
     covers: Entity<CoverCache>,
     /// 搜索结果页的摘要，合成页时作为列表项 0 的一部分出现在页头里。
     search_page: Entity<SearchPage>,
+    /// 列宽的落盘点。拖动只改内存，停手后经它写 settings.json。
+    settings: Entity<SettingsEntity>,
+    /// NO./专辑的存储宽度与列尾空白；标题列吃剩余宽度，时长是常量。
+    columns: TrackColumns,
+    /// 窗口伸缩时标题与专辑分摊宽度的占比。拖动分隔线后置空，下一次布局重新取样。
+    album_ratio: Option<f32>,
     scroll: UniformListScrollHandle,
     /// 页头并入滚动区时用的列表。项 0 是页头，之后才是曲目行。
     page: ListState,
@@ -102,6 +110,8 @@ pub struct TrackList {
     stagger_seq: u64,
     stagger_started: Option<Instant>,
     _stagger_task: Option<Task<()>>,
+    /// 列宽防抖落盘。每次拖动重置，只有停手后那一次真正写。
+    _columns_save: Option<Task<()>>,
     _subs: Vec<Subscription>,
 }
 
@@ -119,6 +129,7 @@ impl TrackList {
         shell: Entity<ShellEntity>,
         covers: Entity<CoverCache>,
         search_page: Entity<SearchPage>,
+        settings: Entity<SettingsEntity>,
         cx: &mut Context<Self>,
     ) -> Self {
         let observe = cx.observe(&library, |_, _, cx| cx.notify());
@@ -140,6 +151,7 @@ impl TrackList {
             }
         });
         let page_breakpoint = shell.read(cx).breakpoint();
+        let columns = settings.read(cx).settings().track_columns.clamped();
 
         Self {
             selection_generation: library.read(cx).visible_generation(),
@@ -149,10 +161,14 @@ impl TrackList {
             stagger_seq: 0,
             stagger_started: None,
             _stagger_task: None,
+            _columns_save: None,
             library,
             shell,
             covers,
             search_page,
+            settings,
+            columns,
+            album_ratio: None,
             scroll,
             page: ListState::new(0, ListAlignment::Top, px(0.)),
             page_head: None,
@@ -223,6 +239,42 @@ impl TrackList {
                 cx.notify();
             })
             .ok();
+        }));
+    }
+
+    /// 表头拖宽。宽度已按拖动方向算好，这里只负责写回、钳制和重绘。
+    /// `old` 是这一列当前画出来的宽度，差值记到空白上，别的列不动。
+    fn resize_column(
+        &mut self,
+        edge: columns::ColumnEdge,
+        old: f32,
+        new: f32,
+        gap: f32,
+        cx: &mut Context<Self>,
+    ) {
+        let mut next = self.columns;
+        columns::apply(&mut next, edge, old, new, gap);
+        let next = next.clamped();
+        if next == self.columns {
+            return;
+        }
+        self.columns = next;
+        self.album_ratio = None;
+        self.schedule_columns_save(cx);
+        cx.notify();
+    }
+
+    /// 拖动中每帧写盘太重。停手 300ms 后只写最后一份，中间的过程不值得落盘。
+    #[allow(clippy::used_underscore_binding)]
+    fn schedule_columns_save(&mut self, cx: &mut Context<Self>) {
+        let executor = cx.background_executor().clone();
+        let settings = self.settings.clone();
+        let columns = self.columns;
+        self._columns_save = Some(cx.spawn(async move |_, cx| {
+            executor.timer(Duration::from_millis(300)).await;
+            settings.update(cx, |settings, cx| {
+                settings.set_track_columns(columns, cx);
+            });
         }));
     }
 }
@@ -315,15 +367,37 @@ impl Render for TrackList {
         let selecting = self.selecting && !in_search;
         let selected = Rc::clone(&self.selected);
 
+        let center_width = self.shell.read(cx).center_width();
+        let breakpoint = self.shell.read(cx).breakpoint();
+        let row_extras = theme::ROW_PAD_LEFT
+            + theme::GAP_MD
+            + if selecting { CHECK_W } else { 0.0 }
+            + if reorderable { HANDLE_W } else { 0.0 };
+        let content_width = (center_width - row_extras).max(0.0);
+        let available = (content_width
+            - self.columns.index
+            - LIKE_W
+            - theme::COLUMN_TIME_W
+            - self.columns.gap)
+            .max(0.0);
+        self.columns.album =
+            shared_album_width(available, self.columns.album, &mut self.album_ratio);
+        let fit = column_fit(
+            self.columns,
+            content_width,
+            row::show_album_column(breakpoint.shows_album_column(), kind),
+        );
+
         let env = RowEnv {
             row_height: self.shell.read(cx).row_height(),
-            show_album: row::show_album_column(
-                self.shell.read(cx).breakpoint().shows_album_column(),
-                kind,
-            ),
+            show_album: fit.album.is_some(),
+            title_width: fit.title,
+            album_width: fit.album.unwrap_or(0.0),
+            gap: fit.gap,
             kind,
             reorderable,
             selectable: selecting,
+            columns: self.columns,
         };
 
         // 页头并入滚动区只发生在两种页面，即搜索结果与专辑或艺人详情。
@@ -344,8 +418,6 @@ impl Render for TrackList {
             None
         };
         let query = self.library.read(cx).query().to_owned();
-        let breakpoint = self.shell.read(cx).breakpoint();
-        let center_width = self.shell.read(cx).center_width();
 
         let list_weak = Self::weak(cx);
         let toolbar_state = toolbar::ToolbarState {
@@ -361,6 +433,7 @@ impl Render for TrackList {
             headed_elsewhere,
             in_search,
             selecting,
+            follow: self.library.read(cx).list_follows_playback(),
         };
 
         if let Some(head) = page_head {
@@ -619,11 +692,13 @@ fn chrome(
             rows,
             collection,
             library: library.clone(),
-            list,
+            list: list.clone(),
         }));
     }
 
-    column.child(row::column_header(&env)).into_any_element()
+    column
+        .child(row::column_header(&env, list))
+        .into_any_element()
 }
 
 fn empty_body(
@@ -676,17 +751,72 @@ fn stagger_enter(seq: u64, index: usize) -> Option<(u64, u64)> {
     (index < anim::STAGGER_ROWS).then_some((seq, (index.min(6) as u64) * anim::STAGGER_ROW_MS))
 }
 
+/// 列宽在当前主区宽度下的实际布局。
+/// 标题列永远是剩余宽度（窗口变宽就变宽），所以不存它；
+/// 放不下时先扣掉空白，再压专辑，专辑到下限还不行就收起。
+struct ColumnFit {
+    title: f32,
+    album: Option<f32>,
+    gap: f32,
+}
+
+/// 窗口伸缩时，专辑按上一次的占比跟着标题一起缩放；占比在拖动分隔线后重新取样。
+fn shared_album_width(available: f32, album: f32, ratio: &mut Option<f32>) -> f32 {
+    let share = *ratio.get_or_insert_with(|| {
+        if available > 0.0 {
+            (album / available).clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    });
+    if available <= 0.0 || share <= 0.0 {
+        return album;
+    }
+    (available * share).clamp(ALBUM_MIN_W, 480.0)
+}
+
+fn column_fit(columns: TrackColumns, content_width: f32, album_allowed: bool) -> ColumnFit {
+    let fixed = columns.index + LIKE_W + theme::COLUMN_TIME_W;
+    let mut gap = columns.gap.max(0.0);
+    let mut album = album_allowed.then(|| columns.album.max(ALBUM_MIN_W));
+    let mut title = content_width - fixed - album.unwrap_or(0.0) - gap;
+
+    if title < TITLE_MIN_W {
+        // 标题先吃空白，再压专辑，保住地板。
+        gap = (gap - (TITLE_MIN_W - title)).max(0.0);
+        title = content_width - fixed - album.unwrap_or(0.0) - gap;
+    }
+    if let Some(width) = album
+        && title < TITLE_MIN_W
+    {
+        let room = content_width - fixed - gap - TITLE_MIN_W;
+        album = (room >= ALBUM_MIN_W).then(|| width.min(room));
+        title = content_width - fixed - album.unwrap_or(0.0) - gap;
+    }
+    let title = title.max(0.0);
+
+    ColumnFit { title, album, gap }
+}
+
 /// 行与列头共用的布局与作用域参数。
 #[derive(Clone, Copy)]
 struct RowEnv {
     /// 行高，来自密度设置；`uniform_list` 用它算每一项的位置。
     row_height: f32,
     show_album: bool,
+    /// 标题列的实际宽度（剩余宽度）。
+    title_width: f32,
+    /// 专辑列的实际宽度。主区窄时小于用户拖出来的值，见 [`column_fit`]。
+    album_width: f32,
+    /// 能借用的空白，落在时长右侧。拖宽某列时最多放到这里。
+    gap: f32,
     /// 作用域种类，决定副标题省哪段、列头第二段写谁。
     kind: ScopeKind,
     /// 行首拖拽手柄 + 行内落点区。
     reorderable: bool,
     selectable: bool,
+    /// 编号/空白/专辑的存储值；标题宽度不存，时长是常量。
+    columns: TrackColumns,
 }
 
 impl RowEnv {
@@ -706,8 +836,88 @@ impl RowEnv {
 
 #[cfg(test)]
 mod tests {
-    use super::{Removal, TWO_LINE_MIN, anim, row_motion, stagger_enter};
+    use super::{
+        Removal, TWO_LINE_MIN, anim, column_fit, row_motion, shared_album_width, stagger_enter,
+    };
+    use crate::settings::TrackColumns;
     use crate::shell::Density;
+
+    fn columns(index: f32, gap: f32, album: f32) -> TrackColumns {
+        TrackColumns { index, gap, album }
+    }
+
+    #[test]
+    fn the_title_fills_the_window_by_default() {
+        // 内容 720、固定 36+88+60=184 → 剩余 536，专辑 220 → 标题 316。
+        let fit = column_fit(columns(36.0, 0.0, 220.0), 720.0, true);
+        assert_eq!(fit.title, 316.0);
+        assert_eq!(fit.album, Some(220.0));
+        assert_eq!(fit.gap, 0.0);
+    }
+
+    #[test]
+    fn a_wider_window_widens_the_title_not_the_gap() {
+        let narrow = column_fit(columns(36.0, 0.0, 220.0), 720.0, true);
+        let wide = column_fit(columns(36.0, 0.0, 220.0), 900.0, true);
+        assert_eq!(wide.gap, 0.0, "窗口多出来的宽度不该落到空白里");
+        assert_eq!(wide.title - narrow.title, 180.0, "宽出来多少，标题就宽多少");
+    }
+
+    #[test]
+    fn the_gap_from_compressing_a_column_holds_the_title_still() {
+        // 专辑缩到 100，空出 120：标题仍拿剩余宽度 316。
+        let fit = column_fit(columns(36.0, 120.0, 100.0), 720.0, true);
+        assert_eq!(fit.title, 316.0);
+        assert_eq!(fit.album, Some(100.0));
+        assert_eq!(fit.gap, 120.0);
+    }
+
+    #[test]
+    fn a_narrow_window_eats_the_gap_before_the_album() {
+        // 标题不够地板：先扣 120 的空白，还差 84 → 专辑让到 396。
+        let fit = column_fit(columns(36.0, 120.0, 480.0), 720.0, true);
+        assert_eq!(fit.gap, 0.0, "先扣空白");
+        assert_eq!(fit.album, Some(396.0), "再压专辑给标题留地板");
+        assert_eq!(fit.title, 140.0);
+    }
+
+    #[test]
+    fn too_narrow_drops_the_album_column() {
+        let fit = column_fit(columns(36.0, 0.0, 220.0), 300.0, true);
+        assert_eq!(fit.album, None, "标题地板与专辑下限都放不下时收起整列");
+        assert_eq!(fit.title, 116.0, "专辑收起后标题拿回全部剩余宽度");
+
+        let fit = column_fit(columns(36.0, 0.0, 220.0), 200.0, true);
+        assert_eq!(fit.album, None);
+        assert_eq!(fit.title, 16.0, "连标题地板都放不下时只守剩余宽度");
+    }
+
+    #[test]
+    fn an_album_detail_gives_the_whole_remainder_to_the_title() {
+        let fit = column_fit(columns(36.0, 0.0, 220.0), 900.0, false);
+        assert_eq!(fit.album, None);
+        assert_eq!(fit.title, 900.0 - 36.0 - 88.0 - 60.0);
+    }
+
+    #[test]
+    fn window_resize_shares_the_delta_between_title_and_album() {
+        let mut ratio = None;
+        // 可用区 1000、专辑 250 → 占比 0.25。
+        assert_eq!(shared_album_width(1000.0, 250.0, &mut ratio), 250.0);
+        // 窗口拉宽，专辑跟着标题一起变宽。
+        assert_eq!(shared_album_width(1200.0, 250.0, &mut ratio), 300.0);
+        // 再缩窄，两列一起变窄。
+        assert_eq!(shared_album_width(800.0, 300.0, &mut ratio), 200.0);
+    }
+
+    #[test]
+    fn dragging_a_divider_resamples_the_ratio() {
+        let mut ratio = Some(0.25);
+        // 拖动分隔线后调用方会把占比置空，下一次布局按新宽度重新取样。
+        ratio = None;
+        assert_eq!(shared_album_width(800.0, 300.0, &mut ratio), 300.0);
+        assert_eq!(shared_album_width(1200.0, 300.0, &mut ratio), 450.0);
+    }
 
     #[test]
     fn the_two_line_threshold_separates_the_two_densities() {

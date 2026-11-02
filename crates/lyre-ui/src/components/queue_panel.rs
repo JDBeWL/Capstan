@@ -6,6 +6,7 @@ use std::rc::Rc;
 use lyre_core::{PlayMode, Track, TrackId, format_duration};
 
 use crate::common::thousands;
+use crate::cover::CoverCache;
 use crate::entities::LibraryEntity;
 use crate::icon::{Glyph, icon, icon_inherit};
 use crate::platform::*;
@@ -13,24 +14,26 @@ use crate::shell::ShellEntity;
 use crate::theme;
 
 use super::panel_close_button;
-
-/// 已播只留 5 首作上下文，不属于队列本身。
-/// 这是显示上限，不是滚动锚点。锚点是 `QueueRows::current_row`。
-const PLAYED_CONTEXT: usize = 5;
+use super::track_drag::{DragGhost, DragTrack};
 
 /// 行高要容得下 14px 标题行 + 12px 副标题行，合计约 51。
 const ROW_H: f32 = theme::ROW_H_COMFORTABLE;
 
 const INDEX_W: f32 = theme::ROW_INDEX_W;
 const DURATION_W: f32 = 48.0;
+/// 行首封面边长。行高 52 里上下各留 8px。
+const COVER: f32 = 36.0;
 
 const DIVIDER_H: f32 = 28.0;
 
 pub struct QueuePanel {
     library: Entity<LibraryEntity>,
     shell: Entity<ShellEntity>,
+    /// 行首封面。解码完成时会 notify，这一栏跟着重绘。
+    covers: Entity<CoverCache>,
     _sub: Subscription,
     _shell_sub: Subscription,
+    _covers_sub: Subscription,
     scroll: ListState,
     // `observe(library)` 在任何曲库变化时都会触发，所以记住上次定位的曲目，
     // 只在正在播放的那首真的换了时才滚动，否则用户翻看队列时会被拽回当前曲。
@@ -45,6 +48,7 @@ impl QueuePanel {
     pub fn new(
         library: Entity<LibraryEntity>,
         shell: Entity<ShellEntity>,
+        covers: Entity<CoverCache>,
         cx: &mut Context<Self>,
     ) -> Self {
         // 换曲和切模式都改变队列，所以 observe 整个曲库实体。
@@ -55,11 +59,15 @@ impl QueuePanel {
         // 浮层开关仅改变面板外观（关闭键显隐），但面板实体并非每次根视图重绘都会重渲染，
         // 需自行订阅外壳。
         let shell_sub = cx.observe(&shell, |_, _, cx| cx.notify());
+        // 封面是异步解码的，落地时这一栏要重绘一次，否则行首一直挂着占位图。
+        let covers_sub = cx.observe(&covers, |_, _, cx| cx.notify());
         Self {
             library,
             shell,
+            covers,
             _sub: sub,
             _shell_sub: shell_sub,
+            _covers_sub: covers_sub,
             scroll: ListState::new(0, ListAlignment::Top, px(ROW_H * 4.0)),
             last_anchored: None,
             rows: QueueRows::default(),
@@ -83,11 +91,9 @@ impl QueuePanel {
 
         let (played, upcoming, current) = {
             let library = self.library.read(cx);
-            (
-                library.just_played_ids(PLAYED_CONTEXT),
-                library.upcoming_ids(usize::MAX),
-                library.now_playing(),
-            )
+            let playlist = library.playlist();
+            let (before, after) = queue_sources(playlist.order(), playlist.cursor());
+            (before, after, library.now_playing())
         };
         let rows = build_entries(played, upcoming, current);
         // 只把真正变化的区间交给列表重测，滚到别处时不会因为队尾增删被拉回顶部。
@@ -131,7 +137,7 @@ impl QueuePanel {
             return;
         }
 
-        // 锚点是正在播的那一行本身，不是 `PLAYED_CONTEXT`，因为已播那段可能比它短，
+        // 锚点是正在播的那一行本身，不是已播段。已播那段可能比它短，
         // 分段标签还要再占一行。行号只能由 `build_entries` 给出。
         self.sync_rows(cx);
         if let Some(row) = self.rows.current_row {
@@ -211,6 +217,7 @@ impl Render for QueuePanel {
         let row_count = self.rows.entries().len();
         let rows = Rc::clone(&self.rows.entries);
         let library_entity = self.library.clone();
+        let covers_entity = self.covers.clone();
 
         let body: AnyElement = if row_count == 0 {
             empty_queue(total)
@@ -224,10 +231,16 @@ impl Render for QueuePanel {
                         // 先拷出曲目再放开曲库读取，行元素的回调还要可变借用 `cx`。
                         let track = library_entity.read(cx).playlist().by_id(*id).cloned();
                         match track {
-                            Some(track) => {
-                                queue_row(*number, &track, *kind, &library_entity, window, cx)
-                                    .into_any_element()
-                            }
+                            Some(track) => queue_row(
+                                *number,
+                                &track,
+                                *kind,
+                                &library_entity,
+                                &covers_entity,
+                                window,
+                                cx,
+                            )
+                            .into_any_element(),
                             None => div().into_any_element(),
                         }
                     }
@@ -258,6 +271,17 @@ impl Render for QueuePanel {
                     .min_h_0()
                     .min_w_0()
                     .relative()
+                    // 拖到空白处 = 接在当前曲的下一行。行内落点会先消费掉拖拽，所以这里只在
+                    // 没压在任何一行上时才生效。
+                    .on_drop::<DragTrack>({
+                        let library = self.library.clone();
+                        move |drag, _window, cx| {
+                            library.update(cx, |library, cx| {
+                                let at = library.playlist().cursor() + 1;
+                                library.insert_in_queue(&[drag.id], at, cx);
+                            });
+                        }
+                    })
                     .child(body)
                     .child(crate::common::scroll::scrollbar(
                         &self.scroll,
@@ -280,7 +304,7 @@ enum QueueEntry {
 }
 
 /// 队列的行模型，包含行本身与正在播的那一行的下标。滚动锚点只能从这里拿。
-/// 「已播那段有几行」不等于 `PLAYED_CONTEXT`。刚开播时是空的、只往回取 5 首，
+/// 「已播那段有几行」就是光标的位置；刚开播时是空的，
 /// 没有当前曲时「播放历史」标签还占一行。
 #[derive(Default)]
 struct QueueRows {
@@ -304,6 +328,12 @@ struct QueueKey {
     revision: u64,
     cursor: usize,
     playing: Option<TrackId>,
+}
+
+/// 队列面板要显示整条队列：光标之前的项也是队列成员，不能只留几首当上下文。
+fn queue_sources(order: &[TrackId], cursor: usize) -> (Vec<TrackId>, Vec<TrackId>) {
+    let cursor = cursor.min(order.len());
+    (order[..cursor].to_vec(), order[cursor..].to_vec())
 }
 
 /// 把「已播与待播」两段拼成一条连续队列。有当前曲时不再插「接下来」标签，
@@ -456,6 +486,56 @@ fn mode_badge(mode: PlayMode) -> impl IntoElement {
         .child(label)
 }
 
+/// 行内的半个落点。`below` 为真时插到这一行之后，否则之前。
+/// 上半 + 下半拼起来正好铺满一行，落点线画在哪一半，曲子就插到哪一边。
+fn queue_drop_zone(
+    number: usize,
+    below: bool,
+    track_id: TrackId,
+    library: &Entity<LibraryEntity>,
+) -> AnyElement {
+    let library = library.clone();
+    div()
+        .id((
+            if below {
+                "queue-drop-below"
+            } else {
+                "queue-drop-above"
+            },
+            number,
+        ))
+        .absolute()
+        .left_0()
+        .right_0()
+        .h(px(ROW_H / 2.0))
+        .when(below, |zone| zone.bottom(px(0.)))
+        .when(!below, |zone| zone.top(px(0.)))
+        .drag_over::<DragTrack>(move |style, _, _, _| {
+            let style = style.border_color(theme::control());
+            if below {
+                style.border_b_2()
+            } else {
+                style.border_t_2()
+            }
+        })
+        .on_drop::<DragTrack>(move |drag, _window, cx| {
+            library.update(cx, |library, cx| {
+                let pos = library
+                    .playlist()
+                    .order()
+                    .iter()
+                    .position(|id| *id == track_id);
+                library.insert_in_queue(&[drag.id], drop_index(pos, below), cx);
+            });
+        })
+        .into_any_element()
+}
+
+/// 落点 → `order` 里的插入下标。找不到这一行（曲目刚被删）时按队首算，别把整条队列往后挪。
+fn drop_index(order_pos: Option<usize>, below: bool) -> usize {
+    order_pos.map_or(0, |pos| if below { pos + 1 } else { pos })
+}
+
 /// 队列的一行。`kind` 决定配色，点一下跳到这一首。
 /// `number` 兼作元素 id。id 跟着曲目而不是行数，换曲时标签增减才不会让滚动错位。
 fn queue_row(
@@ -463,6 +543,7 @@ fn queue_row(
     track: &Track,
     kind: RowKind,
     library: &Entity<LibraryEntity>,
+    covers: &Entity<CoverCache>,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
@@ -534,6 +615,12 @@ fn queue_row(
         }
     });
 
+    // 上/下两半各是一个落点：上半插到这一行之前，下半插到之后。
+    // 插入位置在落的那一刻按曲目在 `order` 里的下标算，不能用行号：分段标签也占行号。
+    row = row
+        .child(queue_drop_zone(number, false, track_id, library))
+        .child(queue_drop_zone(number, true, track_id, library));
+
     row = row
         // 竖条不用 `border`，那会把内容整体往右推，切换当前曲时整列文字横跳。
         .child(
@@ -554,7 +641,30 @@ fn queue_row(
             track_id,
             library,
         ))
+        .child(
+            div()
+                .flex_none()
+                .pr(px(theme::GAP_SM))
+                .child(crate::common::cover::thumb(
+                    covers,
+                    library,
+                    track_id,
+                    COVER,
+                    theme::RADIUS_SM,
+                    Glyph::Music,
+                    cx,
+                )),
+        )
         .child(title_cell(number, track, title_color, meta_color));
+
+    // 队列行自己也能拖：拖到别的行上就是重排（`queue_insert` 对已在队列里的曲目是挪位）。
+    row = row.on_drag(
+        DragTrack {
+            id: track_id,
+            title: SharedString::from(track.title.clone()),
+        },
+        |drag: &DragTrack, _, _, cx| cx.new(|_| DragGhost::new(drag.title.clone())),
+    );
 
     // 时长列固定宽度而不是 `flex_1`，后者的右边界取决于标题长度，会把这一列顶宽。
     let mut row = row.child(
@@ -581,14 +691,16 @@ fn queue_row(
     }
 
     // 这里的「播放」只能跳播、不能重设队列。重设会把随机顺序洗回曲库顺序。
-    let hooks = crate::common::menu::TrackMenuHooks::none().play({
-        let library = library.clone();
-        move |id, cx| {
-            library.update(cx, |library, cx| {
-                library.activate(id, cx);
-            });
-        }
-    });
+    let hooks = crate::common::menu::TrackMenuHooks::none()
+        .in_queue()
+        .play({
+            let library = library.clone();
+            move |id, cx| {
+                library.update(cx, |library, cx| {
+                    library.activate(id, cx);
+                });
+            }
+        });
     row.context_menu(crate::common::menu::track_context_menu(
         library.clone(),
         track_id,
@@ -726,9 +838,20 @@ fn title_cell(
 #[cfg(test)]
 mod tests {
     // 不用 glob 导入，`platform::*` 里的 gpui `test` 宏会遮蔽内置 `#[test]`，导致无限递归。
-    use super::{PLAYED_CONTEXT, QueueEntry, QueueRows, RowKind, build_entries};
+    use super::{
+        QueueEntry, QueueRows, RowKind, build_entries, drop_index, queue_sources,
+    };
     use lyre_core::TrackId;
     use std::path::Path;
+
+    /// 落到下半截要插到这一行后面，上半截插到前面；行消失时按队首算。
+    #[test]
+    fn a_drop_above_goes_before_the_row_and_below_goes_after() {
+        assert_eq!(drop_index(Some(3), false), 3);
+        assert_eq!(drop_index(Some(3), true), 4);
+        assert_eq!(drop_index(Some(0), true), 1);
+        assert_eq!(drop_index(None, true), 0, "行不在了也不该把整条队列往后挪");
+    }
 
     fn id(name: &str) -> TrackId {
         TrackId::from_path(Path::new(&format!("/music/{name}.mp3")))
@@ -893,10 +1016,23 @@ mod tests {
         assert_eq!(numbers(&rows), [1, 2]);
     }
 
-    /// 滚动锚点是正在播的那一行本身；已播那段 0~5 首时都一样，取 `PLAYED_CONTEXT` 当锚点会偏。
+    /// 点击曲库中靠后的歌时，光标前的歌也属于队列，面板必须把整条 order 都列出来。
+    #[test]
+    fn the_queue_panel_lists_the_entire_order() {
+        let order: Vec<TrackId> = (0..10).map(|i| id(&format!("t{i}"))).collect();
+        let (before, upcoming) = queue_sources(&order, 7);
+        assert_eq!(before.len(), 7, "光标前的项不能截成几首上下文");
+        assert_eq!(upcoming.len(), 3);
+
+        let rows = build_entries(before, upcoming, Some(order[7]));
+        assert_eq!(rows.entries().len(), 10, "整条队列都要在行模型里");
+        assert_eq!(numbers(&rows), (1..=10).collect::<Vec<usize>>());
+    }
+
+    /// 滚动锚点是正在播的那一行本身；已播段无论多长，锚点都不能取一个固定常数。
     #[test]
     fn the_anchor_is_the_current_row_however_long_the_played_block_is() {
-        for played in 0..=PLAYED_CONTEXT {
+        for played in 0..=8 {
             let played_tracks: Vec<TrackId> = (0..played).map(|i| id(&format!("p{i}"))).collect();
             let head = id("cur");
             let upcoming = vec![head, id("n1"), id("n2")];
@@ -910,7 +1046,7 @@ mod tests {
         }
     }
 
-    /// 刚开播时已播区是空的，当前就是第 0 行，锚点不能取 `PLAYED_CONTEXT` 那个常数。
+    /// 刚开播时已播区是空的，当前就是第 0 行，锚点不能取固定常数。
     #[test]
     fn a_queue_that_just_started_anchors_on_row_zero() {
         let head = id("cur");

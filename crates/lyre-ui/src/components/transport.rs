@@ -40,11 +40,13 @@ impl Transport {
                     this.has_track = playback.current().is_some();
                     cx.notify();
                 }
-                // `Finished` 由上层推进队列、设备列表只有底栏的设备菜单关心，这里都不处理。
+                // `Finished` 由上层推进队列、设备列表只有底栏的设备菜单关心，失败与降级由 `RootView` 弹提示，这里都不处理。
                 PlaybackEvent::Finished
                 | PlaybackEvent::VolumeChanged
                 | PlaybackEvent::DevicesChanged
-                | PlaybackEvent::OutputModeChanged => {}
+                | PlaybackEvent::OutputModeChanged
+                | PlaybackEvent::Failed(_)
+                | PlaybackEvent::Notice(_) => {}
             },
         );
 

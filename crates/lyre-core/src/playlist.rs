@@ -461,6 +461,72 @@ impl Playlist {
         self.queue.as_deref()
     }
 
+    /// 编辑后把播放顺序整体写回显式队列：编辑即冻结，之后不再跟随曲库或可见列表。
+    /// 冻结的是当下这一份顺序，随机模式在这里不重洗。
+    fn freeze_to_order(&mut self) {
+        self.queue = Some(self.order.clone());
+    }
+
+    /// 编辑后把光标落回原来那一首。编辑队列不该让正在听的那首换位置。
+    fn reseat(&mut self, current: Option<TrackId>) {
+        self.pos = current
+            .and_then(|id| self.order.iter().position(|x| *x == id))
+            .unwrap_or(0)
+            .min(self.order.len().saturating_sub(1));
+    }
+
+    /// 把一批曲目插到播放顺序的第 `at` 位（`order` 空间，「下一首播放」传光标 + 1）。
+    /// 已经在队列里的曲目挪位而不是重复——重复 id 会让 `jump_to` 永远只命中第一个。
+    /// 不存在的 id 丢弃；什么都没变时不动队列。返回真正新增的首数。
+    pub fn queue_insert(&mut self, ids: &[TrackId], at: usize) -> usize {
+        let current = self.current_id();
+        let mut at = at.min(self.order.len());
+        let mut added = 0;
+        let mut changed = false;
+        for id in ids {
+            if !self.index.contains_key(id) {
+                continue;
+            }
+            changed = true;
+            if let Some(existing) = self.order.iter().position(|x| x == id) {
+                self.order.remove(existing);
+                // 挪走的位置在插入点之前时，插入点跟着前移一格。
+                if existing < at {
+                    at -= 1;
+                }
+            } else {
+                added += 1;
+            }
+            at = at.min(self.order.len());
+            self.order.insert(at, *id);
+            at += 1;
+        }
+        if !changed {
+            return 0;
+        }
+        self.freeze_to_order();
+        self.reseat(current);
+        self.touch();
+        added
+    }
+
+    /// 从播放队列移除一首，曲目仍留在曲库里。正在播放的那首不提供，返回 `false`：
+    /// 移除它会让光标落到下一首，而声音还在放上一首，两处状态对不上。
+    pub fn queue_remove(&mut self, id: TrackId) -> bool {
+        if self.current_id() == Some(id) {
+            return false;
+        }
+        let Some(at) = self.order.iter().position(|x| *x == id) else {
+            return false;
+        };
+        let current = self.current_id();
+        self.order.remove(at);
+        self.freeze_to_order();
+        self.reseat(current);
+        self.touch();
+        true
+    }
+
     /// `order` 由哪些曲目组成。有队列用队列，否则整库。队列里的 id 仍要按 `index` 再过滤一次。
     fn queue_ids(&self) -> Vec<TrackId> {
         match &self.queue {

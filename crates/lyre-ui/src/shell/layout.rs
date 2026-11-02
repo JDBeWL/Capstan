@@ -551,10 +551,12 @@ mod tests {
 
     #[test]
     fn center_width_matches_the_main_area_it_describes() {
-        // 1180px 是 Wide 下限。主区左右各 8、侧栏 232、右面板 320、中间两条缝各 8，剩下 596。
+        // 1180px 是 Wide 下限。主区左右各一道缝、侧栏、右面板、中间两条缝，剩下的才是主区。
+        // 用常量算出期望值，面板加宽时不用回来改这个数。
+        let expected = 1180.0 - theme::GUTTER * 4.0 - theme::SIDEBAR_W - theme::RIGHT_PANEL_W;
         assert_eq!(
             ShellEntity::center_width_for(1180.0, SidebarState::Expanded, true),
-            596.0
+            expected
         );
         assert_eq!(
             ShellEntity::center_width_for(1000.0, SidebarState::Hidden, false),

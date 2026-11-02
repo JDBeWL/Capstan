@@ -65,6 +65,8 @@ pub struct LibraryEntity {
     focus: Option<TrackId>,
     /// 底色是否绘制。光标值始终存在，`Enter` / `Delete` 依赖它；底色仅在键盘确实移动过之后绘制。
     cursor_visible: bool,
+    /// 自动切歌时列表要不要把当前曲滚进视野。默认关，见 [`LibraryEntity::follow_playback`]。
+    list_follows_playback: bool,
     /// 实际装入播放器的曲目，不等于 `playlist.current_id()`；后者在导入完成后即指向第一首。
     now_playing: Option<TrackId>,
     query: String,
@@ -124,6 +126,7 @@ impl LibraryEntity {
             playlist: Playlist::new(),
             focus: None,
             cursor_visible: false,
+            list_follows_playback: false,
             now_playing: None,
             query: String::new(),
             visible: None,
@@ -185,6 +188,8 @@ impl LibraryEntity {
             // 加载期间用户导入的曲目要补写；没有新导入就不必每次启动都重写整库。
             self.persist();
         }
+        // 队列先复位，`Loaded` 之后的续播才能在这条队列里找到上次那首。
+        self.restore_queue();
         cx.emit(LibraryEvent::Loaded);
         cx.notify();
         // 缓存先当真画出来，核对文件还在不在放到后台单独跑。慢盘上几千次 stat 是启动路径
@@ -252,6 +257,40 @@ impl LibraryEntity {
             return;
         }
         crate::library_store::save(self.playlist.in_import_order().cloned().collect());
+    }
+
+    /// 把当前显式队列写盘。`queue()` 为 `None`（跟着曲库走）时写 `null`。
+    /// 队列变化的每个出口都要调一次，重启后接回这条队列。
+    fn persist_queue(&self) {
+        if self.loading {
+            return;
+        }
+        let paths = self.playlist.queue().map(|ids| {
+            ids.iter()
+                .filter_map(|id| self.playlist.by_id(*id).map(|track| track.path.clone()))
+                .collect::<Vec<_>>()
+        });
+        crate::queue_store::save(paths);
+    }
+
+    /// 接回上次的显式队列。一首都对不上（整库换过、路径改过）时退回「跟着曲库走」，
+    /// 而不是留下一条空队列让界面看起来像坏了。
+    fn restore_queue(&mut self) {
+        let Some(paths) = crate::queue_store::load() else {
+            return;
+        };
+        let ids: Vec<lyre_core::TrackId> = paths
+            .iter()
+            .map(|path| lyre_core::TrackId::from_path(path))
+            .collect();
+        self.playlist.set_queue(Some(ids), self.seed);
+        if self
+            .playlist
+            .queue()
+            .is_some_and(<[lyre_core::TrackId]>::is_empty)
+        {
+            self.playlist.set_queue(None, self.seed);
+        }
     }
 
     pub fn playlist(&self) -> &Playlist {

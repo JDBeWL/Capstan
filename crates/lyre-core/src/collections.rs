@@ -15,7 +15,7 @@ pub struct CollectionId(pub u64);
 pub struct Collection {
     pub id: CollectionId,
     pub name: String,
-    /// 成员顺序即显示顺序，所以是 `Vec`。存 id 不存曲目，标签更新与重导时歌单自动跟着变。
+    /// 成员顺序即显示顺序（新加入的在最前），所以是 `Vec`。存 id 不存曲目，标签更新与重导时歌单自动跟着变。
     pub tracks: Vec<TrackId>,
     /// 用户指定的封面，指向数据目录里的一份拷贝而不是原图。`None` 时界面画派生色块。
     #[serde(default)]
@@ -36,12 +36,13 @@ impl Collection {
         self.tracks.contains(&id)
     }
 
-    /// 加入一首。已在册时返回 `false` 且不动位置。重复加入不该把歌挪到末尾。
+    /// 加入一首。新加入的排在最前——歌单按加入时间倒序，最近加的就在顶上。
+    /// 已在册时返回 `false` 且不动位置。
     pub fn add(&mut self, id: TrackId) -> bool {
         if self.contains(id) {
             return false;
         }
-        self.tracks.push(id);
+        self.tracks.insert(0, id);
         true
     }
 
@@ -51,13 +52,19 @@ impl Collection {
         self.tracks.len() != before
     }
 
-    /// 批量加入，返回真正新增的条数。已在册的保持原位。
+    /// 批量加入，返回真正新增的条数。整批插到最前，批内保持传入顺序；已在册的保持原位。
     pub fn add_all(&mut self, ids: impl IntoIterator<Item = TrackId>) -> usize {
-        let before = self.tracks.len();
+        let mut fresh = Vec::new();
         for id in ids {
-            self.add(id);
+            if !self.contains(id) && !fresh.contains(&id) {
+                fresh.push(id);
+            }
         }
-        self.tracks.len() - before
+        let added = fresh.len();
+        if added > 0 {
+            self.tracks.splice(0..0, fresh);
+        }
+        added
     }
 
     /// 把第 `from` 首挪走，挪完之后它就站在第 `to` 位（`to` 越界时按末位算）。
@@ -212,11 +219,15 @@ mod tests {
         assert!(list.add(x));
         assert!(list.add(y));
         assert!(!list.add(x), "重复加入应被拒");
-        assert_eq!(list.tracks, vec![x, y], "重复加入不该把歌挪到末尾");
+        assert_eq!(
+            list.tracks,
+            vec![y, x],
+            "最近加入的排在最前；重复加入不该把歌挪位"
+        );
 
         assert!(list.add(z));
         assert!(list.remove(y));
-        assert_eq!(list.tracks, vec![x, z]);
+        assert_eq!(list.tracks, vec![z, x]);
         assert!(!list.remove(y), "再删一次应当无事发生");
         assert!(!list.contains(y));
     }
@@ -240,9 +251,8 @@ mod tests {
     fn move_item_puts_the_track_at_the_target_index() {
         let ids = |list: &Collection| list.tracks.iter().map(|t| t.0).collect::<Vec<_>>();
         let mut list = Collection::new(CollectionId(0), "通勤");
-        for n in 1..=4 {
-            list.add(TrackId(n));
-        }
+        // 直接摆好初始顺序，免得和「新加入排在最前」的默认叠在一起看。
+        list.tracks = vec![TrackId(1), TrackId(2), TrackId(3), TrackId(4)];
 
         assert!(list.move_item(0, 2));
         assert_eq!(ids(&list), vec![2, 3, 1, 4], "1 应当站在第 3 位");
@@ -269,7 +279,11 @@ mod tests {
             2,
             "已在册的不该被重复计数"
         );
-        assert_eq!(list.tracks, vec![TrackId(1), TrackId(2), TrackId(3)]);
+        assert_eq!(
+            list.tracks,
+            vec![TrackId(2), TrackId(3), TrackId(1)],
+            "整批插到最前，批内保持传入顺序"
+        );
     }
 
     #[test]

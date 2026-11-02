@@ -365,9 +365,8 @@ mod tests {
 
         fn apply(rows: &[u64], from: usize, boundary: usize) -> Vec<u64> {
             let mut list = Collection::new(CollectionId(0), "演示");
-            for row in rows {
-                list.add(TrackId(*row));
-            }
+            // 直接摆好初始顺序，别让「新加入排最前」的默认搅进来。
+            list.tracks = rows.iter().map(|row| TrackId(*row)).collect();
             // 这几行都能解析成曲目，所以可见行号与成员下标是同一个轴。
             list.move_item(from, reorder_target(from, boundary));
             list.tracks.iter().map(|track| track.0).collect()

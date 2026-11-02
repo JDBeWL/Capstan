@@ -17,7 +17,7 @@ use crate::platform::*;
 const PUMP_INTERVAL: Duration = Duration::from_millis(100);
 
 /// 对外广播的语义事件（进度不在此列，它走 [`PlaybackEntity::position`]）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PlaybackEvent {
     /// 换曲了（含首次装载）
     TrackChanged,
@@ -31,6 +31,10 @@ pub enum PlaybackEvent {
     OutputModeChanged,
     /// 一首歌自然播完了，由上层决定下一曲还是循环。
     Finished,
+    /// 出声失败。同一句话连续失败只发一次，免得把提示条的计时一直重置。
+    Failed(String),
+    /// 出声没坏、但与用户选择不同的降级（设备被拔、独占退回共享）。
+    Notice(String),
 }
 
 /// 独占后端的构造入口，由装配层注入：
@@ -385,10 +389,19 @@ impl PlaybackEntity {
             }
 
             PlayerEvent::Error(message) => {
-                self.error = Some(message);
+                // 同一个故障连着报（设备失联的每一拍都会来一次）只提示一次，
+                // 否则提示条的 6 秒计时一直被顶回前台。
+                let repeated = self.error.as_deref() == Some(message.as_str());
+                self.error = Some(message.clone());
                 self.state = PlaybackState::Idle;
                 emitted.push(PlaybackEvent::StateChanged);
+                if !repeated {
+                    emitted.push(PlaybackEvent::Failed(message));
+                }
             }
+
+            // 降级不动播放状态：声音还在出，只是输出口径和用户的选择不一样。
+            PlayerEvent::Notice(message) => emitted.push(PlaybackEvent::Notice(message)),
         }
     }
 }

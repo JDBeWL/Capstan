@@ -132,6 +132,7 @@ impl RootView {
                 shell.clone(),
                 covers.clone(),
                 search_page.clone(),
+                settings.clone(),
                 cx,
             )
         });
@@ -141,7 +142,8 @@ impl RootView {
         let sidebar = cx.new(|cx| Sidebar::new(shell.clone(), library.clone(), covers.clone(), cx));
         let home = cx.new(|cx| HomeView::new(shell.clone(), library.clone(), covers.clone(), cx));
         let lyrics = cx.new(|cx| LyricsView::new(playback.clone(), shell.clone(), cx));
-        let queue_panel = cx.new(|cx| QueuePanel::new(library.clone(), shell.clone(), cx));
+        let queue_panel =
+            cx.new(|cx| QueuePanel::new(library.clone(), shell.clone(), covers.clone(), cx));
         let settings_panel = cx.new(|cx| {
             SettingsPanel::new(
                 settings.clone(),
@@ -184,6 +186,13 @@ impl RootView {
                 }
                 PlaybackEvent::StateChanged => {
                     resume::save_resume(&this.playback, &this.settings, cx);
+                }
+                // 出声失败与降级都得让用户看见。右面板在中等与窄窗口下默认收起，
+                // 只把错误挂在那儿等于没声音也没提示。
+                PlaybackEvent::Failed(message) | PlaybackEvent::Notice(message) => {
+                    let message = message.clone();
+                    this.toast
+                        .update(cx, |toast, cx| toast.show_plain(message, cx));
                 }
                 // `Restored` 只是把上次那首装回来，不算一次播放，也不能把还没生效的 0 秒写回存档；
                 // 输出模式与设备列表由设置面板、底栏各自订阅刷新。
