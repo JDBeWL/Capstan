@@ -84,6 +84,7 @@ pub(super) fn title_cell(
         thumb_size,
         theme::RADIUS_SM,
         Glyph::Music,
+        crate::common::cover::initial_of(&track.title),
         cx,
     );
 
@@ -141,15 +142,17 @@ pub(super) fn title_cell(
         );
 
     if two_lines {
-        let segments = artist_segments(index, track.artist.clone(), library, list);
-        cell = cell.child(title_line).child(
-            div()
-                .flex()
-                .items_center()
-                .text_size(px(theme::FONT_CAPTION))
-                .text_color(theme::text_muted())
-                .children(segments),
-        );
+        // 副标题自己拿宽度。`w_full` 在 gpui 下解不出一个确定宽度，`truncate` 就只剩裁切、
+        // 没有省略号；专辑列之所以能收尾，是因为它的单元格写死了宽度。
+        let subtitle_w =
+            (env.title_width - env.thumb_size() - theme::GAP_MD - theme::GAP_MD).max(0.0);
+        cell = cell.child(title_line).child(subtitle_line(
+            index,
+            track.artist.clone(),
+            library,
+            list,
+            subtitle_w,
+        ));
     } else {
         // 紧凑密度只有一行。标题与艺术家挤在同一段宽度里，两边都必须能收缩，
         // 否则长艺术家名会画到专辑列上。艺术家 shrink 更大，先让位。
@@ -178,35 +181,66 @@ pub(super) fn title_cell(
         .child(cell)
 }
 
-/// 副标题只放艺术家。多艺术家按 core 的分组口径拆开，每位各自可点。
-fn artist_segments(
+/// 副标题最多列几位艺术家。合唱曲目能挂十来位 CV，全列出来整行只剩一串省略号，
+/// 谁的都读不出来；多出来的收进一个 `…`，完整的名字放在提示里。
+const SUBTITLE_MAX_ARTISTS: usize = 2;
+/// 超过这么多字符就不再拆成链接、整行当一段文字排。
+/// 一排可点的名字各自 truncate 只会把每个名字都切成两三个字，还不如让最后一段收省略号。
+const SUBTITLE_PLAIN_CHARS: usize = 40;
+
+/// 副标题：艺术家。短名单拆成可点的人名，长名单（合唱曲目的 CV 墙）整行一句。
+fn subtitle_line(
     index: usize,
     artist: Option<String>,
     library: &Entity<LibraryEntity>,
     list: &WeakEntity<TrackList>,
-) -> Vec<AnyElement> {
+    width: f32,
+) -> AnyElement {
+    let base = div()
+        .w(px(width))
+        .min_w_0()
+        .text_size(px(theme::FONT_CAPTION))
+        .text_color(theme::text_muted());
+
     // 「未知艺术家」不可点，点进去是空作用域。
     let Some(name) = artist.filter(|a| lyre_core::artist_key_str(Some(a)) != UNKNOWN_ARTIST) else {
-        return Vec::new();
+        return base.into_any_element();
     };
+    let parts = lyre_core::artist_keys_str(Some(&name));
+    if parts.len() > SUBTITLE_MAX_ARTISTS || name.chars().count() > SUBTITLE_PLAIN_CHARS {
+        return base
+            .id(SharedString::from(format!("subtitle-name-{index}")))
+            .truncate()
+            .tooltip(crate::common::tooltip::builder(name.clone()))
+            .child(name)
+            .into_any_element();
+    }
 
     let mut out = Vec::new();
-    for (position, part) in lyre_core::artist_keys_str(Some(&name))
-        .into_iter()
-        .enumerate()
-    {
+    for (position, part) in parts.iter().take(SUBTITLE_MAX_ARTISTS).enumerate() {
         if position > 0 {
             out.push(artist_sep());
         }
         // 元素 id 必须逐行、逐人唯一，重复的 id 会让 gpui 复用前一个元素的命中区域。
         out.push(artist_link(
             format!("subtitle-artist-{index}-{position}"),
-            part.to_owned(),
+            (*part).to_owned(),
             library.clone(),
             list.clone(),
         ));
     }
-    out
+    if parts.len() > SUBTITLE_MAX_ARTISTS {
+        out.push(artist_sep());
+        out.push(
+            div()
+                .id(SharedString::from(format!("subtitle-rest-{index}")))
+                .flex_none()
+                .child("…")
+                .tooltip(crate::common::tooltip::builder(name.clone()))
+                .into_any_element(),
+        );
+    }
+    base.flex().items_center().children(out).into_any_element()
 }
 
 /// gpui 的鼠标事件会冒泡到标题格的 `on_click`，必须 `stop_propagation`，
@@ -221,6 +255,8 @@ fn artist_link(
     div()
         .id(SharedString::from(id))
         .min_w_0()
+        // gpui 的 flex 项默认不收缩，光有 `truncate` 只会被父级裁掉、没有省略号。
+        .flex_shrink(1.0)
         .truncate()
         .cursor_pointer()
         .hover(|style| style.text_color(theme::text()).underline())

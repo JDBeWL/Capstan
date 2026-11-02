@@ -375,12 +375,14 @@ pub(super) fn lib_row(
         );
     } else if let Some(id) = entry.id {
         // 选中只代表正在看这一组，播放键仍然要能起播。
+        // 悬浮键浮在行尾，不占布局宽度：没在播放的行，那 36px 应该留给标题。
         row = row.child(row_play_button(
             group,
             id,
             entry.scope,
             &play_title,
             play_library,
+            selected,
         ));
     }
 
@@ -403,7 +405,7 @@ pub(super) fn lib_row(
     }
 }
 
-/// 行尾的悬浮播放键。常驻占位，靠 `group_hover` 改透明度显隐。
+/// 行尾的悬浮播放键。浮在行尾、不参与布局，靠 `group_hover` 改透明度显隐。
 /// 它嵌在「点开分组」的整行里，必须阻断冒泡，否则一次点击同时播放并跳详情。
 fn row_play_button(
     group: SharedString,
@@ -411,23 +413,41 @@ fn row_play_button(
     scope: SideScope,
     title: &str,
     library: Entity<LibraryEntity>,
+    selected: bool,
 ) -> AnyElement {
     // 起播前把队列换成这一组。当前队列可能停在别的专辑与艺术家，直接 `activate` 会跳不进去。
     let play_title = title.to_owned();
+    // 选中行整条是黄的，黄键压黄底看不见，换成墨底反白；切角露出的也就是行底色。
+    let (fill, glyph, backdrop) = if selected {
+        (
+            theme::control(),
+            theme::text_on_control(),
+            theme::accent_hover(),
+        )
+    } else {
+        (theme::accent(), theme::text_on_accent(), theme::panel())
+    };
+
     div()
         .id(SharedString::from(format!("side-play-{}", id.0)))
-        .relative()
-        .flex_none()
-        .mr(px(theme::GAP_XS))
+        .absolute()
+        .top(px((LIB_ROW_H - 28.0) / 2.0))
+        .right(px(theme::GAP_SM))
         .size(px(28.))
         .flex()
         .items_center()
         .justify_center()
-        .bg(theme::accent())
+        .bg(fill)
         .opacity(0.0)
         .cursor_pointer()
         .group_hover(group, |style| style.opacity(1.0))
-        .hover(|style| style.bg(theme::accent_hover()))
+        .hover(|style| {
+            style.bg(if selected {
+                theme::text()
+            } else {
+                theme::accent_hover()
+            })
+        })
         .on_click(move |_, _, cx| {
             cx.stop_propagation();
             let title = play_title.clone();
@@ -438,10 +458,7 @@ fn row_play_button(
             });
         })
         .tooltip(tooltip::builder(format!("播放《{title}》")))
-        .child(crate::common::ornament::cut_br(
-            theme::CUT_SM,
-            theme::window_base(),
-        ))
-        .child(icon(Glyph::Play, 14., theme::text_on_accent()))
+        .child(crate::common::ornament::cut_br(theme::CUT_SM, backdrop))
+        .child(icon(Glyph::Play, 14., glyph))
         .into_any_element()
 }

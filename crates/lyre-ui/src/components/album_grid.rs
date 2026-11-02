@@ -8,7 +8,6 @@ use lyre_core::{AlbumGroup, ArtistGroup, TrackId, format_duration};
 use crate::common::thousands;
 use crate::cover::CoverCache;
 use crate::entities::LibraryEntity;
-use crate::icon::{Glyph, icon_inherit};
 use crate::platform::*;
 use crate::shell::{CARD_MAX_W, NavSection, ShellEntity};
 use crate::theme;
@@ -58,7 +57,7 @@ impl Card {
             title: group.title.clone(),
             subtitle: group.display_artist(),
             meta,
-            initial: group.title.chars().next(),
+            initial: crate::common::cover::initial_of(&group.title),
             kind: NavSection::Albums,
         }
     }
@@ -79,7 +78,7 @@ impl Card {
             title: group.name.clone(),
             subtitle: String::new(),
             meta,
-            initial: group.name.chars().next(),
+            initial: crate::common::cover::initial_of(&group.name),
             kind: NavSection::Artists,
         }
     }
@@ -501,9 +500,11 @@ fn cover_cell(
         }
         crate::common::cover::Cover::Missing => cell
             .rounded(px(theme::RADIUS_LG))
-            .border_1()
-            .border_color(theme::border())
-            .child(monogram(card.initial))
+            .child(crate::common::cover::monogram(
+                card.initial,
+                height,
+                theme::RADIUS_LG,
+            ))
             .into_any_element(),
         // 还在解码。画骨架屏，别让首字色块闪一下再被真封面顶掉。
         crate::common::cover::Cover::Pending => cell
@@ -512,25 +513,7 @@ fn cover_cell(
     }
 }
 
-/// 没有封面时的占位。标题首字 + 按字符标量值取模选出的色块，同一首字颜色恒定。
-fn monogram(initial: Option<char>) -> impl IntoElement {
-    let Some(ch) = initial else {
-        return div()
-            .text_color(theme::text_faint())
-            .child(icon_inherit(Glyph::Album, 32.));
-    };
-
-    div()
-        .size_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .bg(crate::common::cover::monogram_color(ch))
-        .text_size(px(32.))
-        .text_color(theme::text_on_monogram())
-        .child(ch.to_string())
-}
-
+/// 没有封面时的占位统一走 [`crate::common::cover::monogram`]，此文件不再自己画。
 fn empty_grid() -> impl IntoElement {
     div()
         .size_full()

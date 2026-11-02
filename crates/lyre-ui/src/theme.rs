@@ -247,11 +247,6 @@ pub fn tag_bg() -> Rgba {
     c(palette().tag_bg)
 }
 
-/// 封面占位上的字母。底色是固定的封面色，不随主题变。
-pub fn text_on_monogram() -> Rgba {
-    rgb(0xffffff)
-}
-
 /// 完全透明的背景，用于「未选中行」占位。
 pub fn transparent() -> Rgba {
     rgba(0x00000000)
@@ -415,8 +410,14 @@ pub const SIDEBAR_ICON_W: f32 = 64.0;
 pub const SIDEBAR_ITEM_H: f32 = 48.0;
 pub const SIDEBAR_INDICATOR_W: f32 = 4.0;
 pub const RIGHT_PANEL_W: f32 = 360.0;
-/// 底栏左栏宽度，即曲目身份区。
-pub const BOTTOM_LEFT_W: f32 = 240.0;
+/// 底栏左栏满宽，即曲目身份区。要放得下 52px 封面、一个不太早截断的歌名和音质徽章；
+/// 240 只够四个汉字，长一点的日文曲名一律变成「ありが…」。
+pub const BOTTOM_LEFT_W: f32 = 360.0;
+/// 中档窗口（[`crate::shell::MEDIUM_MIN`]）下的左栏宽度。那一档主区只剩一条传输带，
+/// 左栏必须在这里停一下，否则传输键组会被挤掉。
+pub const BOTTOM_LEFT_MEDIUM_W: f32 = 240.0;
+/// 窗口宽到这个数，左栏才涨到 [`BOTTOM_LEFT_W`]。
+pub const BOTTOM_LEFT_FULL_W: f32 = 1200.0;
 /// 底栏右栏宽度，即功能入口与音量。
 pub const BOTTOM_RIGHT_W: f32 = 320.0;
 pub const BOTTOM_CENTER_MAX: f32 = 620.0;
@@ -611,6 +612,12 @@ mod tests {
         assert_eq!(dark.rule, 0x353535);
         assert_eq!(dark.chip, 0x2e2e2e);
         assert_eq!(dark.danger, 0xff8a7a);
+        // 封面占位是墨块 + 反白字。深色的墨是浅色，字必须跟着翻成深墨，
+        // 否则浅墨底压白字，整张占位只剩一块空白色块。
+        assert_eq!(
+            dark.on_control, 0x161616,
+            "深色的封面首字必须与墨底反相，白字压在浅墨上读不出来"
+        );
 
         assert_eq!(light.signal, dark.signal, "强调色两套一致");
         assert_eq!(
@@ -619,7 +626,7 @@ mod tests {
         );
         assert_same_color(trace_for(light), color(light.ink), "浅色的 trace");
         assert_same_color(trace_for(dark), color(dark.signal), "深色的 trace");
-        assert_same_color(super::text_on_monogram(), rgb(0xffffff), "封面占位上的字母");
+        assert_same_color(super::text_on_control(), rgb(0xffffff), "封面占位上的字母");
     }
 
     #[test]

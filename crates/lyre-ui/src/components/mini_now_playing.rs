@@ -7,7 +7,7 @@ use lyre_core::{AudioInfo, Quality};
 use crate::common::menu::MenuTrigger;
 use crate::cover::CoverCache;
 use crate::entities::{LibraryEntity, PlaybackEntity, PlaybackEvent};
-use crate::icon::{Glyph, icon, icon_inherit};
+use crate::icon::{Glyph, icon_inherit};
 use crate::platform::*;
 use crate::theme;
 
@@ -175,7 +175,13 @@ impl Render for MiniNowPlaying {
                     .size_full()
                     .object_fit(ObjectFit::Cover),
             )),
-            None => art.child(icon(Glyph::Music, 20., theme::text_faint())),
+            // 没有封面时画首字块，与专辑网格、正在播放面板是同一个字。
+            None => art.child(crate::common::cover::monogram(
+                self.cover_id
+                    .and_then(|_| crate::common::cover::initial_of(&self.track_title)),
+                COVER_SIZE,
+                theme::RADIUS_SM,
+            )),
         }
         .child(crate::common::ornament::cut_br(
             theme::CUT_SM,
@@ -344,10 +350,12 @@ fn quality_badge(quality: Quality, audio: AudioInfo, format: Option<String>) -> 
         .flex_none()
         .px(px(theme::GAP_XS + 2.0))
         .py(px(1.))
-        .bg(theme::accent())
+        // 音质是标签，不是「当前位置 / 可点 / 要看一眼」，不占强调色。
+        // 与列表里的 wav / mp3 格式标签同一种底，黄色留给真正需要拉眼睛的东西。
+        .bg(theme::tag_bg())
         .text_size(px(theme::FONT_TAG))
         .font_weight(theme::WEIGHT_BUTTON)
-        .text_color(theme::text_on_accent())
+        .text_color(theme::text_muted())
         .cursor_pointer()
         // 徽章落在「点开正在播放」的可点区域里，不拦下来会连面板一起弹开。
         .on_click(|_, _, cx| cx.stop_propagation())

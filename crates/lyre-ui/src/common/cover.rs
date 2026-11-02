@@ -11,9 +11,51 @@ use crate::icon::{Glyph, icon_inherit};
 use crate::platform::*;
 use crate::theme;
 
-/// 无封面占位的底色。墨色块配白字，像一张编号标签。不引入第二种强调色。
+/// 无封面占位的底色。墨色块配反白字，像一张编号标签。不引入第二种强调色。
 pub fn monogram_color(_initial: char) -> Rgba {
     theme::text()
+}
+
+/// 占位方块上画哪个字。跳过开头的空白与标点：《曼波の小曲》取「曼」而不是「《」，
+/// 否则一屏黑方块上排的全是书名号和括号，比不放字还乱。
+pub fn initial_of(title: &str) -> Option<char> {
+    title
+        .chars()
+        .find(|c: &char| c.is_alphanumeric())
+        .or_else(|| title.trim_start().chars().next())
+}
+
+/// 没有封面时的占位：标题首字压在一块墨色方块上。
+///
+/// 全应用只此一份。同一张专辑在网格、正在播放、队列、底栏里必须长得一样，
+/// 否则用户会把它当成两张不同的专辑；早先「灰色块 + 音符图标」的三处写法已经造成过这种误读。
+///
+/// 元素铺满调用方给的格子，所以调用方的父容器必须已经有确定尺寸；
+/// `size` 只用来推字与图标的大小（播放器里的格子宽高可能不等）。
+pub fn monogram(initial: Option<char>, size: f32, radius: f32) -> AnyElement {
+    let cell = div()
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(radius));
+
+    let Some(ch) = initial else {
+        return cell
+            .bg(theme::elevated())
+            .text_color(theme::text_faint())
+            .child(icon_inherit(Glyph::Album, (size * 0.44).max(14.)))
+            .into_any_element();
+    };
+
+    // 字母按格子等比放大，太小的格子里再用下限兜住可读性。
+    let letter = ch.to_uppercase().next().unwrap_or(ch);
+    cell.bg(monogram_color(ch))
+        .text_size(px((size * 0.28).clamp(13., 80.)))
+        .font_weight(theme::WEIGHT_TITLE)
+        .text_color(theme::text_on_control())
+        .child(letter.to_string())
+        .into_any_element()
 }
 
 /// 封面槽的三态。必须区分「排队中」与「没有封面」：
@@ -117,7 +159,9 @@ pub fn list_cover(
     }
 }
 
-/// 列表与侧栏的行首缩略图，尺寸、圆角与缺封面时的占位图标由参数给。
+/// 列表与侧栏的行首缩略图，尺寸、圆角由参数给。没有封面时画首字母块；
+/// 传 `initial` 为 `None` 的场合（艺术家、歌单）退回 `placeholder` 图标。
+#[allow(clippy::too_many_arguments)]
 pub fn thumb(
     covers: &Entity<CoverCache>,
     library: &Entity<LibraryEntity>,
@@ -125,6 +169,7 @@ pub fn thumb(
     size: f32,
     radius: f32,
     placeholder: Glyph,
+    initial: Option<char>,
     cx: &mut App,
 ) -> AnyElement {
     let state = cover_state(covers, library, id, size, cx);
@@ -147,12 +192,17 @@ pub fn thumb(
                     .object_fit(ObjectFit::Cover),
             )
             .into_any_element(),
-        Cover::Missing => cell
-            .border_1()
-            .border_color(theme::border())
-            .text_color(theme::text_faint())
-            .child(icon_inherit(placeholder, 16.))
-            .into_any_element(),
+        Cover::Missing => match initial {
+            Some(_) => cell
+                .child(monogram(initial, size, radius))
+                .into_any_element(),
+            None => cell
+                .border_1()
+                .border_color(theme::border())
+                .text_color(theme::text_faint())
+                .child(icon_inherit(placeholder, 16.))
+                .into_any_element(),
+        },
         Cover::Pending => cell.child(skeleton(size, radius)).into_any_element(),
     }
 }
@@ -216,4 +266,34 @@ fn derived_cover(size: f32, radius: f32, _seed: &str) -> AnyElement {
             theme::text(),
         ))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    // 不写 `use super::*`，`platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
+    use super::initial_of;
+
+    #[test]
+    fn the_placeholder_letter_skips_leading_brackets() {
+        assert_eq!(initial_of("《曼波の小曲》"), Some('曼'));
+        assert_eq!(initial_of("『春』"), Some('春'));
+        assert_eq!(initial_of("(intro)"), Some('i'));
+    }
+
+    #[test]
+    fn latin_and_digits_keep_their_own_letter() {
+        assert_eq!(initial_of("inst - bpm96"), Some('i'));
+        assert_eq!(initial_of("25時、ナイトコード"), Some('2'));
+    }
+
+    #[test]
+    fn a_title_of_nothing_but_punctuation_still_shows_something() {
+        assert_eq!(
+            initial_of("《》"),
+            Some('《'),
+            "没有字母可用时退到第一个非空白字符"
+        );
+        assert_eq!(initial_of("   "), None);
+        assert_eq!(initial_of(""), None);
+    }
 }

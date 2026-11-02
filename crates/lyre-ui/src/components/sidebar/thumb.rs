@@ -40,7 +40,9 @@ pub(super) fn row_thumb(
             } else {
                 (theme::RADIUS_SM, Glyph::Album)
             };
-            crate::common::cover::thumb(covers, library, id, LIB_COVER, radius, glyph, cx)
+            // 艺术家是人，用图标；专辑用标题首字，和网格里那张占位是同一个字。
+            let initial = (!artist_row).then(|| entry.title.chars().next()).flatten();
+            crate::common::cover::thumb(covers, library, id, LIB_COVER, radius, glyph, initial, cx)
         }
         None => glyph_thumb(entry.scope),
     }

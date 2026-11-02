@@ -9,16 +9,15 @@ use lyre_core::{AlbumGroup, ArtistGroup, Track, TrackId};
 use crate::components::detail::{HeroInfo, hero_for};
 use crate::cover::{CoverCache, CoverCacheEvent};
 use crate::entities::{LibraryEntity, Scope, filter};
-use crate::icon::{Glyph, icon, icon_inherit};
+use crate::icon::{Glyph, icon};
 use crate::platform::*;
 use crate::shell::{NavSection, ShellEntity};
 use crate::theme;
 
-/// 探索网格最多几块分类卡；列数按可用宽度反推（2 / 3 / 4），行数由它切。
+/// 探索列表最多几项；两栏的行数由它切。
 const BROWSE_MAX: usize = 12;
-/// 探索卡的最小可读宽度。再窄，卡上的专辑名只剩一个字。
-const BROWSE_TILE_MIN_W: f32 = 150.0;
-const BROWSE_TILE_H: f32 = 76.0;
+/// 探索列表排成两栏所需的最小宽度。再窄，专辑名只剩半行。
+const BROWSE_TWO_COL_MIN_W: f32 = 560.0;
 const BLOCK_MAX: usize = 4;
 const TOP_W: f32 = 320.0;
 const TOP_COVER: f32 = 120.0;
@@ -29,11 +28,9 @@ const RESULT_COL_MIN_W: f32 = 150.0;
 /// 达不到就退成单列。
 const GROUPS_ROW_MIN_W: f32 = RESULT_COL_MIN_W * 3.0 + theme::GAP_XL * 2.0;
 
-/// 探索网格每行几块。按可用宽度反推，夹在 2–4 列之间。
+/// 探索列表排几栏。放得下两栏就两栏，否则一栏。
 fn browse_columns(usable: f32) -> usize {
-    let gap = theme::GAP_MD;
-    let columns = ((usable + gap) / (BROWSE_TILE_MIN_W + gap)).floor() as usize;
-    columns.clamp(2, 4)
+    if usable >= BROWSE_TWO_COL_MIN_W { 2 } else { 1 }
 }
 
 /// 分组栏一行放几栏。宽到能放下三栏才并排，否则单列。
@@ -299,7 +296,7 @@ impl Render for SearchPage {
         } else if loading {
             page.child(loading_state())
         } else {
-            page.child(self.browse_grid(usable, cx))
+            page.child(self.browse_list(usable, cx))
         };
 
         page.into_any_element()
@@ -307,8 +304,8 @@ impl Render for SearchPage {
 }
 
 impl SearchPage {
-    /// 未输入时的探索网格，分类卡从专辑分组派生。曲库没有流派元数据。
-    fn browse_grid(&self, usable: f32, cx: &mut Context<Self>) -> AnyElement {
+    /// 未输入时的浏览列表，条目从专辑分组派生。曲库没有流派元数据。
+    fn browse_list(&self, usable: f32, cx: &mut Context<Self>) -> AnyElement {
         let groups = App::update_entity(cx, &self.library, |library, _| library.albums());
         if groups.is_empty() {
             return div()
@@ -323,13 +320,20 @@ impl SearchPage {
 
         let columns = browse_columns(usable);
         let tiles: Vec<AlbumGroup> = groups.iter().take(BROWSE_MAX).cloned().collect();
-        let mut grid = div().flex_none().flex().flex_col().gap(px(theme::GAP_MD));
-        for (row_ix, chunk) in tiles.chunks(columns).enumerate() {
-            let mut row = div().flex_none().flex().gap(px(theme::GAP_MD));
-            for (col, group) in chunk.iter().enumerate() {
-                row = row.child(self.browse_tile(row_ix * columns + col, group));
+        // 每栏行数取整，两栏的末行才能对齐；01–06 在左栏，07–12 接着在右栏。
+        let per_column = tiles.len().div_ceil(columns);
+        let mut grid = div()
+            .flex_none()
+            .w_full()
+            .flex()
+            .gap(px(theme::GAP_XL))
+            .items_start();
+        for (chunk_index, chunk) in tiles.chunks(per_column).enumerate() {
+            let mut col = div().flex_1().min_w_0().flex().flex_col();
+            for (offset, group) in chunk.iter().enumerate() {
+                col = col.child(self.browse_row(chunk_index * per_column + offset, group));
             }
-            grid = grid.child(row);
+            grid = grid.child(col);
         }
 
         div()
@@ -337,7 +341,6 @@ impl SearchPage {
             .flex()
             .flex_col()
             .w_full()
-            .gap(px(theme::GAP_MD))
             .px(px(theme::PAGE_PAD))
             .pb(px(theme::GAP_XL))
             .child(
@@ -349,7 +352,7 @@ impl SearchPage {
                     .gap(px(2.))
                     .pb(px(theme::GAP_SM))
                     .border_b_1()
-                    .border_color(theme::border())
+                    .border_color(theme::text())
                     .child(crate::common::section::eyebrow("Browse"))
                     .child(
                         div()
@@ -363,24 +366,26 @@ impl SearchPage {
             .into_any_element()
     }
 
-    fn browse_tile(&self, index: usize, group: &AlbumGroup) -> AnyElement {
+    /// 浏览列表的一行：编号 / 名称 / 数量，细线分隔。
+    /// 一行一项比一排带边框的方块好扫，条目多了也只是往下长。
+    fn browse_row(&self, index: usize, group: &AlbumGroup) -> AnyElement {
         let title = group.title.clone();
-        let meta = format!("{} 首", group.track_count());
         let id = group.representative;
         let library = self.library.clone();
         let shell = self.shell.clone();
 
         div()
             .id(("search-browse", index))
-            .flex_1()
+            .w_full()
             .min_w_0()
-            .h(px(BROWSE_TILE_H))
-            .relative()
-            .bg(theme::window_base())
-            .border_1()
+            .flex()
+            .items_center()
+            .gap(px(theme::GAP_MD))
+            .py(px(theme::GAP_SM + 2.))
+            .border_b_1()
             .border_color(theme::border())
             .cursor_pointer()
-            .hover(|style| style.bg(theme::elevated()))
+            .hover(|style| style.bg(theme::hover()))
             .tooltip(crate::common::tooltip::builder(group.title.clone()))
             .on_click({
                 let title = title.clone();
@@ -395,38 +400,32 @@ impl SearchPage {
                     );
                 }
             })
-            // 顶边一小段墨色页签 + 右下切角，和首页的浏览看板同一套形状。
             .child(
                 div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .h(px(5.))
-                    .w(px(24.))
-                    .bg(theme::text()),
+                    .flex_none()
+                    .w(px(28.))
+                    .font(theme::field_font())
+                    .text_size(px(theme::FONT_CAPTION))
+                    .text_color(theme::text_faint())
+                    .child(format!("{:02}", index + 1)),
             )
-            .child(crate::common::ornament::cut_br(theme::CUT, theme::bg()))
             .child(
                 div()
-                    .absolute()
-                    .left(px(theme::GAP_MD))
-                    .right(px(theme::GAP_MD + theme::CUT))
-                    .top(px(theme::GAP_MD + 2.))
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
                     .text_size(px(theme::FONT_BODY))
                     .font_weight(theme::WEIGHT_BUTTON)
                     .text_color(theme::text())
-                    .truncate()
                     .child(group.title.clone()),
             )
             .child(
                 div()
-                    .absolute()
-                    .left(px(theme::GAP_MD))
-                    .bottom(px(theme::GAP_SM))
+                    .flex_none()
                     .font(theme::field_font())
                     .text_size(px(theme::FONT_CAPTION))
                     .text_color(theme::text_faint())
-                    .child(meta),
+                    .child(format!("{} 首", group.track_count())),
             )
             .context_menu(crate::common::menu::group_context_menu(
                 self.library.clone(),
@@ -659,6 +658,7 @@ impl SearchPage {
             TOP_COVER,
             theme::RADIUS_MD,
             false,
+            &title,
             cx,
         );
         let library = self.library.clone();
@@ -798,6 +798,7 @@ impl SearchPage {
             ROW_THUMB,
             theme::RADIUS_MD,
             is_artist,
+            &row.name,
             cx,
         );
         let library = self.library.clone();
@@ -951,6 +952,8 @@ fn section_label(section: NavSection) -> &'static str {
     }
 }
 
+/// 结果行的行首一格：专辑用标题首字，艺术家（圆）用人形图标。
+#[allow(clippy::too_many_arguments)]
 fn thumb(
     covers: &Entity<CoverCache>,
     library: &Entity<LibraryEntity>,
@@ -958,47 +961,19 @@ fn thumb(
     size: f32,
     radius: f32,
     circular: bool,
+    label: &str,
     cx: &mut App,
 ) -> AnyElement {
-    let state = crate::common::cover::cover_state(covers, library, id, size, cx);
     let radius = if circular { theme::RADIUS_PILL } else { radius };
-
-    let cell = div()
-        .flex_none()
-        .size(px(size))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(radius))
-        .bg(theme::elevated());
-
-    match state {
-        crate::common::cover::Cover::Ready(image) => {
-            let cell = cell.child(
-                img(ImageSource::Render(std::sync::Arc::clone(&image)))
-                    .size_full()
-                    .rounded(px(radius))
-                    .object_fit(ObjectFit::Cover),
-            );
-            crate::common::cover::fade_in(&image, cell).into_any_element()
-        }
-        crate::common::cover::Cover::Missing => cell
-            .border_1()
-            .border_color(theme::border())
-            .text_color(theme::text_faint())
-            .child(icon_inherit(
-                if circular {
-                    Glyph::Artist
-                } else {
-                    Glyph::Music
-                },
-                16.,
-            ))
-            .into_any_element(),
-        crate::common::cover::Cover::Pending => cell
-            .child(crate::common::cover::skeleton(size, radius))
-            .into_any_element(),
-    }
+    let glyph = if circular {
+        Glyph::Artist
+    } else {
+        Glyph::Album
+    };
+    let initial = (!circular)
+        .then(|| crate::common::cover::initial_of(label))
+        .flatten();
+    crate::common::cover::thumb(covers, library, id, size, radius, glyph, initial, cx)
 }
 
 fn loading_state() -> impl IntoElement {
@@ -1096,12 +1071,11 @@ mod tests {
     }
 
     #[test]
-    fn browse_grid_uses_two_to_four_columns_by_width() {
-        assert_eq!(browse_columns(0.0), 2, "极窄也至少两列");
-        assert_eq!(browse_columns(440.0), 2, "560px 窗口下的搜索页主区");
-        assert_eq!(browse_columns(560.0), 3);
-        assert_eq!(browse_columns(820.0), 4);
-        assert_eq!(browse_columns(4000.0), 4, "超宽屏不再增加列数");
+    fn browse_list_drops_to_one_column_when_narrow() {
+        assert_eq!(browse_columns(0.0), 1, "窄屏一栏，专辑名才有整行宽度");
+        assert_eq!(browse_columns(440.0), 1, "560px 窗口下的搜索页主区");
+        assert_eq!(browse_columns(560.0), 2);
+        assert_eq!(browse_columns(4000.0), 2, "再宽也不再增加栏数");
     }
 
     #[test]

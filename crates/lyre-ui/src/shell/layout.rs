@@ -250,12 +250,26 @@ impl ShellEntity {
     }
 
     /// 底栏左栏宽度随窗口连续收缩而不是两态，否则中间列会整组横向瞬移。
-    /// 两端分别是 [`STACKED_BOTTOM_MIN`] 处的 16px 占位，
-    /// 与 [`MEDIUM_MIN`] 处的满宽 [`crate::theme::BOTTOM_LEFT_W`]。
+    /// 分两段斜坡：堆叠阈值到中档先涨到 [`theme::BOTTOM_LEFT_MEDIUM_W`]，
+    /// 中档以后才涨到满宽 [`theme::BOTTOM_LEFT_W`]——中档处主区只剩传输带，左栏不能抢那点地方。
     pub fn bottom_left_width(&self) -> f32 {
-        let span = MEDIUM_MIN - STACKED_BOTTOM_MIN;
-        let t = ((self.width - STACKED_BOTTOM_MIN) / span).clamp(0.0, 1.0);
-        crate::theme::GAP_LG + (crate::theme::BOTTOM_LEFT_W - crate::theme::GAP_LG) * t
+        let (from, to, start, end) = if self.width <= MEDIUM_MIN {
+            (
+                STACKED_BOTTOM_MIN,
+                MEDIUM_MIN,
+                crate::theme::GAP_LG,
+                crate::theme::BOTTOM_LEFT_MEDIUM_W,
+            )
+        } else {
+            (
+                MEDIUM_MIN,
+                crate::theme::BOTTOM_LEFT_FULL_W,
+                crate::theme::BOTTOM_LEFT_MEDIUM_W,
+                crate::theme::BOTTOM_LEFT_W,
+            )
+        };
+        let t = ((self.width - from) / (to - from)).clamp(0.0, 1.0);
+        start + (end - start) * t
     }
 
     /// 重算列数与单卡宽度。返回 `true` 时调用方必须 notify：
@@ -623,9 +637,20 @@ mod tests {
     /// 中间列靠 `justify_center` 居中，跳变会让它整组瞬移。
     #[test]
     fn bottom_left_width_never_jumps_across_the_medium_threshold() {
+        let stride = 8.0;
+        // 上限按最陡那段斜坡算：窗口每走 `stride`，左栏最多长这么多。两态实现会在阈值处
+        // 一步跳完整个差值，撞的就是这条线；写死一个绝对值会在调整左栏目标宽度时误报。
+        let slope = ((theme::BOTTOM_LEFT_MEDIUM_W - theme::GAP_LG)
+            / (MEDIUM_MIN - STACKED_BOTTOM_MIN))
+            .max(
+                (theme::BOTTOM_LEFT_W - theme::BOTTOM_LEFT_MEDIUM_W)
+                    / (theme::BOTTOM_LEFT_FULL_W - MEDIUM_MIN),
+            );
+        let allowed = slope * stride + 0.5;
+
         let mut previous = shell_at(STACKED_BOTTOM_MIN, None).bottom_left_width();
-        let mut width = STACKED_BOTTOM_MIN + 8.0;
-        while width <= MEDIUM_MIN + 40.0 {
+        let mut width = STACKED_BOTTOM_MIN + stride;
+        while width <= theme::BOTTOM_LEFT_FULL_W + 40.0 {
             let current = shell_at(width, None).bottom_left_width();
             let delta = current - previous;
             assert!(
@@ -633,11 +658,12 @@ mod tests {
                 "左栏宽度在 {width}px 处反而缩小了 {delta:.1}px，应当单调不减"
             );
             assert!(
-                delta <= 12.0,
-                "左栏宽度在 {width}px 处跳了 {delta:.1}px，中间列会跟着瞬移一半的距离"
+                delta <= allowed,
+                "左栏宽度在 {width}px 处跳了 {delta:.1}px，超过线性斜坡的 {allowed:.1}px，\
+                 中间列会跟着瞬移一半的距离"
             );
             previous = current;
-            width += 8.0;
+            width += stride;
         }
     }
 
@@ -649,10 +675,17 @@ mod tests {
             "堆叠阈值处应当只剩一个 {:.0}px 占位，实际 {bottom:.1}px",
             theme::GAP_LG
         );
-        let full = shell_at(MEDIUM_MIN, None).bottom_left_width();
+        let medium = shell_at(MEDIUM_MIN, None).bottom_left_width();
+        assert!(
+            (medium - theme::BOTTOM_LEFT_MEDIUM_W).abs() < 0.01,
+            "中档处应当是 {}px，主区只剩传输带，实际 {medium:.1}px",
+            theme::BOTTOM_LEFT_MEDIUM_W
+        );
+        let full = shell_at(theme::BOTTOM_LEFT_FULL_W, None).bottom_left_width();
         assert!(
             (full - theme::BOTTOM_LEFT_W).abs() < 0.01,
-            "中档处应当是满宽 {}px，实际 {full:.1}px",
+            "{}px 处应当是满宽 {}px，实际 {full:.1}px",
+            theme::BOTTOM_LEFT_FULL_W,
             theme::BOTTOM_LEFT_W
         );
         // 区间之外继续夹紧，更窄不缩成负数，更宽不无限长。

@@ -169,17 +169,14 @@ impl Render for SettingsPanel {
             output_player.update(cx, |playback, _cx| playback.set_exclusive_output(exclusive));
         });
 
-        // `center_width()` 已扣掉侧栏与右面板，两列的判断只读它。
-        let (two_columns, back_inset) = {
+        // `center_width()` 已扣掉侧栏与右面板：一栏够不够宽排并排的快捷键表只看它。
+        // 页面铺满主区，返回按钮始终压在标题那一列上，有返回键就得给它让位。
+        let (wide, back_inset) = {
             let shell = self.shell.read(cx);
-            let width = shell.center_width();
-            (
-                width >= TWO_COL_MIN,
-                shell.can_go_back() && width - 2.0 * theme::GAP_LG <= CONTENT_MAX_W,
-            )
+            (shell.center_width() >= WIDE_MIN, shell.can_go_back())
         };
 
-        let appearance_card = card("Appearance", "外观").child(choice_row(
+        let appearance_section = section("Appearance", "外观").child(choice_row(
             window,
             cx,
             Glyph::Appearance,
@@ -190,7 +187,7 @@ impl Render for SettingsPanel {
             ],
             &appearance,
         ));
-        let list_card = card("List", "列表").child(choice_row(
+        let list_section = section("List", "列表").child(choice_row(
             window,
             cx,
             Glyph::List,
@@ -201,7 +198,7 @@ impl Render for SettingsPanel {
             ],
             &density,
         ));
-        let startup_card = card("Startup", "启动")
+        let startup_section = section("Startup", "启动")
             .child(choice_row(
                 window,
                 cx,
@@ -258,21 +255,7 @@ impl Render for SettingsPanel {
                 ],
                 &resume,
             ));
-        let import_card = card("Import", "导入")
-            .child(choice_row(
-                window,
-                cx,
-                Glyph::Folder,
-                "文件夹",
-                &[
-                    ("含子目录", settings.recursive_import),
-                    ("仅顶层", !settings.recursive_import),
-                ],
-                &recursive,
-            ))
-            .child(roots_block(&self.library, window, cx));
-
-        let audio_card = card("Audio", "音频")
+        let audio_section = section("Audio", "音频")
             .child(choice_row(
                 window,
                 cx,
@@ -295,48 +278,48 @@ impl Render for SettingsPanel {
                 ],
                 &smooth,
             ))
-            .children(self.output_detail(cx));
-
-        let left = vec![appearance_card, list_card, startup_card];
-        let right = vec![audio_card, import_card, data_section(&self.library, cx)];
-        let choices = if two_columns {
-            div()
-                .w_full()
-                .flex()
-                .gap(px(theme::GAP_LG))
-                .child(column(left))
-                .child(column(right))
-                .into_any_element()
-        } else {
-            let mut stacked = left;
-            stacked.extend(right);
-            column(stacked)
-        };
+            .children(self.output_detail(cx).map(block_row));
+        let import_section = section("Import", "导入")
+            .child(choice_row(
+                window,
+                cx,
+                Glyph::Folder,
+                "文件夹",
+                &[
+                    ("含子目录", settings.recursive_import),
+                    ("仅顶层", !settings.recursive_import),
+                ],
+                &recursive,
+            ))
+            .child(block_row(roots_block(&self.library, window, cx)));
 
         let body = div()
             .w_full()
             .flex()
             .flex_col()
-            .gap(px(theme::GAP_LG))
+            .gap(px(theme::GAP_XL + theme::GAP_SM))
             // 右边多留一档。滚动条叠在滚动区上，不避让会压在数字和路径上。
             .p(px(theme::PAGE_PAD))
-            .child(choices)
-            .child(shortcuts_section(two_columns, self.shortcuts_open, cx));
+            .child(appearance_section)
+            .child(list_section)
+            .child(startup_section)
+            .child(audio_section)
+            .child(import_section)
+            .child(data_section(&self.library, cx))
+            .child(shortcuts_section(wide, self.shortcuts_open, cx));
 
         // 内容比窗口高时会被裁掉且够不着，所以整块可滚；`track_scroll` 同时是滚动条读偏移量的来源。
+        // 内容比窗口高时会被裁掉且够不着，所以整块可滚；`track_scroll` 同时是滚动条读偏移量的来源。
+        // 左轨与曲库、首页对齐（都从 `PAGE_PAD` 起），但整行不铺到右边缘：
+        // 设置是「标签 + 控件」的行，拉满一屏之后中间会空出七八百像素，读起来比收窄更累。
         let scroll_area = div()
             .id("settings-scroll")
             .flex_1()
             .min_h_0()
+            .w_full()
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
-            .child(
-                div()
-                    .flex()
-                    .justify_center()
-                    .w_full()
-                    .child(div().w_full().max_w(px(CONTENT_MAX_W)).child(body)),
-            );
+            .child(div().w_full().max_w(px(CONTENT_MAX_W)).child(body));
 
         div()
             .flex_1()
@@ -356,101 +339,99 @@ impl Render for SettingsPanel {
     }
 }
 
-/// 宽到多少才排两列，窄一档回到单列。
-const TWO_COL_MIN: f32 = 760.0;
-/// 整块内容的上限宽度，再宽就居中留白。
-const CONTENT_MAX_W: f32 = 1080.0;
+/// 一栏最多铺多宽。界面不会拉得更宽，超出的部分留在右侧。
+const CONTENT_MAX_W: f32 = 760.0;
+/// 一栏宽过这个数才把快捷键表分成三栏并排。
+const WIDE_MIN: f32 = 700.0;
 
-fn card(english: &str, title: &str) -> Div {
-    div()
-        .relative()
-        .w_full()
-        .flex()
-        .flex_col()
-        .gap(px(theme::GAP_MD))
-        .p(px(theme::GAP_LG))
-        .pt(px(theme::GAP_LG + 4.))
-        .bg(theme::window_base())
-        .border_1()
-        .border_color(theme::border())
-        // 顶边一小段墨色页签，和首页的浏览看板同一种形状语言。
-        .child(
-            div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .h(px(5.))
-                .w(px(48.))
-                .bg(theme::text()),
-        )
-        .child(crate::common::section::eyebrow(english))
-        .child(crate::common::section::section_heading(title))
+/// 一节设置：小字眉标 + 中文标题，下面直接接行。不铺底色、不加边框、不画页签——
+/// 分区只交给行间的 1px 细线，页面上没有第二层容器。
+fn section(english: &str, title: &str) -> Div {
+    div().w_full().flex().flex_col().child(
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .pb(px(theme::GAP_MD))
+            .child(crate::common::section::eyebrow(english))
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(theme::FONT_SUBTITLE))
+                    .font_weight(theme::WEIGHT_SUBTITLE)
+                    .text_color(theme::text())
+                    .child(title.to_owned()),
+            ),
+    )
 }
 
-/// `flex_1` + `min_w_0`，长路径与长标题不许把某一列顶宽。
-fn column(cards: Vec<Div>) -> AnyElement {
-    cards
-        .into_iter()
-        .fold(
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .gap(px(theme::GAP_LG)),
-            ParentElement::child,
-        )
-        .into_any_element()
+/// 细线列表的一行：上下留白 + 一条下细线。行是高是矮由内容决定。
+fn row() -> Div {
+    div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(theme::GAP_LG))
+        .py(px(theme::GAP_MD))
+        .border_b_1()
+        .border_color(theme::border())
+}
+
+/// 不是「标签 + 控件」而是一整块内容（音乐文件夹、统计、独占格式）的行。
+fn block_row(body: impl IntoElement) -> Div {
+    row().child(div().w_full().min_w_0().flex().flex_col().child(body))
 }
 
 /// 让位量与浮动返回按钮的位置同源于 `root::BACK_*`，两处不一致按钮就会压住标题。
 fn header(back_inset: bool) -> impl IntoElement {
-    // 返回键占一条 40px 高的顶行。眉标与它同高，大标题落到它下方，并与卡片共用页边线。
+    // 返回键占一条 40px 高的顶行。眉标与它同高，大标题落到它下方，并与下面的行共用页边线。
     let eyebrow_left = if back_inset {
         crate::root::HEADER_BACK_INSET - theme::PAGE_PAD + theme::GAP_SM
     } else {
         0.0
     };
 
-    div().flex_none().w_full().flex().justify_center().child(
-        div()
-            .w_full()
-            .max_w(px(CONTENT_MAX_W))
-            .flex()
-            .flex_col()
-            .pt(px(if back_inset {
-                crate::root::BACK_INSET_TOP
-            } else {
-                theme::GAP_XL
-            }))
-            .pb(px(theme::GAP_LG))
-            .px(px(theme::PAGE_PAD))
-            .child(
-                div()
-                    .h(px(if back_inset {
-                        crate::root::BACK_BTN
-                    } else {
-                        theme::GAP_LG
-                    }))
-                    .flex()
-                    .items_center()
-                    .pl(px(eyebrow_left))
-                    .child(crate::common::section::eyebrow("Config / 设置")),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .items_end()
-                    .justify_between()
-                    .gap(px(theme::GAP_MD))
-                    .child(crate::common::section::page_title("设置"))
-                    .child(crate::common::section::field(concat!(
-                        "v",
-                        env!("CARGO_PKG_VERSION")
-                    ))),
-            ),
-    )
+    div()
+        .flex_none()
+        .w_full()
+        .max_w(px(CONTENT_MAX_W))
+        .flex()
+        .flex_col()
+        .pt(px(if back_inset {
+            crate::root::BACK_INSET_TOP
+        } else {
+            theme::GAP_XL
+        }))
+        .pb(px(theme::GAP_LG))
+        .px(px(theme::PAGE_PAD))
+        .child(
+            div()
+                .h(px(if back_inset {
+                    crate::root::BACK_BTN
+                } else {
+                    theme::GAP_LG
+                }))
+                .flex()
+                .items_center()
+                .pl(px(eyebrow_left))
+                .child(crate::common::section::eyebrow("Config / 设置")),
+        )
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .items_end()
+                .justify_between()
+                .gap(px(theme::GAP_MD))
+                .child(crate::common::section::page_title("设置"))
+                .child(crate::common::section::field(concat!(
+                    "v",
+                    env!("CARGO_PKG_VERSION")
+                ))),
+        )
 }
 
 /// 快捷键表里每组的小标题。用 `text_muted` 而不是 `text_faint`。它是一组行的抬头，
@@ -464,8 +445,9 @@ fn sub_title(text: &str) -> impl IntoElement {
         .child(text.to_owned())
 }
 
-/// 一行设置。`title` + 一组互斥选项。`on_pick` 收到选项下标，由调用方映射成枚举。
-/// 回调签名压成 `Picker`，到处写全 `Rc<dyn Fn…>` 已跨过 clippy 的类型复杂度上限。
+/// 一行设置：左边名字，右边一组互斥选项。同一行里解决，不占两行高度。
+/// `on_pick` 收到选项下标，由调用方映射成枚举。回调签名压成 `Picker`，
+/// 到处写全 `Rc<dyn Fn…>` 已跨过 clippy 的类型复杂度上限。
 type Picker = Rc<dyn Fn(usize, &mut App)>;
 
 fn choice_row(
@@ -476,17 +458,19 @@ fn choice_row(
     options: &[(&str, bool)],
     on_pick: &Picker,
 ) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_col()
+    row()
         .child(
             div()
+                .flex_1()
+                .min_w_0()
                 .flex()
                 .items_center()
                 .gap(px(theme::GAP_SM))
                 .child(icon(glyph, 15., theme::text_muted()))
                 .child(
                     div()
+                        .min_w_0()
+                        .truncate()
                         .text_size(px(theme::FONT_BODY))
                         .text_color(theme::text())
                         .child(title.to_owned()),
@@ -494,6 +478,7 @@ fn choice_row(
         )
         .child(
             div()
+                .flex_none()
                 .flex()
                 .child(segmented(window, cx, title, options, on_pick)),
         )
@@ -526,14 +511,13 @@ fn segmented(
     );
 
     let mut track = div()
-        .mt(px(theme::GAP_MD))
         .relative()
         .flex()
         .gap(px(gap))
         .p(px(pad))
-        .border_1()
-        .border_color(theme::text())
-        .bg(theme::bg())
+        // 控件自己是一块浅灰切角座，不再加一圈墨线：行已经有细线了，
+        // 每个控件再套一层边框，页面会重新变成一堆表单。
+        .bg(theme::elevated())
         .child(
             div()
                 .absolute()
@@ -658,6 +642,7 @@ fn stat_cell(label: &str, value: String) -> Div {
             div()
                 .text_size(px(theme::FONT_CAPTION))
                 .text_color(theme::text_muted())
+                .truncate()
                 .child(label.to_owned()),
         )
 }
@@ -668,11 +653,19 @@ fn shortcuts_section(two_columns: bool, open: bool, cx: &mut Context<SettingsPan
     } else {
         Glyph::ChevronRight
     };
+    let total: usize = crate::shortcuts::GROUPS
+        .iter()
+        .map(|(_, entries)| entries.len())
+        .sum();
+
     let head = div()
         .id("shortcuts-toggle")
+        .w_full()
         .flex()
         .items_center()
-        .gap(px(theme::GAP_SM))
+        .justify_between()
+        .gap(px(theme::GAP_MD))
+        .pb(px(theme::GAP_MD))
         .cursor_pointer()
         .tab_index(TAB_STOP)
         .focus_visible(theme::focus_ring)
@@ -687,28 +680,36 @@ fn shortcuts_section(two_columns: bool, open: bool, cx: &mut Context<SettingsPan
         } else {
             "展开快捷键"
         }))
-        .child(icon(chevron, 14., theme::text_muted()))
-        .child(crate::common::section::section_heading("快捷键"));
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(crate::common::section::eyebrow("Shortcuts"))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(theme::GAP_SM))
+                        .child(icon(chevron, 14., theme::text_muted()))
+                        .child(
+                            div()
+                                .text_size(px(theme::FONT_SUBTITLE))
+                                .font_weight(theme::WEIGHT_SUBTITLE)
+                                .text_color(theme::text())
+                                .child("快捷键"),
+                        ),
+                ),
+        )
+        .child(crate::common::section::field(format!("{total} 条")));
 
-    let mut card = div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .gap(px(theme::GAP_MD))
-        .p(px(theme::GAP_LG))
-        .rounded(px(theme::RADIUS_CARD))
-        .bg(theme::surface())
-        .child(head);
+    let mut block = div().w_full().flex().flex_col().child(head);
 
     if !open {
-        return card;
+        return block;
     }
 
-    let mut groups = div()
-        .w_full()
-        .flex()
-        .gap(px(theme::GAP_LG))
-        .mt(px(theme::GAP_SM));
+    let mut groups = div().w_full().flex().gap(px(theme::GAP_LG));
     if !two_columns {
         groups = groups.flex_col();
     }
@@ -727,8 +728,8 @@ fn shortcuts_section(two_columns: bool, open: bool, cx: &mut Context<SettingsPan
         groups = groups.child(col);
     }
 
-    card = card.child(groups);
-    card
+    block = block.child(groups);
+    block
 }
 
 fn data_section(library: &Entity<LibraryEntity>, cx: &App) -> Div {
@@ -743,33 +744,23 @@ fn data_section(library: &Entity<LibraryEntity>, cx: &App) -> Div {
         ("歌单", library.collections().len()),
     ];
 
-    let mut grid = div()
+    // 七个数并成一行，每格等宽。不排成两列的大数字看板。
+    let mut stats = div().w_full().flex().gap(px(theme::GAP_MD));
+    for (label, count) in counts {
+        stats = stats.child(stat_cell(label, thousands(count)));
+    }
+
+    let mut content = div()
+        .w_full()
         .flex()
         .flex_col()
         .gap(px(theme::GAP_MD))
-        .mt(px(theme::GAP_SM));
-    for pair in counts.chunks(2) {
-        let mut row = div().flex().gap(px(theme::GAP_MD));
-        for &(label, count) in pair {
-            row = row.child(stat_cell(label, thousands(count)));
-        }
-        // 奇数项时补一个空位，否则末格被 flex_1 拉成整行宽。
-        if pair.len() == 1 {
-            row = row.child(div().flex_1().min_w_0());
-        }
-        grid = grid.child(row);
-    }
-
-    let mut content = div().flex().flex_col().child(grid);
+        .child(stats);
     if let Some(dir) = data_dir() {
-        content = content.child(
-            div()
-                .mt(px(theme::GAP_MD))
-                .child(path_row("数据目录", dir.display().to_string())),
-        );
+        content = content.child(path_row("数据目录", dir.display().to_string()));
     }
 
-    card("Data", "数据").child(content)
+    section("Data", "数据").child(block_row(content))
 }
 
 /// 音乐文件夹。把「记住哪些目录」摆出来，并且能加、能重扫、能移除。
@@ -864,10 +855,10 @@ fn roots_block(
     }
 
     div()
+        .w_full()
         .flex()
         .flex_col()
         .gap(px(theme::GAP_MD))
-        .mt(px(theme::GAP_SM))
         .child(sub_title("音乐文件夹"))
         .child(list)
         .child(

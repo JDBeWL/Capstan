@@ -374,12 +374,9 @@ impl Render for TrackList {
             + if selecting { CHECK_W } else { 0.0 }
             + if reorderable { HANDLE_W } else { 0.0 };
         let content_width = (center_width - row_extras).max(0.0);
-        let available = (content_width
-            - self.columns.index
-            - LIKE_W
-            - theme::COLUMN_TIME_W
-            - self.columns.gap)
-            .max(0.0);
+        let available =
+            (content_width - self.columns.index - LIKE_W - theme::COLUMN_TIME_W - self.columns.gap)
+                .max(0.0);
         self.columns.album =
             shared_album_width(available, self.columns.album, &mut self.album_ratio);
         let fit = column_fit(
@@ -912,9 +909,8 @@ mod tests {
 
     #[test]
     fn dragging_a_divider_resamples_the_ratio() {
-        let mut ratio = Some(0.25);
         // 拖动分隔线后调用方会把占比置空，下一次布局按新宽度重新取样。
-        ratio = None;
+        let mut ratio = None;
         assert_eq!(shared_album_width(800.0, 300.0, &mut ratio), 300.0);
         assert_eq!(shared_album_width(1200.0, 300.0, &mut ratio), 450.0);
     }

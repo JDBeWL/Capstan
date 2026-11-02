@@ -652,6 +652,7 @@ fn queue_row(
                     COVER,
                     theme::RADIUS_SM,
                     Glyph::Music,
+                    crate::common::cover::initial_of(&track.title),
                     cx,
                 )),
         )
@@ -791,13 +792,46 @@ fn index_cell(
 }
 
 /// 标题格。第一行歌名，第二行「艺术家 · 专辑」。
+/// 队列行第二行写什么。只写艺术家：队列是有序的行，专辑名在这里不参与辨认，写上去只是占宽。
+/// 没有艺术家时退回专辑，但专辑若等于文件所在文件夹名（扫描时拿文件夹名兜的底），
+/// 就当它没填——否则整列都是同一个文件夹名，一眼看过去像全都一样。
+fn queue_meta(track: &Track) -> String {
+    if let Some(artist) = track
+        .artist
+        .as_deref()
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+    {
+        return artist.to_owned();
+    }
+
+    let Some(album) = track
+        .album
+        .as_deref()
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+    else {
+        return String::new();
+    };
+
+    let folder = track
+        .path
+        .parent()
+        .and_then(|path| path.file_name())
+        .map(|name| name.to_string_lossy().into_owned());
+    if folder.as_deref() == Some(album) {
+        return String::new();
+    }
+    album.to_owned()
+}
+
 fn title_cell(
     number: usize,
     track: &Track,
     title_color: Rgba,
     meta_color: Rgba,
 ) -> impl IntoElement {
-    let subtitle = track.subtitle();
+    let subtitle = queue_meta(track);
 
     let title_line = div()
         .flex()
@@ -838,9 +872,7 @@ fn title_cell(
 #[cfg(test)]
 mod tests {
     // 不用 glob 导入，`platform::*` 里的 gpui `test` 宏会遮蔽内置 `#[test]`，导致无限递归。
-    use super::{
-        QueueEntry, QueueRows, RowKind, build_entries, drop_index, queue_sources,
-    };
+    use super::{QueueEntry, QueueRows, RowKind, build_entries, drop_index, queue_sources};
     use lyre_core::TrackId;
     use std::path::Path;
 
@@ -1081,5 +1113,29 @@ mod tests {
         let rows = build_entries(vec![id("p0")], ids(&["a", "b"]), Some(id("p0")));
 
         assert_eq!(rows.current_row, None);
+    }
+
+    /// 第二行优先写艺术家，不写专辑。
+    #[test]
+    fn the_second_line_prefers_the_artist() {
+        let mut track = lyre_core::Track::fallback(Path::new("/music/TestMusic/x.wav"));
+        track.artist = Some("陈屿".into());
+        assert_eq!(super::queue_meta(&track), "陈屿");
+    }
+
+    /// 一个标签都没有的曲目：`subtitle()` 会拿文件夹名兜底，队列这一列不要那个兜底。
+    #[test]
+    fn a_track_without_tags_gets_no_second_line() {
+        let track = lyre_core::Track::fallback(Path::new("/music/TestMusic/x.wav"));
+        assert_eq!(track.subtitle(), "TestMusic", "确认兜底写的就是文件夹名");
+        assert_eq!(super::queue_meta(&track), "");
+    }
+
+    /// 真的填了专辑、又没有艺术家时，专辑还是要显示，否则这一行什么都没写。
+    #[test]
+    fn a_real_album_still_shows_when_there_is_no_artist() {
+        let mut track = lyre_core::Track::fallback(Path::new("/music/TestMusic/x.wav"));
+        track.album = Some("夜の航路".into());
+        assert_eq!(super::queue_meta(&track), "夜の航路");
     }
 }

@@ -196,11 +196,19 @@ impl Render for NowPlaying {
                         canvas.child(crate::common::cover::skeleton(COVER_SIZE, theme::RADIUS_LG))
                     }
                     crate::common::cover::Cover::Missing => {
-                        canvas.child(placeholder(track.title.chars().next()))
+                        canvas.child(crate::common::cover::monogram(
+                            track.title.chars().next(),
+                            COVER_SIZE,
+                            theme::RADIUS_LG,
+                        ))
                     }
                 }
             }
-            None => canvas.child(placeholder(None)),
+            None => canvas.child(crate::common::cover::monogram(
+                None,
+                COVER_SIZE,
+                theme::RADIUS_LG,
+            )),
         }
         .child(crate::common::ornament::cut_br(14., theme::bg()));
 
@@ -624,20 +632,6 @@ fn up_next(
                 }),
         )
         .into_any_element()
-}
-
-fn placeholder(initial: Option<char>) -> impl IntoElement {
-    let text = match initial {
-        Some(c) => c.to_uppercase().to_string(),
-        None => "♪".to_owned(),
-    };
-    div()
-        .flex()
-        .items_center()
-        .justify_center()
-        .text_size(px(56.))
-        .text_color(theme::text_faint())
-        .child(text)
 }
 
 #[cfg(test)]

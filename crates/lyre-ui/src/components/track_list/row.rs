@@ -10,9 +10,7 @@ use crate::icon::{Glyph, icon};
 use crate::platform::*;
 use crate::theme;
 
-use super::{
-    CHECK_W, HANDLE_W, LIKE_W, RowEnv, TrackList, TrackListEvent, cells, columns, drag,
-};
+use super::{CHECK_W, HANDLE_W, LIKE_W, RowEnv, TrackList, TrackListEvent, cells, columns, drag};
 
 /// 专辑列要不要画。断点允许，且专辑详情里永远不画（每行都是同一张专辑）。
 pub(super) fn show_album_column(breakpoint_allows: bool, kind: ScopeKind) -> bool {
@@ -31,10 +29,12 @@ pub(super) fn column_header(env: &RowEnv, list: WeakEntity<TrackList>) -> impl I
         .pr(px(theme::GAP_MD))
         .border_b_1()
         .border_color(theme::text())
-        .font(theme::label_font())
-        .text_size(px(theme::FONT_EYEBROW))
+        // 列头只写中文，12px。10px 的拉丁字看得清，同样的字号的汉字只剩一道影子，
+        // 「TITLE / 标题」并排写的结果是英文清楚、中文糊掉。
+        .font(theme::ui_font())
+        .text_size(px(theme::FONT_CAPTION))
         .font_weight(theme::WEIGHT_BUTTON)
-        .text_color(theme::text_faint())
+        .text_color(theme::text_muted())
         // 勾选列与手柄列没有表头文字，但要占同样的宽，否则切换多选会在每行前面挖出一道错位。
         .when(env.selectable, |row| {
             row.child(div().flex_none().w(px(CHECK_W)))
@@ -52,7 +52,7 @@ pub(super) fn column_header(env: &RowEnv, list: WeakEntity<TrackList>) -> impl I
                 .items_center()
                 .justify_end()
                 .pr(px(theme::ROW_INDEX_GAP))
-                .child("NO.")
+                .child("序号")
                 .child(columns::handle(
                     columns::ColumnEdge::Index,
                     env.columns.index,
@@ -70,7 +70,7 @@ pub(super) fn column_header(env: &RowEnv, list: WeakEntity<TrackList>) -> impl I
                 .items_center()
                 // 标题格前面还有封面缩略图；列头让出同一段宽度才和歌名同一条竖线。
                 .pl(px(env.thumb_size() + theme::GAP_MD))
-                .child(div().min_w_0().truncate().child("TITLE / 标题"))
+                .child(div().min_w_0().truncate().child("标题"))
                 .child(columns::handle(
                     columns::ColumnEdge::Title,
                     env.title_width,
@@ -90,12 +90,13 @@ pub(super) fn column_header(env: &RowEnv, list: WeakEntity<TrackList>) -> impl I
                 .items_center()
                 // 给左缘的分隔线让出与标题侧相同的间距。
                 .pl(px(theme::GAP_MD))
-                .child(div().min_w_0().truncate().child("ALBUM / 专辑"))
+                .child(div().min_w_0().truncate().child("专辑"))
                 .child(columns::handle(
                     columns::ColumnEdge::Album,
                     env.album_width,
                     env.gap,
-                    list.clone(),
+                    // 三根拖拽线里这是最后一根，句柄直接拿走这份弱引用，不必再克隆一次。
+                    list,
                 )),
         );
     }
@@ -107,7 +108,7 @@ pub(super) fn column_header(env: &RowEnv, list: WeakEntity<TrackList>) -> impl I
             .flex()
             .items_center()
             .justify_center()
-            .child("LIKE / 喜欢"),
+            .child("喜欢"),
     )
     .child(
         div()
@@ -116,7 +117,7 @@ pub(super) fn column_header(env: &RowEnv, list: WeakEntity<TrackList>) -> impl I
             .flex()
             .items_center()
             .justify_start()
-            .child("TIME / 时长"),
+            .child("时长"),
     )
     .child(div().flex_1())
 }
@@ -394,12 +395,7 @@ pub(super) fn row(
 
     element = element
         .child(cells::like_cell(
-            index,
-            state,
-            group,
-            track_id,
-            liked,
-            library,
+            index, state, group, track_id, liked, library,
         ))
         .child(
             div()

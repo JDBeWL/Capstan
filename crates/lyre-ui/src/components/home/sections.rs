@@ -8,7 +8,7 @@ use crate::common::button::IconButton;
 use crate::components::detail::HeroInfo;
 use crate::cover::CoverCache;
 use crate::entities::{LibraryEntity, Scope};
-use crate::icon::{Glyph, icon_inherit};
+use crate::icon::Glyph;
 use crate::platform::*;
 use crate::shell::{NavSection, ShellEntity};
 use crate::theme;
@@ -548,11 +548,13 @@ fn cover_slot(
             );
             crate::common::cover::fade_in(&image, cell).into_any_element()
         }
-        // 确认没有封面，首字色块。
+        // 确认没有封面，首字块。
         crate::common::cover::Cover::Missing => cell
-            .border_1()
-            .border_color(theme::border())
-            .child(monogram(label.chars().next()))
+            .child(crate::common::cover::monogram(
+                crate::common::cover::initial_of(label),
+                size,
+                theme::RADIUS_LG,
+            ))
             .into_any_element(),
         // 解码中，骨架屏。
         crate::common::cover::Cover::Pending => cell
@@ -561,27 +563,7 @@ fn cover_slot(
     }
 }
 
-/// 没有封面时的占位，标题首字 + 稳定色块。
-/// 调色板必须与 `album_grid::monogram` 一致。同一专辑在两处颜色不同会被当成两张专辑。
-fn monogram(initial: Option<char>) -> impl IntoElement {
-    let Some(ch) = initial else {
-        return div()
-            .text_color(theme::text_faint())
-            .child(icon_inherit(Glyph::Album, 32.));
-    };
-
-    div()
-        .size_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(theme::RADIUS_LG))
-        .bg(crate::common::cover::monogram_color(ch))
-        .text_color(theme::text_on_monogram())
-        .text_size(px(32.0))
-        .child(ch.to_string())
-}
-
+/// 没有封面时的占位统一走 [`crate::common::cover::monogram`]，此文件不再自己画。
 /// 首页右侧的展示画框，切角封面 + 硬边斜线纹影子 + 墨色铭牌。
 /// 内容全部来自最近播放的那张专辑；没有记录时给出空状态。
 pub(super) fn showcase_frame(

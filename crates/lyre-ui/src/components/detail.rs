@@ -525,48 +525,32 @@ fn cover_slot(
 }
 
 /// 专辑与艺术家头图「确实没有封面」那一格。
+/// 专辑走共用的首字块（[`crate::common::cover::monogram`]），艺术家是人，用人形图标。
 fn placeholder_cell(kind: HeroKind, label: &str, radius: f32) -> AnyElement {
-    div()
-        .flex_none()
-        .size(px(COVER))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(radius))
-        .bg(theme::elevated())
-        .border_1()
-        .border_color(theme::border())
-        .child(placeholder(kind, label.chars().next()))
-        .into_any_element()
-}
-
-/// 没有封面时的占位。专辑用首字色块（`monogram_color`，各处同一份），艺术家用人形图标。
-fn placeholder(kind: HeroKind, initial: Option<char>) -> AnyElement {
     if kind == HeroKind::Artist {
         return div()
+            .flex_none()
+            .size(px(COVER))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(radius))
+            .bg(theme::elevated())
+            .border_1()
+            .border_color(theme::border())
             .text_color(theme::text_faint())
             .child(icon_inherit(Glyph::Artist, 64.))
             .into_any_element();
     }
 
-    let Some(ch) = initial else {
-        return div()
-            .text_color(theme::text_faint())
-            .child(icon_inherit(Glyph::Album, 48.))
-            .into_any_element();
-    };
-
     div()
-        .size_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(theme::RADIUS_LG))
-        .bg(crate::common::cover::monogram_color(ch))
-        .text_color(theme::text_on_monogram())
-        .text_size(px(64.0))
-        .font_weight(theme::WEIGHT_TITLE)
-        .child(ch.to_string())
+        .flex_none()
+        .size(px(COVER))
+        .child(crate::common::cover::monogram(
+            crate::common::cover::initial_of(label),
+            COVER,
+            radius,
+        ))
         .into_any_element()
 }
 

@@ -14,6 +14,9 @@ edition = "2024"
 rust-version = "1.99.1"
 license = "MIT OR Apache-2.0"
 
+[workspace.metadata.product]
+version = "0.3.4"
+
 [workspace.dependencies]
 lyre-core = { path = "crates/lyre-core" }
 lyre-audio = { path = "crates/lyre-audio" }
