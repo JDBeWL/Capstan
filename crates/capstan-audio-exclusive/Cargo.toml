@@ -1,0 +1,31 @@
+[package]
+name = "capstan-audio-exclusive"
+version = "0.1.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "WASAPI exclusive-mode output backend for Capstan, bit-perfect when the device accepts the source format."
+
+[dependencies]
+capstan-audio = { workspace = true }
+thiserror = { workspace = true }
+log = "0.4"
+crossbeam-channel = "0.5"
+rtrb = "0.4"
+rodio = { version = "0.23", default-features = false, features = ["playback"] }
+capstan-audio-simd = { path = "../capstan-audio-simd" }
+# 只用 sinc 重采样，不需要 FFT 那套依赖
+rubato = { version = "5", default-features = false }
+audioadapter-buffers = "5"
+
+[target.'cfg(windows)'.dependencies]
+wasapi = "0.26"
+
+# 同 capstan-audio-simd 的说明：本 crate 用的是 wasapi 的安全封装，全程零 unsafe，
+# 所以可以和 workspace 共用同一套规则（含 `unsafe_code = "forbid"`）。
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
+

@@ -1,0 +1,22 @@
+[package]
+name = "capstan-app"
+version = "0.2.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Capstan binary entry point."
+
+[[bin]]
+name = "capstan"
+path = "src/main.rs"
+
+[dependencies]
+capstan-ui = { workspace = true }
+log = "0.4"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+toml = "1"
+
+[lints]
+workspace = true

@@ -1,0 +1,556 @@
+//! 根视图只做布局与装配。gpui 的脏标记打到所有祖先，进度通知会连带重绘整棵树。
+//! 不 `observe` 播放实体仅省去根视图自身那份重算，高频组件各自订阅 `PlaybackEntity`。
+
+use std::cell::Cell;
+use std::rc::Rc;
+use std::time::Duration;
+
+use crate::common::toast::ToastEntity;
+use crate::components::{
+    AlbumGrid, BottomBar, GridEvent, HomeView, LyricsView, MiniNowPlaying, MiniPlayerEvent,
+    NowPlaying, QueuePanel, SearchBox, SearchBoxEvent, SearchPage, SeekBar, SettingsEntity,
+    SettingsPanel, Sidebar, TopBar, TrackList, TrackListEvent, Transport, TransportEvent,
+    VolumeControl,
+};
+use crate::cover::CoverCache;
+// `Scope` 必须显式导入。`platform::*` 里带着 `gpui::Scope<'_>`，靠 glob 引进来会撞名。
+use crate::entities::{LibraryEntity, LibraryEvent, PlaybackEntity, PlaybackEvent, Scope};
+use crate::platform::*;
+use crate::settings::Settings;
+use crate::shell::{NavSection, PanelTab, ShellEntity};
+
+mod actions;
+mod nav;
+mod render;
+mod resume;
+
+pub use nav::{
+    BACK_BTN, BACK_INSET_TOP, HEADER_BACK_INSET, NavDirection, nav_click, toggle_settings,
+};
+
+pub struct RootView {
+    playback: Entity<PlaybackEntity>,
+    library: Entity<LibraryEntity>,
+    shell: Entity<ShellEntity>,
+    volume: Entity<VolumeControl>,
+    search: Entity<SearchBox>,
+    now_playing: Entity<NowPlaying>,
+    /// 与 `now_playing` 二选一，由外壳决定。
+    queue_panel: Entity<QueuePanel>,
+    track_list: Entity<TrackList>,
+    album_grid: Entity<AlbumGrid>,
+    home: Entity<HomeView>,
+    /// 歌词遮罩。自行 observe 播放实体，根视图仅负责在打开时挂载。
+    lyrics: Entity<LyricsView>,
+    /// 输入状态是 `search` 另建的一份，两者内容同步。
+    search_page: Entity<SearchPage>,
+    sidebar: Entity<Sidebar>,
+    bottom_bar: Entity<BottomBar>,
+    top_bar: Entity<TopBar>,
+    settings_panel: Entity<SettingsPanel>,
+    /// 只在落盘前读「恢复播放位置」开关，不 observe。
+    settings: Entity<SettingsEntity>,
+    toast: Entity<ToastEntity>,
+    focus: FocusHandle,
+    /// 由 `render` 的拖拽回调读写。gpui 会把外部拖拽的 `Entered/Pending` 翻译成一次 `MouseMove`。
+    drop_active: bool,
+    /// 刚收起、还在播退出动画的面板。外壳说 `None`，这里再留 240ms 把它画完。
+    panel_closing: Option<PanelTab>,
+    panel_closing_overlay: bool,
+    /// 外壳上一次的页签与遮罩状态，用来识别「刚关上」。
+    last_panel: Option<PanelTab>,
+    last_panel_overlay: bool,
+    lyrics_closing: bool,
+    last_lyrics: bool,
+    _panel_close: Option<Task<()>>,
+    _lyrics_close: Option<Task<()>>,
+    /// 播放中兜底写 `resume.json` 的节拍任务，持有它才不会被提前回收。
+    _resume_watcher: Task<()>,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl RootView {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // 先读盘，下面的实体按它初始化。
+        let stored = Settings::load();
+        // 明暗必须在建控件之前确定。输入框、菜单等组件库控件会按创建时的 ThemeMode 取色。
+        crate::platform::set_appearance(stored.appearance, cx);
+
+        let playback = cx.new(|cx| PlaybackEntity::new(stored.preferred_device.clone(), cx));
+        let library = cx.new(LibraryEntity::new);
+        let shell = cx.new(|cx| ShellEntity::new(window, cx));
+        let covers = cx.new(|_| CoverCache::default());
+        let settings = cx.new(|cx| SettingsEntity::new(stored.clone(), cx));
+
+        // 偏好要在启动时显式应用进 shell / library，只存着不会生效。
+        shell.update(cx, |shell, cx| shell.apply_settings(&stored, cx));
+        library.update(cx, |library, cx| {
+            library.set_recursive(stored.recursive_import, cx);
+        });
+        // 静音退出时以 0 起播，但存档里留的是静音前的值（见 `VolumeControl::persist`）
+        playback.update(cx, |playback, cx| {
+            // 输出模式先定，它决定后面第一次开流走哪条后端。
+            playback.set_exclusive_output(stored.exclusive_output);
+            playback.set_volume(if stored.muted { 0.0 } else { stored.volume }, cx);
+            playback.set_smooth_switch(stored.smooth_device_switch);
+        });
+
+        // 系统文件对话框属另一个进程，自动化脚本无法操作；设置该环境变量时直接从该目录导入。
+        if let Some(dir) = std::env::var_os("CAPSTAN_DEBUG_IMPORT") {
+            let dir = std::path::PathBuf::from(dir);
+            if dir.is_dir() {
+                library.update(cx, |library, cx| library.import(vec![dir], cx));
+            } else {
+                // `PathBuf` 本身未实现 `Display`，用 `Path::display()` 获取人类可读路径。
+                log::debug!(
+                    "CAPSTAN_DEBUG_IMPORT 指向的不是目录，已忽略：{}",
+                    dir.display()
+                );
+            }
+        }
+
+        let seek_bar = cx.new(|cx| SeekBar::new(playback.clone(), cx));
+        let volume = cx.new(|cx| VolumeControl::new(playback.clone(), settings.clone(), cx));
+
+        let transport = cx.new(|cx| Transport::new(playback.clone(), cx));
+        let now_playing = cx.new(|cx| {
+            NowPlaying::new(
+                playback.clone(),
+                covers.clone(),
+                library.clone(),
+                shell.clone(),
+                cx,
+            )
+        });
+        let mini =
+            cx.new(|cx| MiniNowPlaying::new(playback.clone(), covers.clone(), library.clone(), cx));
+        let search_page =
+            cx.new(|cx| SearchPage::new(library.clone(), shell.clone(), covers.clone(), cx));
+        let track_list = cx.new(|cx| {
+            TrackList::new(
+                library.clone(),
+                shell.clone(),
+                covers.clone(),
+                search_page.clone(),
+                settings.clone(),
+                cx,
+            )
+        });
+        let album_grid =
+            cx.new(|cx| AlbumGrid::new(library.clone(), shell.clone(), covers.clone(), cx));
+        let search = cx.new(|cx| SearchBox::new(window, library.clone(), cx));
+        let sidebar = cx.new(|cx| Sidebar::new(shell.clone(), library.clone(), covers.clone(), cx));
+        let home = cx.new(|cx| HomeView::new(shell.clone(), library.clone(), covers.clone(), cx));
+        let lyrics = cx.new(|cx| LyricsView::new(playback.clone(), shell.clone(), cx));
+        let queue_panel =
+            cx.new(|cx| QueuePanel::new(library.clone(), shell.clone(), covers.clone(), cx));
+        let settings_panel = cx.new(|cx| {
+            SettingsPanel::new(
+                settings.clone(),
+                shell.clone(),
+                library.clone(),
+                playback.clone(),
+                cx,
+            )
+        });
+        let bottom_bar = cx.new(|cx| {
+            BottomBar::new(
+                shell.clone(),
+                library.clone(),
+                playback.clone(),
+                settings.clone(),
+                mini.clone(),
+                transport.clone(),
+                seek_bar.clone(),
+                volume.clone(),
+                cx,
+            )
+        });
+        let top_bar = cx.new(|cx| TopBar::new(shell.clone(), library.clone(), search.clone(), cx));
+        let toast = cx.new(ToastEntity::new);
+
+        let on_playback = cx.subscribe(&playback, |this, _, event: &PlaybackEvent, cx| {
+            match event {
+                PlaybackEvent::Finished => {
+                    let step = this.library.update(cx, |library, _| library.step_on_end());
+                    this.apply_step(step, cx);
+                }
+                // `load` 是唯一的装载口，续播、点歌、队列跳转都会走到这里。
+                PlaybackEvent::TrackChanged => {
+                    let played = this.playback.read(cx).current().map(|track| track.id);
+                    if let Some(id) = played {
+                        let library = this.library.clone();
+                        library.update(cx, |library, cx| library.record_played(id, cx));
+                    }
+                    resume::save_resume(&this.playback, &this.settings, cx);
+                }
+                PlaybackEvent::StateChanged => {
+                    resume::save_resume(&this.playback, &this.settings, cx);
+                }
+                // 出声失败与降级都得让用户看见。右面板在中等与窄窗口下默认收起，
+                // 只把错误挂在那儿等于没声音也没提示。
+                PlaybackEvent::Failed(message) | PlaybackEvent::Notice(message) => {
+                    let message = message.clone();
+                    this.toast
+                        .update(cx, |toast, cx| toast.show_plain(message, cx));
+                }
+                // `Restored` 只是把上次那首装回来，不算一次播放，也不能把还没生效的 0 秒写回存档；
+                // 输出模式与设备列表由设置面板、底栏各自订阅刷新。
+                PlaybackEvent::Restored
+                | PlaybackEvent::VolumeChanged
+                | PlaybackEvent::DevicesChanged
+                | PlaybackEvent::OutputModeChanged => {}
+            }
+        });
+
+        let on_play = cx.subscribe(&library, |this, _, event: &LibraryEvent, cx| {
+            match event {
+                LibraryEvent::Play(track) => {
+                    this.playback
+                        .update(cx, |playback, cx| playback.load(track.clone(), true, cx));
+                }
+                // 头图是 RootView 内联渲染的（不 observe 曲库），改关注时没有别的重绘来源。
+                LibraryEvent::FollowChanged => cx.notify(),
+                // 换作用域后遮罩会把新内容整个盖住。
+                LibraryEvent::ScopeChanged => {
+                    this.shell.update(cx, ShellEntity::close_lyrics);
+                }
+                // FocusMoved 由 TrackList 自行处理（滚动跟随）
+                LibraryEvent::FocusMoved(_) => {}
+                LibraryEvent::Imported {
+                    scanned,
+                    added,
+                    refreshed,
+                    quiet,
+                } => {
+                    // 补扫没有新增时不提示用户，开机时状态未变无需通知。
+                    // 放在最前面，空文件夹这类结果也别每次都报一遍。
+                    if *quiet && *added == 0 {
+                        return;
+                    }
+                    let message = match (scanned, added, refreshed) {
+                        (0, _, _) => "这里没有找到音频文件".to_owned(),
+                        // 扫到了、也重读了标签，但没有一首是新的，这次是刷新标签。
+                        (_, 0, read) if *read > 0 => format!("这 {read} 首已在曲库里，刷新了标签"),
+                        (found, 0, _) => format!("扫到 {found} 首，都已在曲库里"),
+                        (_, a, _) => format!("已导入 {a} 首"),
+                    };
+                    this.toast
+                        .update(cx, |toast, cx| toast.show_plain(message, cx));
+                }
+                // 用户主动点的「重读全部标签」跑完了。
+                LibraryEvent::Refreshed { count } => {
+                    let message = if *count == 0 {
+                        "没有可刷新的曲目".to_owned()
+                    } else {
+                        format!("刷新了 {count} 首的标签")
+                    };
+                    this.toast
+                        .update(cx, |toast, cx| toast.show_plain(message, cx));
+                }
+                // 导入链路的失败，如对话框开不了、扫描线程起不来。
+                LibraryEvent::Failed(message) => {
+                    let message = message.clone();
+                    this.toast
+                        .update(cx, |toast, cx| toast.show_plain(message, cx));
+                }
+                // 曲库是后台读完的，拿到曲目后再装回上次播放位置。
+                // 排至本次通知之后，使曲库自身的后续通知先行落地。
+                LibraryEvent::Loaded => {
+                    if this.settings.read(cx).settings().resume_position {
+                        let playback = this.playback.clone();
+                        let library = this.library.clone();
+                        cx.defer(move |cx| {
+                            resume::restore_resume(&playback, &library, cx);
+                        });
+                    }
+                }
+            }
+        });
+
+        let on_transport =
+            cx.subscribe(
+                &transport,
+                |this, _, event: &TransportEvent, cx| match event {
+                    TransportEvent::TogglePlay => {
+                        this.toggle_play(cx);
+                    }
+                    TransportEvent::Next => {
+                        let step = this.library.update(cx, |library, _| library.step_next());
+                        this.apply_step(step, cx);
+                    }
+                    TransportEvent::Prev => {
+                        let step = this.library.update(cx, |library, _| library.step_prev());
+                        this.apply_step(step, cx);
+                    }
+                },
+            );
+
+        let on_list_event = cx.subscribe(&track_list, |this, _, event: &TrackListEvent, cx| {
+            match event.clone() {
+                TrackListEvent::Removed(track, index) => {
+                    this.offer_remove_undo(track, index, cx);
+                }
+                TrackListEvent::Cleared(tracks) => {
+                    this.offer_clear_undo(tracks, cx);
+                }
+                // 必须在列表收窄作用域之前到达，所以列表是在 emit 之后才调 `enter_album`。
+                TrackListEvent::RecordFromTrack => {
+                    this.record_return_point(cx);
+                }
+            }
+        });
+
+        let on_mini = cx.subscribe(&mini, |this, _, event: &MiniPlayerEvent, cx| {
+            if matches!(event, MiniPlayerEvent::OpenNowPlaying) {
+                this.shell.update(cx, |shell, cx| {
+                    shell.toggle_panel(PanelTab::NowPlaying, cx);
+                });
+            }
+        });
+
+        // 顺序有意义。历史必须在收窄作用域之前记，否则记下的是「已经进了这张专辑」
+        let on_grid = cx.subscribe(&album_grid, |this, _, event: &GridEvent, cx| {
+            let from = this.shell.read(cx).nav_section();
+            this.shell
+                .update(cx, |shell, cx| shell.push_history(from, Scope::All, cx));
+
+            match event.clone() {
+                GridEvent::OpenAlbum(title) => {
+                    this.library
+                        .update(cx, |library, cx| library.enter_album(title, cx));
+                }
+                GridEvent::OpenArtist(name) => {
+                    this.library
+                        .update(cx, |library, cx| library.enter_artist(name, cx));
+                }
+            }
+            this.shell
+                .update(cx, |shell, cx| shell.set_nav(NavSection::Tracks, cx));
+        });
+
+        // 查询词的提交与防抖在 `SearchBox` 里；这里只切到搜索页，作用域保持不变。
+        let on_search = cx.subscribe(&search, |this, _, event: &SearchBoxEvent, cx| {
+            if !matches!(event, SearchBoxEvent::Typing | SearchBoxEvent::Focused) {
+                return;
+            }
+            if this.shell.read(cx).nav_section() != NavSection::Search {
+                // 记一条历史，顶栏 ← 才能从搜索页退回来源页；沿用当前作用域。
+                let here = (
+                    this.shell.read(cx).nav_section(),
+                    this.library.read(cx).scope().clone(),
+                );
+                this.shell.update(cx, |shell, cx| {
+                    shell.push_history(here.0, here.1, cx);
+                    shell.set_nav(NavSection::Search, cx);
+                });
+            }
+        });
+
+        let focus = cx.focus_handle();
+        // 根视图拿到焦点，绑在 "Capstan" 上下文上的快捷键才会触发。
+        focus.focus(window, cx);
+
+        // 兜底落盘。强杀与崩溃拿不到退出回调，播放中每 15 秒写一次，最多丢一格
+        // 暂停时不写，那时 `StateChanged` 已经写过同一秒。
+        let resume_executor = cx.background_executor().clone();
+        let (watch_playback, watch_settings) = (playback.clone(), settings.clone());
+        let resume_watcher = cx.spawn_in(window, async move |this, cx| {
+            loop {
+                resume_executor.timer(resume::RESUME_INTERVAL).await;
+                if this
+                    .update(cx, |this, cx| {
+                        if this.playback.read(cx).is_playing() {
+                            resume::save_resume(&this.playback, &this.settings, cx);
+                        }
+                    })
+                    .is_err()
+                {
+                    // 实体已销毁，结束任务，否则造成任务泄漏。
+                    break;
+                }
+            }
+        });
+
+        // 正常关窗走这一支。`Alt+F4` 是 WM_CLOSE，最后一个窗口关闭即 quit。
+        let quit_flushed = Rc::new(Cell::new(false));
+        let on_quit = {
+            let flushed = Rc::clone(&quit_flushed);
+            cx.on_app_quit(move |_window, cx| {
+                if !flushed.replace(true) {
+                    log::info!("正在退出，刷写持久化队列");
+                    resume::save_resume(&watch_playback, &watch_settings, cx);
+                    // 后台写线程是异步的，关窗前同步等它把最后一格落盘。
+                    crate::persist::flush();
+                    let (writes, bytes) = crate::persist::write_stats();
+                    log::info!("本次运行持久化写入 {writes} 次，共 {bytes} 字节");
+                }
+                async {}
+            })
+        };
+
+        // 这个 gpui 版本关最后一个窗口不一定触发 `on_app_quit`，窗口关闭回调才是可靠兜底。
+        let on_window_closed = {
+            let flushed = Rc::clone(&quit_flushed);
+            let root = cx.entity().downgrade();
+            cx.on_window_closed(move |cx, _| {
+                if flushed.replace(true) {
+                    return;
+                }
+                if root
+                    .update(cx, |this, cx| {
+                        resume::save_resume(&this.playback, &this.settings, cx);
+                    })
+                    .is_err()
+                {
+                    log::warn!("关窗时根视图已销毁，跳过续播位置保存");
+                }
+                crate::persist::flush();
+                let (writes, bytes) = crate::persist::write_stats();
+                log::info!("关窗：本次运行持久化写入 {writes} 次，共 {bytes} 字节");
+            })
+        };
+
+        let last_panel = shell.read(cx).right_panel();
+        let last_panel_overlay = shell.read(cx).right_panel_overlays();
+        let last_lyrics = shell.read(cx).shows_lyrics();
+        let on_shell = cx.observe(&shell, |this, shell, cx| {
+            let (panel, panel_overlay, lyrics) = {
+                let shell = shell.read(cx);
+                (
+                    shell.right_panel(),
+                    shell.right_panel_overlays(),
+                    shell.shows_lyrics(),
+                )
+            };
+            this.sync_overlay_closing(panel, panel_overlay, lyrics, cx);
+        });
+
+        Self {
+            playback,
+            library,
+            shell,
+            volume,
+            search,
+            now_playing,
+            queue_panel,
+            track_list,
+            album_grid,
+            home,
+            lyrics,
+            search_page,
+            sidebar,
+            bottom_bar,
+            toast,
+            top_bar,
+            settings_panel,
+            settings,
+            focus,
+            drop_active: false,
+            panel_closing: None,
+            panel_closing_overlay: false,
+            last_panel,
+            last_panel_overlay,
+            lyrics_closing: false,
+            last_lyrics,
+            _panel_close: None,
+            _lyrics_close: None,
+            _resume_watcher: resume_watcher,
+            _subscriptions: vec![
+                on_playback,
+                on_play,
+                on_transport,
+                on_list_event,
+                on_mini,
+                on_grid,
+                on_search,
+                on_shell,
+                on_quit,
+                on_window_closed,
+            ],
+        }
+    }
+
+    /// 关面板与关歌词时外壳会立刻把状态置空，退出动画需由根视图把旧内容多保留一段时间。
+    #[allow(clippy::used_underscore_binding)]
+    fn sync_overlay_closing(
+        &mut self,
+        panel: Option<PanelTab>,
+        panel_overlay: bool,
+        lyrics: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let mut changed = false;
+
+        if panel != self.last_panel {
+            match (self.last_panel, panel) {
+                (Some(previous), None) => {
+                    self.panel_closing = Some(previous);
+                    self.panel_closing_overlay = self.last_panel_overlay;
+                    self.spawn_panel_close(cx);
+                }
+                (_, Some(_)) => {
+                    self.panel_closing = None;
+                    self.panel_closing_overlay = false;
+                    self._panel_close = None;
+                }
+                _ => {}
+            }
+            self.last_panel = panel;
+            changed = true;
+        }
+        self.last_panel_overlay = panel_overlay;
+
+        if lyrics != self.last_lyrics {
+            self.last_lyrics = lyrics;
+            if lyrics {
+                self.lyrics_closing = false;
+                self._lyrics_close = None;
+            } else {
+                self.lyrics_closing = true;
+                let executor = cx.background_executor().clone();
+                self._lyrics_close = Some(cx.spawn(async move |this, cx| {
+                    executor
+                        .timer(Duration::from_millis(crate::theme::MOTION_OVERLAY_OUT_MS))
+                        .await;
+                    this.update(cx, |this, cx| {
+                        if this.lyrics_closing {
+                            this.lyrics_closing = false;
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+                }));
+            }
+            changed = true;
+        }
+
+        if changed {
+            cx.notify();
+        }
+    }
+
+    #[allow(clippy::used_underscore_binding)]
+    fn spawn_panel_close(&mut self, cx: &mut Context<Self>) {
+        let executor = cx.background_executor().clone();
+        self._panel_close = Some(cx.spawn(async move |this, cx| {
+            executor
+                .timer(Duration::from_millis(crate::theme::MOTION_PANEL_OUT_MS))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.panel_closing.is_some() {
+                    this.panel_closing = None;
+                    this.panel_closing_overlay = false;
+                    cx.notify();
+                }
+            })
+            .ok();
+        }));
+    }
+
+    /// 命令行导入（`capstan.exe <文件或文件夹>...`），「关联文件类型」依赖它。
+    pub fn import(&mut self, paths: Vec<std::path::PathBuf>, cx: &mut Context<Self>) {
+        self.library
+            .update(cx, |library, cx| library.import(paths, cx));
+    }
+}

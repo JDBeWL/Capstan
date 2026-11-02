@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/lyre-core",
-    "crates/lyre-audio",
-    "crates/lyre-audio-simd",
-    "crates/lyre-audio-exclusive",
-    "crates/lyre-ui",
-    "crates/lyre-app",
+    "crates/capstan-core",
+    "crates/capstan-audio",
+    "crates/capstan-audio-simd",
+    "crates/capstan-audio-exclusive",
+    "crates/capstan-ui",
+    "crates/capstan-app",
 ]
 
 [workspace.package]
@@ -18,9 +18,9 @@ license = "MIT OR Apache-2.0"
 version = "0.3.5"
 
 [workspace.dependencies]
-lyre-core = { path = "crates/lyre-core" }
-lyre-audio = { path = "crates/lyre-audio" }
-lyre-ui = { path = "crates/lyre-ui" }
+capstan-core = { path = "crates/capstan-core" }
+capstan-audio = { path = "crates/capstan-audio" }
+capstan-ui = { path = "crates/capstan-ui" }
 
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }

@@ -718,6 +718,84 @@ dependencies = [
 ]
 
 [[package]]
+name = "capstan-app"
+version = "0.2.1"
+dependencies = [
+ "capstan-ui",
+ "log",
+ "toml 1.1.8+spec-1.1.0",
+ "winresource",
+]
+
+[[package]]
+name = "capstan-audio"
+version = "0.2.2"
+dependencies = [
+ "ape-decoder",
+ "capstan-core",
+ "crossbeam-channel",
+ "log",
+ "opus-pure",
+ "oxideav-wavpack",
+ "rodio",
+ "symphonia",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "capstan-audio-exclusive"
+version = "0.1.1"
+dependencies = [
+ "audioadapter-buffers",
+ "capstan-audio",
+ "capstan-audio-simd",
+ "crossbeam-channel",
+ "log",
+ "rodio",
+ "rtrb",
+ "rubato",
+ "tempfile",
+ "thiserror 2.0.21",
+ "wasapi",
+]
+
+[[package]]
+name = "capstan-audio-simd"
+version = "0.1.1"
+
+[[package]]
+name = "capstan-core"
+version = "0.3.3"
+dependencies = [
+ "criterion",
+ "encoding_rs",
+ "lofty",
+ "serde",
+ "thiserror 2.0.21",
+ "walkdir",
+]
+
+[[package]]
+name = "capstan-ui"
+version = "0.3.5"
+dependencies = [
+ "capstan-audio",
+ "capstan-audio-exclusive",
+ "capstan-core",
+ "chrono",
+ "gpui-base",
+ "gpui-component",
+ "gpui-pre",
+ "gpui-pre-platform",
+ "image",
+ "log",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3589,84 +3667,6 @@ dependencies = [
  "float_next_after",
  "lyon_path",
  "num-traits",
-]
-
-[[package]]
-name = "lyre-app"
-version = "0.2.1"
-dependencies = [
- "log",
- "lyre-ui",
- "toml 1.1.8+spec-1.1.0",
- "winresource",
-]
-
-[[package]]
-name = "lyre-audio"
-version = "0.2.2"
-dependencies = [
- "ape-decoder",
- "crossbeam-channel",
- "log",
- "lyre-core",
- "opus-pure",
- "oxideav-wavpack",
- "rodio",
- "symphonia",
- "tempfile",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "lyre-audio-exclusive"
-version = "0.1.1"
-dependencies = [
- "audioadapter-buffers",
- "crossbeam-channel",
- "log",
- "lyre-audio",
- "lyre-audio-simd",
- "rodio",
- "rtrb",
- "rubato",
- "tempfile",
- "thiserror 2.0.21",
- "wasapi",
-]
-
-[[package]]
-name = "lyre-audio-simd"
-version = "0.1.1"
-
-[[package]]
-name = "lyre-core"
-version = "0.3.3"
-dependencies = [
- "criterion",
- "encoding_rs",
- "lofty",
- "serde",
- "thiserror 2.0.21",
- "walkdir",
-]
-
-[[package]]
-name = "lyre-ui"
-version = "0.3.5"
-dependencies = [
- "chrono",
- "gpui-base",
- "gpui-component",
- "gpui-pre",
- "gpui-pre-platform",
- "image",
- "log",
- "lyre-audio",
- "lyre-audio-exclusive",
- "lyre-core",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
 ]
 
 [[package]]
