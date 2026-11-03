@@ -80,8 +80,6 @@ CAPSTAN_DEBUG_IMPORT="<path-to-file>" cargo run -p capstan-app   # 指定另一�
 用户数据位于 `%APPDATA%\Capstan\`，macOS 为 `~/Library/Application Support/Capstan`，Linux 为 `$XDG_DATA_HOME/Capstan`：
 `library.json` `settings.json` `likes.json` `follows.json` `collections.json` `recents.json` `resume.json` `queue.json`，
 外加 `covers/` 与 `logs/app.log`。如需重建数据目录，删除该目录即可。
-旧版本用的是 `Lyre` 这一层名字，首次启动会把整个目录接管过来（同卷直接 rename，跨卷退回复制），
-曲库索引、收藏与设置都不会丢；确认新版本正常后，旧的 `Lyre` 目录可以手动删除。
 
 ## 许可
 
