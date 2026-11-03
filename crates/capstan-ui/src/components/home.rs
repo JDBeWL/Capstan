@@ -25,7 +25,7 @@ pub use cards::{RecentCard, popular_cards, recent_cards, recommend_cards};
 
 use entries::entry_card;
 use sections::{
-    grid_columns_in, horizontal_section, list_section, recent_card, section_title, showcase_frame,
+    horizontal_section, list_section, recent_card, section_title, showcase_frame,
 };
 
 const PAD: f32 = theme::PAGE_PAD;
@@ -340,9 +340,10 @@ impl Render for HomeView {
                 10.0,
                 section_title(section_no, "RECENT", "最近播放"),
             ));
-            // gpui 0.3.8 没有 flex_wrap，手工分行；每行几张由可用宽度反推，
-            // 写死 4 会在刚进 Wide 断点时把第 4 张切掉。
-            let grid_cols = grid_columns_in(self.shell.read(cx).center_width() - PAD * 2.0);
+            // gpui 0.3.8 没有 flex_wrap，手工分行。列数与卡宽直接取曲库网格的，
+            // 两处封面同宽，最近播放不会比曲库少一列。
+            let grid_cols = self.shell.read(cx).grid_columns().max(1);
+            let cover_size = self.shell.read(cx).grid_card_width().max(1.0);
             let mut grid = div()
                 .flex_none()
                 .flex()
@@ -356,6 +357,7 @@ impl Render for HomeView {
                         recent_card(
                             row * grid_cols + col,
                             card.clone(),
+                            cover_size,
                             &self.library,
                             &self.covers,
                             cx,
@@ -500,47 +502,7 @@ impl Render for HomeView {
 mod tests {
     // 不写 `use super::*`，`crate::platform::*` 会把 gpui 的 `test` 过程宏
     // 带进来遮蔽内置 `#[test]`，报递归上限。
-    use super::sections::{RECENT_W, grid_columns_in};
-    use super::{PAD, greeting, greeting_hint};
-    use crate::shell::{ShellEntity, SidebarState};
-    use crate::theme;
-
-    #[test]
-    fn recent_grid_never_wider_than_the_room_it_has() {
-        for width in [560.0, 860.0, 1180.0, 1600.0, 2560.0] {
-            let (sidebar, panel) = if width >= 1180.0 {
-                (SidebarState::Expanded, true)
-            } else {
-                (SidebarState::Icons, false)
-            };
-            let usable = ShellEntity::center_width_for(width, sidebar, panel) - PAD * 2.0;
-            let cols = grid_columns_in(usable);
-            let needed = cols as f32 * (RECENT_W + theme::GAP_MD) - theme::GAP_MD;
-            assert!(
-                needed <= usable,
-                "宽 {width}px 时 {cols} 列需要 {needed:.1}px，可用只有 {usable:.1}px"
-            );
-        }
-
-        let at_wide =
-            ShellEntity::center_width_for(1180.0, SidebarState::Expanded, true) - PAD * 2.0;
-        assert_eq!(grid_columns_in(at_wide), 3);
-    }
-
-    #[test]
-    fn recent_grid_grows_with_the_window_and_never_vanishes() {
-        let narrow = grid_columns_in(
-            ShellEntity::center_width_for(560.0, SidebarState::Icons, false) - PAD * 2.0,
-        );
-        let wide = grid_columns_in(
-            ShellEntity::center_width_for(2560.0, SidebarState::Expanded, true) - PAD * 2.0,
-        );
-        assert!(
-            wide > narrow,
-            "窗口从 560px 拉到 2560px，列数应当从 {narrow} 增到 {wide}"
-        );
-        assert!(narrow >= 1, "再窄也该留出至少一列");
-    }
+    use super::{greeting, greeting_hint};
 
     #[test]
     fn greeting_covers_every_hour_and_switches_at_the_right_one() {

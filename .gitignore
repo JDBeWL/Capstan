@@ -4,3 +4,6 @@
 .DS_Store
 /tools
 /refer
+/_build/
+/_fonts/
+/capstan-logo/

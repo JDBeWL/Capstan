@@ -56,6 +56,9 @@ pub enum LibraryEvent {
     },
     /// 一次操作未能完成，附带的文案直接展示给用户，即底部提示。
     Failed(String),
+    /// 曲库侧的偏好变了：随机、循环、排序键、跟随播放。落盘由 `RootView` 统一负责，
+    /// 曲库不持有设置实体，也不该知道 `settings.json` 长什么样。
+    PrefsChanged,
 }
 
 pub struct LibraryEntity {
@@ -99,6 +102,9 @@ pub struct LibraryEntity {
     /// 随机轴，另一轴是 [`Self::repeat`]，由 [`Self::effective_mode`] 折算成 `PlayMode`。
     shuffle: bool,
     repeat: RepeatState,
+    /// 用户选的排序键。`playlist` 自己也记着，但它在首屏合并时会被整个换掉，
+    /// 那份记录随之退回默认，所以这里另存一份用来在合并之后重排。
+    sort: SortKey,
     liked: crate::likes::Likes,
     /// 已关注的艺术家，按名字键控，而非 id。
     followed: crate::follows::Follows,
@@ -145,6 +151,7 @@ impl LibraryEntity {
             scan_cancel: None,
             shuffle: false,
             repeat: RepeatState::Off,
+            sort: SortKey::ImportOrder,
             liked: crate::likes::Likes::load(),
             followed: crate::follows::Follows::load(),
             collections: crate::collections_store::load(),
@@ -180,6 +187,9 @@ impl LibraryEntity {
         let pending: Vec<capstan_core::Track> = self.playlist.tracks().to_vec();
         let had_pending = !pending.is_empty();
         self.playlist = merge_tracks(loaded, pending);
+        // 合并用的是新建的 `Playlist`，它自带的排序键是默认值；用户上次选的那一档要从实体上补回去，
+        // 否则工具栏会显示「导入顺序」而列表其实是按标题排的。
+        self.playlist.sort_by(self.sort);
         self.loading = false;
 
         self.invalidate();
@@ -315,8 +325,9 @@ impl LibraryEntity {
         self.playlist.mode()
     }
 
+    /// 当前排序键。读的是实体自己那份：首屏合并前后都要给出用户选的那一档。
     pub fn sort_key(&self) -> SortKey {
-        self.playlist.sort_key()
+        self.sort
     }
 
     pub fn data_revision(&self) -> u64 {

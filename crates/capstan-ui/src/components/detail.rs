@@ -90,18 +90,34 @@ impl HeroInfo {
         match self.kind {
             HeroKind::Artist => Some(self.title.as_str()),
             HeroKind::Collection => None,
-            HeroKind::Album => {
-                let artist = self.subtitle.trim();
-                if artist.is_empty() || artist == capstan_core::VARIOUS_ARTISTS {
-                    return None;
-                }
-                // 多人字段拆开后每一位才是艺术家页的名字，整串不是任何一个人的名字，匹配不上。
-                match capstan_core::artist_keys_str(Some(artist)).as_slice() {
-                    [one] => Some(one),
-                    _ => None,
-                }
-            }
+            // 多人字段拆开后每一位才是艺术家页的名字，整串不是任何一个人的名字，匹配不上。
+            HeroKind::Album => match self.artist_names().as_slice() {
+                [only] => Some(*only),
+                _ => None,
+            },
         }
+    }
+
+    /// 副标题里可以点进艺术家页的名字。
+    ///
+    /// 专辑页的副标题是标签里的艺术家字段，多人时形如「甲 / 乙」。字段以 `/` 或 `,` 分隔时
+    /// 每位各是一个艺术家页，整串反而谁也对不上，所以要按 [`capstan_core::artist_keys_str`]
+    /// 拆开。艺术家页的副标题是「N 张专辑」、歌单页是一句说明，都不指向任何人。
+    pub fn artist_names(&self) -> Vec<&str> {
+        if self.kind != HeroKind::Album {
+            return Vec::new();
+        }
+        let subtitle = self.subtitle.trim();
+        // 「群星」是合辑的占位名，不是某位艺术家的名字，点进去只会是一个空页。
+        if subtitle.is_empty() || subtitle == capstan_core::VARIOUS_ARTISTS {
+            return Vec::new();
+        }
+        capstan_core::artist_keys_str(Some(subtitle))
+            .into_iter()
+            .filter(|name| {
+                *name != capstan_core::UNKNOWN_ARTIST && *name != capstan_core::VARIOUS_ARTISTS
+            })
+            .collect()
     }
 }
 
@@ -197,6 +213,8 @@ pub fn hero(
     cx: &mut App,
 ) -> AnyElement {
     let cover = cover_slot(covers, &library, info, cx);
+    // 副标题里的名字要能点进艺术家页，而 `action_row` 会把这两个句柄收走。
+    let subtitle = subtitle_row(info, &library, &shell);
     let actions = action_row(info, library, shell, multi_select, cx);
 
     let kind_en = match info.kind {
@@ -253,20 +271,64 @@ pub fn hero(
                                 .w(px(160.))
                                 .child(crate::common::ornament::tri_strip()),
                         )
-                        .when(!info.subtitle.trim().is_empty(), |col| {
-                            col.child(
-                                div()
-                                    .text_size(px(theme::FONT_SUBTITLE))
-                                    .font_weight(theme::WEIGHT_BUTTON)
-                                    .text_color(theme::text_muted())
-                                    .child(info.subtitle.clone()),
-                            )
-                        })
+                        .when(!info.subtitle.trim().is_empty(), |col| col.child(subtitle))
                         .child(crate::common::section::field(meta))
                         .child(div().mt(px(theme::GAP_XS)).child(actions)),
                 ),
         )
         .into_any_element()
+}
+
+/// 副标题。专辑页把艺术家拆成可点的人名，其余页仍是一句说明。
+/// 名字多时逐个收缩，指到谁给谁的提示；不换行，副标题在头图里只有一行的高度。
+fn subtitle_row(
+    info: &HeroInfo,
+    library: &Entity<LibraryEntity>,
+    shell: &Entity<ShellEntity>,
+) -> AnyElement {
+    let base = div()
+        .text_size(px(theme::FONT_SUBTITLE))
+        .font_weight(theme::WEIGHT_BUTTON)
+        .text_color(theme::text_muted());
+
+    let names = info.artist_names();
+    if names.is_empty() {
+        return base.child(info.subtitle.clone()).into_any_element();
+    }
+
+    let mut row = base.flex().items_center().min_w_0();
+    for (index, name) in names.iter().enumerate() {
+        if index > 0 {
+            row = row.child(div().flex_none().child(" / "));
+        }
+        row = row.child(artist_link(index, name, library, shell));
+    }
+    row.into_any_element()
+}
+
+/// 头图里的一个艺术家名。跳转要先记一行历史，顶栏 ← 才能退回这张专辑。
+fn artist_link(
+    index: usize,
+    name: &str,
+    library: &Entity<LibraryEntity>,
+    shell: &Entity<ShellEntity>,
+) -> AnyElement {
+    let target = name.to_owned();
+    let library = library.clone();
+    let shell = shell.clone();
+    crate::common::link::text_link(
+        SharedString::from(format!("hero-artist-{index}")),
+        name.to_owned(),
+        format!("打开 {name} 的艺术家页"),
+        move |_, _, cx| {
+            crate::shell::enter_scope_from_here(
+                crate::entities::Scope::Artist(target.clone()),
+                &shell,
+                &library,
+                cx,
+            );
+        },
+    )
 }
 
 /// 头图外框。切角封面 + 错开的斜线纹硬影子，不用投影。
@@ -703,5 +765,37 @@ mod tests {
         let tracks = vec![track(1, "a", "城市漫游", "", None)];
         let info = HeroInfo::from_album(&capstan_core::group_by_album(&tracks)[0]);
         assert_eq!(info.follow_target(), None, "空艺术家不该给出关注对象");
+    }
+
+    /// 多人字段要拆成各自可点的人名。整串不是任何一位艺术家的名字，点进去只会是空页。
+    #[test]
+    fn album_hero_lists_each_artist_separately() {
+        let tracks = vec![track(1, "a", "合辑", "picco / どーばみん / KMNZ", None)];
+        let info = HeroInfo::from_album(&capstan_core::group_by_album(&tracks)[0]);
+
+        assert_eq!(info.subtitle, "picco / どーばみん / KMNZ");
+        assert_eq!(info.artist_names(), vec!["picco", "どーばみん", "KMNZ"]);
+    }
+
+    /// 群星是合辑的占位名，不是谁的名字，点进去只会是一个空页。
+    #[test]
+    fn various_artists_hero_has_no_artist_links() {
+        let tracks = vec![
+            track(1, "a", "合辑", "A", None),
+            track(2, "b", "合辑", "B", None),
+        ];
+        let info = HeroInfo::from_album(&capstan_core::group_by_album(&tracks)[0]);
+
+        assert_eq!(info.subtitle, capstan_core::VARIOUS_ARTISTS);
+        assert!(info.artist_names().is_empty());
+    }
+
+    /// 艺术家页的副标题是「N 张专辑」，不是人名，不该变成链接。
+    #[test]
+    fn artist_hero_has_no_artist_links() {
+        let tracks = vec![track(1, "a", "Lo-Fi Beats", "Chill Studio", None)];
+        let info = HeroInfo::from_artist(&capstan_core::group_by_artist(&tracks)[0]);
+
+        assert!(info.artist_names().is_empty());
     }
 }

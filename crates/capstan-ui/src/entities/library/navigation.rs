@@ -65,6 +65,7 @@ impl LibraryEntity {
     pub fn set_list_follows_playback(&mut self, on: bool, cx: &mut Context<Self>) {
         if self.list_follows_playback != on {
             self.list_follows_playback = on;
+            cx.emit(LibraryEvent::PrefsChanged);
             cx.notify();
         }
     }

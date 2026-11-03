@@ -181,11 +181,8 @@ pub(super) fn title_cell(
         .child(cell)
 }
 
-/// 副标题最多列几位艺术家。合唱曲目能挂十来位 CV，全列出来整行只剩一串省略号，
-/// 谁的都读不出来；多出来的收进一个 `…`，完整的名字放在提示里。
-const SUBTITLE_MAX_ARTISTS: usize = 2;
 /// 超过这么多字符就不再拆成链接、整行当一段文字排。
-/// 一排可点的名字各自 truncate 只会把每个名字都切成两三个字，还不如让最后一段收省略号。
+/// 一排可点的名字各自 truncate，只会把每个名字都切成两三个字，反倒谁也读不出来。
 const SUBTITLE_PLAIN_CHARS: usize = 40;
 
 /// 副标题：艺术家。短名单拆成可点的人名，长名单（合唱曲目的 CV 墙）整行一句。
@@ -208,7 +205,9 @@ fn subtitle_line(
         return base.into_any_element();
     };
     let parts = capstan_core::artist_keys_str(Some(&name));
-    if parts.len() > SUBTITLE_MAX_ARTISTS || name.chars().count() > SUBTITLE_PLAIN_CHARS {
+    // 只有名单本身太长时才退回整行一句。人数多但名字短（「甲 / 乙 / 丙」）时逐个可点，
+    // 每一位都跳得过去，行宽也放得下。
+    if name.chars().count() > SUBTITLE_PLAIN_CHARS {
         return base
             .id(SharedString::from(format!("subtitle-name-{index}")))
             .truncate()
@@ -218,7 +217,7 @@ fn subtitle_line(
     }
 
     let mut out = Vec::new();
-    for (position, part) in parts.iter().take(SUBTITLE_MAX_ARTISTS).enumerate() {
+    for (position, part) in parts.iter().enumerate() {
         if position > 0 {
             out.push(artist_sep());
         }
@@ -229,17 +228,6 @@ fn subtitle_line(
             library.clone(),
             list.clone(),
         ));
-    }
-    if parts.len() > SUBTITLE_MAX_ARTISTS {
-        out.push(artist_sep());
-        out.push(
-            div()
-                .id(SharedString::from(format!("subtitle-rest-{index}")))
-                .flex_none()
-                .child("…")
-                .tooltip(crate::common::tooltip::builder(name.clone()))
-                .into_any_element(),
-        );
     }
     base.flex().items_center().children(out).into_any_element()
 }

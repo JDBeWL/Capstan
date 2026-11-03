@@ -22,7 +22,7 @@ pub const CARD_MAX_W: f32 = 200.0;
 /// 列数硬上限，避免 4K 以上的超宽屏出现十几列。
 pub const MAX_GRID_COLUMNS: usize = 8;
 /// 网格四周外边距，必须与 `album_grid` 的 `PAD` 一致。
-const GRID_PAD: f32 = crate::theme::GAP_LG;
+const GRID_PAD: f32 = crate::theme::PAGE_PAD;
 /// 卡片间距，必须与 `album_grid` 的 `GAP` 一致。
 const GRID_GAP: f32 = crate::theme::GAP_MD;
 

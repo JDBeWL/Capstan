@@ -374,8 +374,9 @@ fn card_item(
         .flex()
         .flex_col()
         .gap(px(theme::GAP_SM))
-        // 内边距必须常态就有，hover 时才加会让卡片在鼠标移入的瞬间抖一下。
-        .p(px(theme::GAP_SM))
+        // 左右不留内边距：封面要铺满列宽才是正方形，标题与封面左缘对齐。
+        // 上下内边距必须常态就有，hover 时才加会让卡片抖一下。
+        .py(px(theme::GAP_SM))
         .cursor_pointer()
         .tooltip(crate::common::tooltip::builder(tip))
         .child(

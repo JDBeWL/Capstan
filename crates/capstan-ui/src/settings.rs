@@ -1,13 +1,55 @@
 //! 可持久化的界面偏好，落盘在用户数据目录的 `settings.json`。
 //! 读不到退回默认值，写不进只记日志。不弹窗、不阻塞启动。
 
+use capstan_core::SortKey;
 use serde::{Deserialize, Serialize};
 
+use crate::components::sidebar::Listing;
+use crate::entities::RepeatState;
 use crate::persist;
 use crate::shell::{Density, NavSection, PanelTab, SidebarState};
 use crate::theme::Appearance;
 
 const FILE: &str = "settings.json";
+
+/// 窗口尺寸的下限，与开窗时传的 `window_min_size` 同源。
+pub const MIN_WINDOW_W: f32 = 560.0;
+pub const MIN_WINDOW_H: f32 = 400.0;
+/// 首次启动的窗口尺寸。
+pub const DEFAULT_WINDOW_W: f32 = 1160.0;
+pub const DEFAULT_WINDOW_H: f32 = 750.0;
+/// 存档里的窗口至少要在某块屏幕上露出这么宽、这么高的一条，否则当作位置已失效。
+const KEEP_VISIBLE: f32 = 120.0;
+
+/// 上次退出时的窗口位置与尺寸，逻辑像素。原点是窗口左上角。
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WindowRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl WindowRect {
+    /// 与某块屏幕的可见区域（已扣掉任务栏）交叠得够多时返回自身，否则返回 `None`。
+    /// 显示器被拔掉、分辨率变小都会让存档落到屏幕外，此时调用方应当退回居中开窗。
+    /// `areas` 是每块屏幕的 (x, y, width, height)。
+    pub fn fit(self, areas: &[(f32, f32, f32, f32)]) -> Option<Self> {
+        let width = self.width.max(MIN_WINDOW_W);
+        let height = self.height.max(MIN_WINDOW_H);
+        let reachable = areas.iter().any(|(ax, ay, aw, ah)| {
+            let overlap_w = (self.x + width).min(ax + aw) - self.x.max(*ax);
+            let overlap_h = (self.y + height).min(ay + ah) - self.y.max(*ay);
+            overlap_w >= KEEP_VISIBLE && overlap_h >= KEEP_VISIBLE
+        });
+        reachable.then_some(Self {
+            x: self.x,
+            y: self.y,
+            width,
+            height,
+        })
+    }
+}
 
 /// 曲库列表的列宽（逻辑像素）。
 /// 编号与「空白」固定；标题和专辑分摊剩余宽度，窗口伸缩时按最后的比例一起变。
@@ -45,8 +87,8 @@ impl TrackColumns {
     }
 }
 
-/// 可持久化的界面偏好。播放模式、进度这类会话内的状态不在这里。
-/// 音量是例外。每次启动都该是用户上次要的那个值，包括当时是不是静音。
+/// 可持久化的界面偏好。进度、光标、滚动位置这类一过性状态不在这里。
+/// 音量、播放模式与窗口几何是例外：它们描述「用户上次要的样子」，而不是「这一次的位置」。
 // `#[serde(default)]`。缺字段用默认值补齐，否则新增设置项会让老配置文件整体失效。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -76,6 +118,18 @@ pub struct Settings {
     pub exclusive_output: bool,
     /// 曲库列表 NO./专辑两列的宽度与列尾空白。标题列吃剩余宽度，不单独存。
     pub track_columns: TrackColumns,
+    /// 「你的音乐库」卡片上次手动点选的粒度（歌单 / 艺术家 / 专辑）。`None` 表示跟随主区区段。
+    pub library_listing: Option<Listing>,
+    /// 随机播放轴。与 `repeat` 合起来才是用户看到的播放模式。
+    pub shuffle: bool,
+    /// 循环轴：关 / 列表循环 / 单曲循环。
+    pub repeat: RepeatState,
+    /// 曲库列表的排序键。曲目顺序本身随 `library.json` 落盘，这里记住的是用户选的是哪一档。
+    pub sort_key: SortKey,
+    /// 自动切歌时列表是否把当前曲滚进视野（曲库工具条的「跟随播放」）。
+    pub follow_playback: bool,
+    /// 上次退出时的窗口位置与尺寸。`None` 表示首次启动，按默认尺寸居中。
+    pub window: Option<WindowRect>,
 }
 
 impl Default for Settings {
@@ -95,6 +149,12 @@ impl Default for Settings {
             smooth_device_switch: false,
             exclusive_output: false,
             track_columns: TrackColumns::default(),
+            library_listing: None,
+            shuffle: false,
+            repeat: RepeatState::Off,
+            sort_key: SortKey::ImportOrder,
+            follow_playback: false,
+            window: None,
         }
     }
 }
@@ -114,9 +174,11 @@ impl Settings {
 
 #[cfg(test)]
 mod tests {
-    use super::{Settings, TrackColumns};
+    use super::{Settings, TrackColumns, WindowRect};
+    use crate::entities::RepeatState;
     use crate::shell::{Density, NavSection, PanelTab, SidebarState};
     use crate::theme::Appearance;
+    use capstan_core::SortKey;
 
     #[test]
     fn defaults_are_the_conservative_choice() {
@@ -149,6 +211,15 @@ mod tests {
         assert_eq!(settings.track_columns.index, crate::theme::ROW_INDEX_W);
         assert_eq!(settings.track_columns.gap, 0.0, "默认不留空白，标题吃满");
         assert_eq!(settings.track_columns.album, crate::theme::COLUMN_ALBUM_W);
+        assert_eq!(
+            settings.library_listing, None,
+            "默认跟随主区区段，与加这个字段之前的行为一致"
+        );
+        assert!(!settings.shuffle, "默认不随机");
+        assert_eq!(settings.repeat, RepeatState::Off, "默认不循环");
+        assert_eq!(settings.sort_key, SortKey::ImportOrder, "默认按导入顺序");
+        assert!(!settings.follow_playback, "默认不跟随播放滚动");
+        assert_eq!(settings.window, None, "首次启动按默认尺寸居中");
     }
 
     #[test]
@@ -199,6 +270,17 @@ mod tests {
                 gap: 120.0,
                 album: 300.0,
             },
+            library_listing: Some(crate::components::sidebar::Listing::Collections),
+            shuffle: true,
+            repeat: RepeatState::One,
+            sort_key: SortKey::Title,
+            follow_playback: true,
+            window: Some(WindowRect {
+                x: -120.0,
+                y: 48.0,
+                width: 1280.0,
+                height: 860.0,
+            }),
         };
         let text = serde_json::to_string(&settings).expect("序列化不该失败");
         let back: Settings = serde_json::from_str(&text).expect("反序列化不该失败");
@@ -225,5 +307,54 @@ mod tests {
     fn corrupt_file_yields_defaults() {
         let back: Settings = serde_json::from_str("这不是 JSON").unwrap_or_default();
         assert_eq!(back, Settings::default());
+    }
+
+    /// 显示器被拔掉后，存档里的窗口会落在屏幕外。这种位置必须被拒掉，否则下次开窗看不见。
+    #[test]
+    fn a_window_off_every_screen_is_rejected() {
+        let primary = [(0.0, 0.0, 1920.0, 1040.0)];
+
+        let inside = WindowRect {
+            x: 100.0,
+            y: 80.0,
+            width: 1200.0,
+            height: 800.0,
+        };
+        assert_eq!(inside.fit(&primary), Some(inside));
+
+        // 副屏被拔掉：坐标落在不存在的区域里。
+        let gone = WindowRect {
+            x: 3000.0,
+            y: 200.0,
+            width: 1200.0,
+            height: 800.0,
+        };
+        assert_eq!(gone.fit(&primary), None);
+
+        // 只露出很窄的一条边，拖不回来。
+        let sliver = WindowRect {
+            x: -1180.0,
+            y: 80.0,
+            width: 1200.0,
+            height: 800.0,
+        };
+        assert_eq!(sliver.fit(&primary), None);
+
+        // 一块屏幕都没有（远程会话）时一律回退默认。
+        assert_eq!(inside.fit(&[]), None);
+    }
+
+    /// 存档里的尺寸可能来自更小的屏幕，开窗时至少要撑到窗口下限。
+    #[test]
+    fn a_tiny_saved_window_grows_to_the_minimum() {
+        let rect = WindowRect {
+            x: 10.0,
+            y: 10.0,
+            width: 200.0,
+            height: 120.0,
+        };
+        let fitted = rect.fit(&[(0.0, 0.0, 1920.0, 1040.0)]).expect("位置有效");
+        assert_eq!(fitted.width, super::MIN_WINDOW_W);
+        assert_eq!(fitted.height, super::MIN_WINDOW_H);
     }
 }

@@ -104,6 +104,12 @@ fn open_rename_dialog(
     });
 }
 
+/// 删除歌单。返回值恒为 `true`：删除没有失败路径，对话框随即关闭。
+fn commit_delete(library: &Entity<LibraryEntity>, id: CollectionId, cx: &mut App) -> bool {
+    library.update(cx, |library, cx| library.delete_collection(id, cx));
+    true
+}
+
 /// 删除确认对话框。删除立即生效，不提供撤销。
 fn open_delete_dialog(
     library: Entity<LibraryEntity>,
@@ -114,15 +120,23 @@ fn open_delete_dialog(
 ) {
     let count = library.read(cx).collection_len(id);
     window.open_dialog(cx, move |dialog, _window, _cx| {
-        let library = library.clone();
+        let ok_library = library.clone();
+        let enter_library = library.clone();
         dialog
             .title("删除歌单")
             .child(format!(
                 "确定删除「{name}」？{count} 首曲目仍会留在曲库里。"
             ))
-            .on_ok(move |_, _, cx| {
-                library.update(cx, |library, cx| library.delete_collection(id, cx));
-                true
-            })
+            .footer(dialog_footer(
+                "delete-cancel",
+                "delete-ok",
+                move |_, window, cx| {
+                    if commit_delete(&ok_library, id, cx) {
+                        window.close_dialog(cx);
+                    }
+                },
+            ))
+            // 回车经由这条路径。与「确定」同一函数，仅关窗动作由对话框按返回值决定。
+            .on_ok(move |_, _window, cx| commit_delete(&enter_library, id, cx))
     });
 }

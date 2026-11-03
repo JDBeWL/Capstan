@@ -22,24 +22,27 @@ use crate::components::track_drag::DragTrack;
 /// 一行是「标题 + 副标题」两行，`SIDEBAR_ITEM_H`（40）塞不下；52 = 上下各 8px + 36px 缩略图。
 const LIB_ROW_H: f32 = 52.0;
 
-/// 侧栏列表该列哪一种粒度。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Listing {
+/// 侧栏列表该列哪一种粒度。手动选择落盘在 `settings.json` 的 `library_listing`。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+pub enum Listing {
     Albums,
     Artists,
     Collections,
 }
 
-/// 主区在 `nav` 时侧栏该列什么。`Albums` 列专辑，其余区段（含 `Tracks`）都列艺术家。
-pub(super) fn listing_for(nav: NavSection) -> Listing {
+/// 区段自身要求的粒度。只有按专辑、按艺术家两个区段各有明确粒度；
+/// 其余区段（首页、曲目、搜索、设置）返回 `None`，表示这些区段不改写当前粒度。
+pub(crate) fn explicit_listing(nav: NavSection) -> Option<Listing> {
     match nav {
-        NavSection::Albums => Listing::Albums,
-        NavSection::Home | NavSection::Tracks | NavSection::Artists | NavSection::Search => {
-            Listing::Artists
-        }
-        // 设置页不参与目录粒度。
-        NavSection::Settings => Listing::Artists,
+        NavSection::Albums => Some(Listing::Albums),
+        NavSection::Artists => Some(Listing::Artists),
+        NavSection::Home | NavSection::Tracks | NavSection::Search | NavSection::Settings => None,
     }
+}
+
+/// 主区在 `nav` 时侧栏该列什么。区段没有自己的粒度时列艺术家。
+pub(super) fn listing_for(nav: NavSection) -> Listing {
+    explicit_listing(nav).unwrap_or(Listing::Artists)
 }
 
 /// 侧栏列表里的一行，即专辑、艺术家、歌单或收藏。

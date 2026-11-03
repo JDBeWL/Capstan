@@ -324,7 +324,7 @@ impl Render for NowPlaying {
             .child(hero);
 
         if !artists.is_empty() {
-            body = body.child(about_artist(artists, &self.library));
+            body = body.child(about_artist(artists, &self.library, &self.shell));
         }
 
         if let Some(track) = track.as_ref() {
@@ -394,7 +394,11 @@ fn shown_artists(artist: Option<&str>) -> Vec<&str> {
 /// 「关于艺术家」卡。纸色底 + 1px 细线，不引入第二套色相。
 /// 一首歌挂了几位艺术家就画几行。标签里的「甲/乙」是两个人，不是一个人名，
 /// 关注与曲目数都得各算各的，所以下面没有「合起来」的那一条。
-fn about_artist(artists: Vec<ArtistLine>, library: &Entity<LibraryEntity>) -> AnyElement {
+fn about_artist(
+    artists: Vec<ArtistLine>,
+    library: &Entity<LibraryEntity>,
+    shell: &Entity<ShellEntity>,
+) -> AnyElement {
     let mut card = div()
         .w_full()
         .flex()
@@ -411,14 +415,19 @@ fn about_artist(artists: Vec<ArtistLine>, library: &Entity<LibraryEntity>) -> An
         if index > 0 {
             card = card.child(div().w_full().h(px(1.)).bg(theme::border()));
         }
-        card = card.child(artist_row(index, line, library.clone()));
+        card = card.child(artist_row(index, line, library, shell));
     }
 
     card.into_any_element()
 }
 
 /// 一位艺术家。名字 + 关注按钮，下面是这位名下的曲目数与专辑数。
-fn artist_row(index: usize, line: ArtistLine, library: Entity<LibraryEntity>) -> AnyElement {
+fn artist_row(
+    index: usize,
+    line: ArtistLine,
+    library: &Entity<LibraryEntity>,
+    shell: &Entity<ShellEntity>,
+) -> AnyElement {
     let ArtistLine {
         name,
         stats,
@@ -443,6 +452,8 @@ fn artist_row(index: usize, line: ArtistLine, library: Entity<LibraryEntity>) ->
     }))
     .on_click({
         let name = name.clone();
+        // 关注与跳转两处都要这个名字的句柄，各自持一份，别让先绑的那个把后绑的借空。
+        let library = library.clone();
         move |_, _, cx| {
             library.update(cx, |library, cx| {
                 library.toggle_follow(name.clone(), cx);
@@ -465,11 +476,10 @@ fn artist_row(index: usize, line: ArtistLine, library: Entity<LibraryEntity>) ->
                     div()
                         .flex_1()
                         .min_w_0()
-                        .truncate()
                         .text_size(px(theme::FONT_BODY))
                         .font_weight(theme::WEIGHT_SUBTITLE)
                         .text_color(theme::text())
-                        .child(name),
+                        .child(artist_link(index, &name, library, shell)),
                 )
                 .child(follow),
         );
@@ -488,6 +498,31 @@ fn artist_row(index: usize, line: ArtistLine, library: Entity<LibraryEntity>) ->
     }
 
     row.into_any_element()
+}
+
+/// 这一栏里的人名也能点进艺术家页。跳转前记一行历史，顶栏 ← 才能原样退回来。
+fn artist_link(
+    index: usize,
+    name: &str,
+    library: &Entity<LibraryEntity>,
+    shell: &Entity<ShellEntity>,
+) -> AnyElement {
+    let target = name.to_owned();
+    let library = library.clone();
+    let shell = shell.clone();
+    crate::common::link::text_link(
+        SharedString::from(format!("np-artist-{index}")),
+        name.to_owned(),
+        format!("打开 {name} 的艺术家页"),
+        move |_, _, cx| {
+            crate::shell::enter_scope_from_here(
+                crate::entities::Scope::Artist(target.clone()),
+                &shell,
+                &library,
+                cx,
+            );
+        },
+    )
 }
 
 /// 「制作人员」。曲目标签里只有艺术家、专辑与格式，没有词曲、制作人，只列可得的字段。

@@ -6,6 +6,7 @@ use std::path::Path;
 fn main() {
     // 产品版本或描述改了要重跑，否则 exe 上的数字会停在旧值。
     println!("cargo:rerun-if-changed=../../Cargo.toml");
+    println!("cargo:rerun-if-changed=assets/capstan.ico");
 
     #[cfg(windows)]
     embed_version_info();
@@ -27,6 +28,7 @@ fn embed_version_info() {
     let mut res = winresource::WindowsResource::new();
     // 决定属性页「语言」一栏，与下面字符串的内容无关。
     res.set_language(0x0804);
+    res.set_icon("assets/capstan.ico");
     // `FileDescription` 是任务管理器、开始菜单、文件对话框里显示的名字。
     res.set("FileDescription", "Capstan Player");
     res.set("ProductName", "Capstan");

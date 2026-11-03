@@ -376,23 +376,54 @@ fn card_shell(fills: bool) -> Div {
     }
 }
 
-/// 侧栏顶部的字标。宽体大写 + 一枚黄色小方块，不开新卡片。
+/// 品牌 C。GPUI 只取 SVG 的 alpha 蒙版，填色由 `text_color` 决定；
+/// 内径收到 46，让 15px 下的环宽对齐 21px 字标。
+const BRAND_C_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="-1 -1 178 178"><path d="M162.628 134.633A88 88 0 1 1 162.628 41.367L127.010 63.624A46 46 0 1 0 127.010 112.376Z"/></svg>"#;
+const BRAND_C_SIZE: f32 = 15.0;
+const BRAND_DOT: f32 = 4.0;
+
+fn brand_mark() -> impl IntoElement {
+    // 点比原几何外移 2 个单位，落在开口中央，不蹭 C 的下臂。
+    let dot_center = BRAND_C_SIZE * 169.0 / 178.0;
+    let dot_offset = dot_center - BRAND_DOT / 2.0 - BRAND_C_SIZE;
+
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .child(
+            Icon::default()
+                .data(BRAND_C_SVG.as_bytes())
+                .with_size(px(BRAND_C_SIZE))
+                .text_color(theme::text()),
+        )
+        .child(
+            div()
+                .flex_none()
+                .ml(px(dot_offset))
+                .size(px(BRAND_DOT))
+                .rounded_full()
+                .bg(theme::accent()),
+        )
+}
+
+/// 侧栏顶部的字标。C 作首字母，黄点留在开口里，颜色随主题走，不开新卡片。
 fn brand_row() -> AnyElement {
     div()
         .flex_none()
         .h(px(56.))
         .flex()
         .items_center()
-        .gap(px(theme::GAP_SM))
+        .gap(px(0.))
         .px(px(4.))
-        .child(div().flex_none().size(px(10.)).bg(theme::accent()))
+        .child(brand_mark())
         .child(
             div()
                 .font(theme::label_font())
-                .text_size(px(16.))
+                .text_size(px(21.))
                 .font_weight(FontWeight::EXTRA_BOLD)
                 .text_color(theme::text())
-                .child("CAPSTAN"),
+                .child("APSTAN"),
         )
         .into_any_element()
 }

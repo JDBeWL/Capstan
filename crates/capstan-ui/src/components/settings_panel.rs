@@ -5,14 +5,16 @@ use std::rc::Rc;
 use crate::common::anim;
 use crate::common::button::{ButtonKind, TAB_STOP, text_button_animated};
 use crate::common::thousands;
-use crate::entities::{LibraryEntity, PlaybackEntity, PlaybackEvent};
+use crate::components::sidebar::Listing;
+use crate::entities::{LibraryEntity, PlaybackEntity, PlaybackEvent, RepeatState};
 use crate::icon::{Glyph, icon};
 use crate::persist::data_dir;
 use crate::platform::*;
-use crate::settings::{Settings, TrackColumns};
+use crate::settings::{Settings, TrackColumns, WindowRect};
 use crate::shell::{Density, NavSection, PanelTab, ShellEntity, SidebarState};
 use crate::theme;
 use capstan_audio::OutputMode;
+use capstan_core::SortKey;
 
 pub struct SettingsPanel {
     settings: Entity<SettingsEntity>,
@@ -987,6 +989,33 @@ impl SettingsEntity {
 
     pub fn set_recursive_import(&mut self, recursive: bool, cx: &mut Context<Self>) {
         self.update_and_save(cx, |settings| settings.recursive_import = recursive);
+    }
+
+    /// 侧栏「你的音乐库」卡片的列表粒度。`None` 表示跟随主区区段。
+    pub fn set_library_listing(&mut self, listing: Option<Listing>, cx: &mut Context<Self>) {
+        self.update_and_save(cx, |settings| settings.library_listing = listing);
+    }
+
+    /// 曲库侧的偏好：随机、循环、排序键、跟随播放。四项一次写入，一次操作只落一遍盘。
+    pub fn set_library_prefs(
+        &mut self,
+        shuffle: bool,
+        repeat: RepeatState,
+        sort_key: SortKey,
+        follow_playback: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_and_save(cx, |settings| {
+            settings.shuffle = shuffle;
+            settings.repeat = repeat;
+            settings.sort_key = sort_key;
+            settings.follow_playback = follow_playback;
+        });
+    }
+
+    /// 窗口位置与尺寸。只在窗口态下写，见 `RootView::remember_window`。
+    pub fn set_window(&mut self, rect: Option<WindowRect>, cx: &mut Context<Self>) {
+        self.update_and_save(cx, |settings| settings.window = rect);
     }
 
     pub fn set_default_panel(&mut self, panel: Option<PanelTab>, cx: &mut Context<Self>) {

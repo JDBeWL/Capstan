@@ -1,6 +1,8 @@
 //! 侧边栏。上卡片是首页与曲库两个导航项，下卡片列曲库内容。
-//! 下卡片粒度默认跟随主区区段（`entries::listing_for`），可被标题下的胶囊 Chip 覆盖（`listing_override`）。
+//! 下卡片粒度默认跟随主区区段（`entries::listing_for`），可被标题下的胶囊 Chip 覆盖（`listing_override`），
+//! 覆盖值落盘，下次启动沿用。
 
+use crate::components::SettingsEntity;
 use crate::cover::CoverCache;
 use crate::entities::LibraryEntity;
 use crate::platform::*;
@@ -13,19 +15,23 @@ mod menu;
 mod nav;
 mod thumb;
 
+/// 侧栏列表的粒度。它是 `Settings::library_listing` 的类型，随 `Settings` 一起公开。
+pub use entries::Listing;
 /// 歌单的右键菜单。
 pub(crate) use menu::collection_menu;
-
-use entries::Listing;
 
 pub struct Sidebar {
     shell: Entity<ShellEntity>,
     library: Entity<LibraryEntity>,
     covers: Entity<CoverCache>,
+    /// 手动粒度要写进设置才能跨启动保留。
+    settings: Entity<SettingsEntity>,
     /// Chip 手动筛选；`None` = 跟随主区区段（`entries::listing_for`）。
+    /// 启动时取自 `Settings::library_listing`。
     listing_override: Option<Listing>,
-    /// 上次渲染时的主区区段。区段一变就把手动筛选复位回「跟随」，
-    /// 否则从「专辑」切到「艺术家」区段时侧栏还停在专辑列表。
+    /// 上次渲染时的主区区段。切换到自带粒度的区段时改写筛选取值；
+    /// 进详情、首页、搜索时保持不变，否则点开一行即撤销刚做的选择。
+    /// 这类改写只是跟随当前区段，不写回设置。
     last_nav: NavSection,
     /// 曲库计数每次被悬停进入时加一。换元素的 id，乱码重新落定一次。
     count_epoch: u64,
@@ -37,6 +43,7 @@ impl Sidebar {
         shell: Entity<ShellEntity>,
         library: Entity<LibraryEntity>,
         covers: Entity<CoverCache>,
+        settings: Entity<SettingsEntity>,
         cx: &mut Context<Self>,
     ) -> Self {
         let observe_shell = cx.observe(&shell, |_, _, cx| cx.notify());
@@ -44,12 +51,17 @@ impl Sidebar {
         // 封面解码完成时要重绘，否则缩略图一直停在占位图上。
         let observe_covers = cx.observe(&covers, |_, _, cx| cx.notify());
 
+        // 起点取外壳当前的区段。留成别的值，首帧会把它当成一次切换，把刚恢复的粒度冲掉。
+        let last_nav = shell.read(cx).nav_section();
+        let listing_override = settings.read(cx).settings().library_listing;
+
         Self {
             shell,
             library,
             covers,
-            listing_override: None,
-            last_nav: NavSection::Home,
+            settings,
+            listing_override,
+            last_nav,
             count_epoch: 0,
             _subs: vec![observe_shell, observe_library, observe_covers],
         }
@@ -63,6 +75,10 @@ impl Sidebar {
     fn set_listing(&mut self, listing: Listing, cx: &mut Context<Self>) {
         if self.listing_override != Some(listing) {
             self.listing_override = Some(listing);
+            // 手动点选既是本帧的筛选，也是下次启动的起点。
+            self.settings.update(cx, |settings, cx| {
+                settings.set_library_listing(Some(listing), cx);
+            });
             cx.notify();
         }
     }
@@ -84,10 +100,12 @@ impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.shell.read(cx).sidebar();
         let nav = self.shell.read(cx).nav_section();
-        // 主区区段变了，把手动筛选复位回「跟随主区」。在 render 里改而不 notify。本帧就会用上新值。
+        // 只有自带粒度的区段改写筛选取值。在 render 里改而不 notify，本帧即用上新值。
         if self.last_nav != nav {
             self.last_nav = nav;
-            self.listing_override = None;
+            if let Some(listing) = entries::explicit_listing(nav) {
+                self.listing_override = Some(listing);
+            }
         }
         let counts = self.counts(cx);
 
@@ -157,6 +175,26 @@ mod tests {
     fn grid_sections_list_what_their_grid_shows() {
         assert_eq!(listing_for(NavSection::Albums), Listing::Albums);
         assert_eq!(listing_for(NavSection::Artists), Listing::Artists);
+    }
+
+    /// 进详情、回首页、搜索都不该改写用户手动点选的那一档，否则点开一行就等于撤销刚做的选择。
+    #[test]
+    fn only_sections_with_their_own_granularity_steer_the_listing() {
+        use super::entries::explicit_listing;
+
+        assert_eq!(explicit_listing(NavSection::Albums), Some(Listing::Albums));
+        assert_eq!(
+            explicit_listing(NavSection::Artists),
+            Some(Listing::Artists)
+        );
+        for nav in [
+            NavSection::Home,
+            NavSection::Tracks,
+            NavSection::Search,
+            NavSection::Settings,
+        ] {
+            assert_eq!(explicit_listing(nav), None, "{nav:?} 不该把侧栏带走");
+        }
     }
 
     #[test]

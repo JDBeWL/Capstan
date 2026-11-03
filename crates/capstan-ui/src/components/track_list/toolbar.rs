@@ -132,6 +132,10 @@ pub(super) fn toolbar(
         .pb(px(theme::GAP_MD))
         .pl(px(back_inset))
         .pr(px(theme::GAP_XL))
+        // 曲库页工具条就是页头，补上其它页头相同的一条细线。
+        .when(!headed_elsewhere, |bar| {
+            bar.border_b_1().border_color(theme::border())
+        })
         .child(
             div()
                 .flex_1()

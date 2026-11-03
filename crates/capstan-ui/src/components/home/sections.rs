@@ -16,20 +16,9 @@ use crate::theme;
 use super::HomeView;
 use super::cards::RecentCard;
 
-const RECENT_COVER: f32 = 140.0;
 const RECENT_PAD: f32 = theme::GAP_SM;
-/// 卡宽必须把左右内边距算进来，只取封面边长会让内容溢出 hover 底色一圈。
-pub(super) const RECENT_W: f32 = RECENT_COVER + RECENT_PAD * 2.0;
-
-/// 快捷网格一行放几张。由可用宽度反推，不写死。
-pub(super) fn grid_columns_in(usable: f32) -> usize {
-    let gap = theme::GAP_MD;
-    ((usable + gap) / (RECENT_W + gap)).floor().max(1.0) as usize
-}
 /// 两行文字的预留高度。字号 15 / 12 的常规行高合计约 38px，留 44 才不会被下一节压住。
 const RECENT_TEXT_H: f32 = 44.0;
-/// 总高 = 上下内边距 + 封面 + 间距 + 标题两行。
-const RECENT_H: f32 = RECENT_PAD * 2.0 + RECENT_COVER + 8.0 + RECENT_TEXT_H;
 /// 横向滚动区块里每张海报的封面边长（整卡宽 = 它 + 左右内边距）。
 const POSTER_COVER: f32 = 160.0;
 const POSTER_PAD: f32 = theme::GAP_MD;
@@ -125,6 +114,7 @@ fn section_heading(index: usize, english: &'static str, text: &'static str) -> i
 pub(super) fn recent_card(
     index: usize,
     card: RecentCard,
+    cover_size: f32,
     library: &Entity<LibraryEntity>,
     covers: &Entity<CoverCache>,
     cx: &mut App,
@@ -133,7 +123,7 @@ pub(super) fn recent_card(
     let target = library.clone();
     let play_library = library.clone();
     let group = SharedString::from(format!("home-recent-g-{index}"));
-    let cover = cover_slot(covers, library, id, RECENT_COVER, &card.album, cx);
+    let cover = cover_slot(covers, library, id, cover_size, &card.album, cx);
     let play_title = card.album.clone();
     // 点卡 = 播整张专辑，队列按专辑名定。
     let queue_album = card.album.clone();
@@ -153,12 +143,12 @@ pub(super) fn recent_card(
         .id(SharedString::from(format!("home-recent-{index}")))
         .group(group.clone())
         .flex_none()
-        .w(px(RECENT_W))
-        .h(px(RECENT_H))
+        .w(px(cover_size))
+        .h(px(cover_size + RECENT_PAD * 2.0 + 8.0 + RECENT_TEXT_H))
         .flex()
         .flex_col()
         .gap(px(8.0))
-        .p(px(RECENT_PAD))
+        .py(px(RECENT_PAD))
         .cursor_pointer()
         .tooltip(crate::common::tooltip::builder(tip))
         .on_click(move |_, _, cx| {

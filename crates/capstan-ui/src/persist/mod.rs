@@ -525,6 +525,10 @@ mod tests {
         assert!(settings.starts_with("{\n  \"appearance\""), "{settings}");
         assert!(settings.contains("\"density\""), "{settings}");
         assert!(settings.contains("\"default_view\""), "{settings}");
+        assert!(
+            settings.contains("\"library_listing\""),
+            "侧栏粒度要落盘，否则每次启动都回到跟随主区：{settings}"
+        );
 
         // likes.json / recents.json。裸数字数组，因 `TrackId` 是单字段元组结构体。
         let ids = vec![TrackId(1), TrackId(999)];

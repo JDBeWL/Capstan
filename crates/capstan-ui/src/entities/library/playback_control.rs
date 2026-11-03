@@ -21,7 +21,7 @@ pub enum Step {
     Stop,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub enum RepeatState {
     /// 不循环时，走到队尾停下。
     #[default]
@@ -52,6 +52,19 @@ impl RepeatState {
 }
 
 impl LibraryEntity {
+    /// 启动时应用落盘偏好，只在这一次生效。运行中改这些值都走下面的 setter，
+    /// 由它们发出 [`LibraryEvent::PrefsChanged`] 回写设置。
+    pub fn apply_settings(&mut self, settings: &crate::settings::Settings, cx: &mut Context<Self>) {
+        self.set_recursive(settings.recursive_import, cx);
+        self.list_follows_playback = settings.follow_playback;
+        // 排序键要在首屏合并之后才用得上曲目：此刻 `playlist` 还是空的，
+        // `finish_initial_load` 会拿 `self.sort` 重排合并后的列表。
+        self.sort = settings.sort_key;
+        self.shuffle = settings.shuffle;
+        self.repeat = settings.repeat;
+        self.apply_mode(false, cx);
+    }
+
     /// 列表用来标注「播放中」的那一首。
     pub fn now_playing(&self) -> Option<TrackId> {
         self.now_playing
@@ -298,6 +311,7 @@ impl LibraryEntity {
         }
         self.shuffle = on;
         self.apply_mode(on, cx);
+        cx.emit(LibraryEvent::PrefsChanged);
     }
 
     /// `R` 键。非随机直接进随机、已是随机则回到顺序，不经过列表循环与单曲循环。
@@ -310,6 +324,7 @@ impl LibraryEntity {
     pub fn cycle_repeat(&mut self, cx: &mut Context<Self>) {
         self.repeat = self.repeat.next_in_cycle();
         self.apply_mode(false, cx);
+        cx.emit(LibraryEvent::PrefsChanged);
     }
 
     /// `S` 键的四态整体循环，同时把结果写回两条轴。
@@ -317,12 +332,14 @@ impl LibraryEntity {
         let next = self.playlist.mode().next_in_cycle();
         self.set_axes_from_mode(next);
         self.apply_mode(true, cx);
+        cx.emit(LibraryEvent::PrefsChanged);
     }
 
     /// 直接设四态模式，拆成两条轴。
     pub fn set_mode(&mut self, mode: PlayMode, cx: &mut Context<Self>) {
         self.set_axes_from_mode(mode);
         self.apply_mode(true, cx);
+        cx.emit(LibraryEvent::PrefsChanged);
     }
 
     /// 由四态模式反推两条轴，不是 [`Self::effective_mode`] 的逆，单曲循环那档排不出随机序。

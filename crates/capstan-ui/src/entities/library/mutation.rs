@@ -6,6 +6,7 @@ use capstan_core::{SortKey, Track, TrackId};
 use crate::platform::*;
 
 use super::LibraryEntity;
+use super::LibraryEvent;
 use super::scope::Scope;
 
 impl LibraryEntity {
@@ -57,12 +58,14 @@ impl LibraryEntity {
 
     /// 换排序键。它重排曲库本体与播放顺序，曲库下标整体变化，投影必须跟着重算。
     pub fn sort_by(&mut self, key: SortKey, cx: &mut Context<Self>) {
-        if self.playlist.sort_key() == key {
+        if self.sort == key {
             return;
         }
+        self.sort = key;
         self.playlist.sort_by(key);
         self.invalidate();
         self.recompute_visible(cx);
+        cx.emit(LibraryEvent::PrefsChanged);
         cx.notify();
     }
 

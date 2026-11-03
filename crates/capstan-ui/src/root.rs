@@ -64,6 +64,12 @@ pub struct RootView {
     last_lyrics: bool,
     _panel_close: Option<Task<()>>,
     _lyrics_close: Option<Task<()>>,
+    /// 窗口几何的防抖写入。拖拽改尺寸会连续回调，只留最后一次。
+    _window_save: Option<Task<()>>,
+    /// 最近一次的窗口几何。关窗时没有窗口句柄可用，只能先记在这里再补写。
+    window_rect: Option<crate::settings::WindowRect>,
+    /// 窗口几何变化订阅。拖边与拖标题栏都经由它，见 [`Self::remember_window`]。
+    _bounds_watch: Subscription,
     /// 播放中兜底写 `resume.json` 的节拍任务，持有它才不会被提前回收。
     _resume_watcher: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -84,9 +90,7 @@ impl RootView {
 
         // 偏好要在启动时显式应用进 shell / library，只存着不会生效。
         shell.update(cx, |shell, cx| shell.apply_settings(&stored, cx));
-        library.update(cx, |library, cx| {
-            library.set_recursive(stored.recursive_import, cx);
-        });
+        library.update(cx, |library, cx| library.apply_settings(&stored, cx));
         // 静音退出时以 0 起播，但存档里留的是静音前的值（见 `VolumeControl::persist`）
         playback.update(cx, |playback, cx| {
             // 输出模式先定，它决定后面第一次开流走哪条后端。
@@ -139,7 +143,15 @@ impl RootView {
         let album_grid =
             cx.new(|cx| AlbumGrid::new(library.clone(), shell.clone(), covers.clone(), cx));
         let search = cx.new(|cx| SearchBox::new(window, library.clone(), cx));
-        let sidebar = cx.new(|cx| Sidebar::new(shell.clone(), library.clone(), covers.clone(), cx));
+        let sidebar = cx.new(|cx| {
+            Sidebar::new(
+                shell.clone(),
+                library.clone(),
+                covers.clone(),
+                settings.clone(),
+                cx,
+            )
+        });
         let home = cx.new(|cx| HomeView::new(shell.clone(), library.clone(), covers.clone(), cx));
         let lyrics = cx.new(|cx| LyricsView::new(playback.clone(), shell.clone(), cx));
         let queue_panel =
@@ -168,6 +180,11 @@ impl RootView {
         });
         let top_bar = cx.new(|cx| TopBar::new(shell.clone(), library.clone(), search.clone(), cx));
         let toast = cx.new(ToastEntity::new);
+
+        // 拖边与拖标题栏都经由这里。回调本身不立刻落盘，见 `remember_window`。
+        let bounds_watch = cx.observe_window_bounds(window, |this, window, cx| {
+            this.remember_window(window, cx);
+        });
 
         let on_playback = cx.subscribe(&playback, |this, _, event: &PlaybackEvent, cx| {
             match event {
@@ -254,6 +271,9 @@ impl RootView {
                     this.toast
                         .update(cx, |toast, cx| toast.show_plain(message, cx));
                 }
+                // 曲库侧的偏好（随机、循环、排序、跟随播放）由曲库自己决定何时改，
+                // 落盘只在根视图做，设置实体是 `settings.json` 的唯一写者。
+                LibraryEvent::PrefsChanged => this.remember_library_prefs(cx),
                 // 曲库是后台读完的，拿到曲目后再装回上次播放位置。
                 // 排至本次通知之后，使曲库自身的后续通知先行落地。
                 LibraryEvent::Loaded => {
@@ -354,7 +374,6 @@ impl RootView {
         // 兜底落盘。强杀与崩溃拿不到退出回调，播放中每 15 秒写一次，最多丢一格
         // 暂停时不写，那时 `StateChanged` 已经写过同一秒。
         let resume_executor = cx.background_executor().clone();
-        let (watch_playback, watch_settings) = (playback.clone(), settings.clone());
         let resume_watcher = cx.spawn_in(window, async move |this, cx| {
             loop {
                 resume_executor.timer(resume::RESUME_INTERVAL).await;
@@ -376,10 +395,15 @@ impl RootView {
         let quit_flushed = Rc::new(Cell::new(false));
         let on_quit = {
             let flushed = Rc::clone(&quit_flushed);
-            cx.on_app_quit(move |_window, cx| {
+            cx.on_app_quit(move |this, cx| {
                 if !flushed.replace(true) {
                     log::info!("正在退出，刷写持久化队列");
-                    resume::save_resume(&watch_playback, &watch_settings, cx);
+                    resume::save_resume(&this.playback, &this.settings, cx);
+                    // 窗口一直没被拖动过就不会有防抖写入，关窗前补记一次。
+                    if let Some(rect) = this.window_rect {
+                        let settings = this.settings.clone();
+                        settings.update(cx, |settings, cx| settings.set_window(Some(rect), cx));
+                    }
                     // 后台写线程是异步的，关窗前同步等它把最后一格落盘。
                     crate::persist::flush();
                     let (writes, bytes) = crate::persist::write_stats();
@@ -455,7 +479,10 @@ impl RootView {
             last_lyrics,
             _panel_close: None,
             _lyrics_close: None,
+            _window_save: None,
+            window_rect: windowed_rect(window),
             _resume_watcher: resume_watcher,
+            _bounds_watch: bounds_watch,
             _subscriptions: vec![
                 on_playback,
                 on_play,
@@ -548,9 +575,65 @@ impl RootView {
         }));
     }
 
+    /// 记住窗口位置与尺寸。拖拽期间回调会连着来几十次，等手停下来再落盘。
+    #[allow(clippy::used_underscore_binding)]
+    fn remember_window(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let Some(rect) = windowed_rect(window) else {
+            return;
+        };
+        self.window_rect = Some(rect);
+        let executor = cx.background_executor().clone();
+        self._window_save = Some(cx.spawn(async move |this, cx| {
+            executor
+                .timer(Duration::from_millis(WINDOW_SAVE_DELAY_MS))
+                .await;
+            this.update(cx, |this, cx| {
+                this.settings
+                    .update(cx, |settings, cx| settings.set_window(Some(rect), cx));
+            })
+            .ok();
+        }));
+    }
+
+    /// 曲库侧的偏好落盘。一次性读齐四项，设置实体只写一遍。
+    fn remember_library_prefs(&mut self, cx: &mut Context<Self>) {
+        let (shuffle, repeat, sort_key, follow) = {
+            let library = self.library.read(cx);
+            (
+                library.is_shuffle(),
+                library.repeat_state(),
+                library.sort_key(),
+                library.list_follows_playback(),
+            )
+        };
+        self.settings.update(cx, |settings, cx| {
+            settings.set_library_prefs(shuffle, repeat, sort_key, follow, cx);
+        });
+    }
+
     /// 命令行导入（`capstan.exe <文件或文件夹>...`），「关联文件类型」依赖它。
     pub fn import(&mut self, paths: Vec<std::path::PathBuf>, cx: &mut Context<Self>) {
         self.library
             .update(cx, |library, cx| library.import(paths, cx));
     }
+}
+
+/// 窗口几何的落盘延迟。拖边一次会产生几十帧 bounds 回调，全部合并成一次写入。
+const WINDOW_SAVE_DELAY_MS: u64 = 600;
+
+/// 窗口在窗口态下的位置与尺寸。最大化与全屏时 gpui 报的是还原尺寸，存下来会让下次
+/// 以窗口态开局，与用户关窗时看到的样子不符，因此只认窗口态。
+fn windowed_rect(window: &Window) -> Option<crate::settings::WindowRect> {
+    let WindowBounds::Windowed(bounds) = window.window_bounds() else {
+        return None;
+    };
+    let rect = crate::settings::WindowRect {
+        x: f32::from(bounds.origin.x),
+        y: f32::from(bounds.origin.y),
+        width: f32::from(bounds.size.width),
+        height: f32::from(bounds.size.height),
+    };
+    // 最小化期间报 0 尺寸，这种值进了存档下次就没有窗口了。
+    (rect.width >= crate::settings::MIN_WINDOW_W && rect.height >= crate::settings::MIN_WINDOW_H)
+        .then_some(rect)
 }

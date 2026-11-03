@@ -1,11 +1,11 @@
-//! 歌词全屏视图。盖在主区卡片上，当前句高亮居中、逐字点亮、点击跳转。
+//! 歌词全屏视图。盖在主区卡片上，当前句居中、逐字点亮、点击跳转。
 //! 跟随进度重绘的粒度是「换行或换字」，不是每帧。
 
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
-use capstan_core::{LyricLine, Lyrics};
+use capstan_core::{LyricLine, Lyrics, Track, UNKNOWN_ARTIST, format_duration};
 
 use crate::entities::PlaybackEntity;
 use crate::icon::Glyph;
@@ -41,8 +41,15 @@ const _: () = assert!(OPACITY_UNSUNG > OPACITY_NEAR);
 const RAMP_MIN: Duration = Duration::from_millis(60);
 const RAMP_MAX: Duration = Duration::from_millis(900);
 
-/// 弹簧参数。略低于临界阻尼，一步一行的滚动不来回晃。
-const SCROLL_SPRING: SpringConfig = SpringConfig::new(180.0, 26.0, 1.0);
+/// 弹簧参数。阻尼比略高于 1，换行只滑到位，不回弹。
+const SCROLL_SPRING: SpringConfig = SpringConfig::new(210.0, 28.0, 1.0);
+
+/// 空状态的眉标。比正文里的 `// ...` 大一档，否则会被下方 30px 的标题压住。
+const NOTICE_EYEBROW: f32 = 15.0;
+/// 入场位移的时长。比遮罩自身的淡入晚到位，读起来像面板落定。
+const MOTION_IN_MS: u64 = 320;
+/// 正文比页头晚这一档起步，两段位移才分得开。
+const MOTION_BODY_DELAY_MS: u64 = 38;
 
 #[derive(Clone, Debug)]
 enum Loaded {
@@ -73,6 +80,8 @@ impl LyricsView {
     ) -> Self {
         // observe 而不是 subscribe。进度本身不发事件，只会 `notify` 播放实体。
         let observe = cx.observe(&playback, |this, _, cx| this.on_playback(cx));
+        // 暂停时播放实体不再通知，遮罩打开那一刻要靠外壳的这次通知补上当前句。
+        let watch = cx.observe(&shell, |this, _, cx| this.sync_active(cx));
         Self {
             playback,
             shell,
@@ -80,7 +89,7 @@ impl LyricsView {
             path: None,
             active: None,
             word: None,
-            _subs: vec![observe],
+            _subs: vec![observe, watch],
         }
     }
 
@@ -136,6 +145,8 @@ impl LyricsView {
                     this.active = None;
                     this.word = None;
                     cx.notify();
+                    // 读完后补算当前句。暂停时播放实体不会再通知，缺这一步要等下一次播放。
+                    this.sync_active(cx);
                 }
             })
             .ok();
@@ -143,7 +154,7 @@ impl LyricsView {
         .detach();
     }
 
-    /// 重算当前行与当前字；遮罩关着就不动，两者都没变也不重绘。
+    /// 重算当前行与当前字。遮罩关着就不动，两者都没变也不重绘。
     fn sync_active(&mut self, cx: &mut Context<Self>) {
         if !self.shell.read(cx).shows_lyrics() {
             return;
@@ -170,18 +181,87 @@ fn seek_handler(
     move |_, _, cx| playback.update(cx, |playback, _| playback.seek(start))
 }
 
-/// 一行在给定字号下的估计宽度。CJK / 假名与全角标点 ≈ 1 em，其余 ASCII ≈ 0.52 em，
+/// 单个字符的估计宽度。CJK / 假名与全角标点 ≈ 1 em，其余 ASCII ≈ 0.52 em，
 /// 空格 0.30 em，粗体 ×1.06。只用来数折行的行数，估大比估小安全。
-fn text_width(text: &str, size: f32, bold: bool) -> f32 {
-    let em = text
-        .chars()
-        .map(|c| match c {
-            ' ' => 0.30,
-            c if c < '\u{2E80}' => 0.52,
-            _ => 1.0,
-        })
-        .sum::<f32>();
+fn char_width(c: char, size: f32, bold: bool) -> f32 {
+    let em = match c {
+        ' ' => 0.30,
+        c if c < '\u{2E80}' => 0.52,
+        _ => 1.0,
+    };
     em * size * if bold { 1.06 } else { 1.0 }
+}
+
+/// 一行在给定字号下的估计宽度。
+fn text_width(text: &str, size: f32, bold: bool) -> f32 {
+    text.chars().map(|c| char_width(c, size, bold)).sum()
+}
+
+/// 可以断在这些字符之后。文本系统按字符切，会把「越えたら」拆到两行，
+/// 第二行只剩半句；先按标点断开，一行读起来才是完整的短语。
+fn breaks_after(c: char) -> bool {
+    matches!(
+        c,
+        '、' | '，' | '。' | '！' | '？' | '；' | '：' | '…' | ' '
+    )
+}
+
+/// 标点断点至少占满这一比例的行宽才采用。太靠前的标点会让上一行只剩几个字，
+/// 不如退回按字符切。
+const BREAK_MIN_RATIO: f32 = 0.45;
+
+/// 折行后的文本。放得下就原样返回；放不下则贪心断行，断点优先落在标点上。
+fn wrap_text(text: &str, size: f32, bold: bool, column: f32) -> String {
+    // 有词边界的语言交给文本系统：它在空格处断，手工按字符切会把单词拆开。
+    if text_width(text, size, bold) <= column || !text.chars().any(|c| c >= '\u{2E80}') {
+        return text.to_owned();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut rows: Vec<String> = Vec::new();
+    let mut start = 0;
+    let mut width = 0.0;
+    // 最近一个可用断点，以及断点之前的行宽。
+    let mut preferred: Option<(usize, f32)> = None;
+
+    for (index, ch) in chars.iter().enumerate() {
+        width += char_width(*ch, size, bold);
+        if width > column && index > start {
+            let cut = match preferred {
+                Some((cut, cut_width))
+                    if cut > start
+                        && cut_width <= column
+                        && cut_width >= column * BREAK_MIN_RATIO =>
+                {
+                    cut
+                }
+                _ => index,
+            };
+            rows.push(
+                chars[start..cut]
+                    .iter()
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned(),
+            );
+            start = cut;
+            width = chars[start..=index]
+                .iter()
+                .map(|c| char_width(*c, size, bold))
+                .sum();
+            preferred = None;
+        }
+        if breaks_after(*ch) {
+            preferred = Some((index + 1, width));
+        }
+    }
+    rows.push(
+        chars[start..]
+            .iter()
+            .collect::<String>()
+            .trim_end()
+            .to_owned(),
+    );
+    rows.join("\n")
 }
 
 /// 正文可用的文字宽度。gpui 渲染期拿不到元素实际宽度，只能从布局状态推：
@@ -219,6 +299,11 @@ fn translation_size(original: f32) -> f32 {
     original - TRANSLATION_STEP
 }
 
+/// 药丸内部的文字列宽。药丸左右各有 `GAP_LG` 内边距，正文不能顶到行边。
+fn text_column(budget: f32) -> f32 {
+    (budget - 2.0 * theme::GAP_LG).max(1.0)
+}
+
 /// 一个文字盒的高度，同时用作 `line_height` 和 `h`，所以布局不依赖字体度量：
 /// gpui 把墨迹在 `line_height` 里上下均分，盒高按字号等比才能让各行墨迹中心等距。
 fn line_box(size: f32) -> f32 {
@@ -237,10 +322,15 @@ fn translation_rows(line: &LyricLine) -> Vec<&str> {
 /// 译文永远按常规字重画，粗体只影响原文行。
 fn pill_height(line: &LyricLine, size: f32, budget: f32, bold: bool) -> f32 {
     let trans = translation_size(size);
-    visual_rows(&line.text, size, budget, bold) as f32 * line_box(size)
+    let column = text_column(budget);
+    let original: usize = wrap_text(&line.text, size, bold, column)
+        .lines()
+        .map(|row| visual_rows(row, size, column, bold))
+        .sum();
+    original as f32 * line_box(size)
         + translation_rows(line)
             .iter()
-            .map(|row| visual_rows(row, trans, budget, false) as f32 * line_box(trans))
+            .map(|row| visual_rows(row, trans, column, false) as f32 * line_box(trans))
             .sum::<f32>()
 }
 
@@ -260,9 +350,21 @@ fn active_center_from_top(heights: &[f32], active: usize) -> f32 {
     heights[..active].iter().sum::<f32>() + heights[active] / 2.0
 }
 
+/// 采样率写成千赫。44100 不能整除 1000，写成 44.1 kHz。
+fn sample_rate_label(rate: u32) -> String {
+    if rate.is_multiple_of(1000) {
+        format!("{} kHz", rate / 1000)
+    } else {
+        format!("{:.1} kHz", rate as f32 / 1000.0)
+    }
+}
+
 impl Render for LyricsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let track = self.playback.read(cx).current().cloned();
+        let (track, duration) = {
+            let playback = self.playback.read(cx);
+            (playback.current().cloned(), playback.duration())
+        };
         let active = self.active;
         let word = self.word;
         let budget = {
@@ -278,24 +380,58 @@ impl Render for LyricsView {
             (Loaded::Ready(lyrics), Some(_)) => {
                 lyrics_column(lyrics, active, word, &self.playback, budget).into_any_element()
             }
-            (Loaded::Loading, _) => notice("歌词读取中…", None).into_any_element(),
-            (_, None) | (Loaded::Idle, _) => {
-                notice("没有在播放的歌", Some("先播放一首，歌词会跟着进度往上滚"))
-                    .into_any_element()
-            }
-            (Loaded::Missing, Some(_)) => notice(
-                "这首歌没有歌词",
-                Some("把同名的 .lrc 或 .ass 放在音频旁边，例如 song.lrc / song.ass"),
+            (Loaded::Loading, _) => notice(
+                "Loading",
+                "正在读取歌词",
+                Some("读完会在这一屏显示，不用切歌。".to_owned()),
+                true,
             )
             .into_any_element(),
+            (_, None) | (Loaded::Idle, _) => notice(
+                "Idle",
+                "没有在播放的歌",
+                Some("先播放一首，歌词会跟着进度往上滚。".to_owned()),
+                false,
+            )
+            .into_any_element(),
+            (Loaded::Missing, Some(_)) => {
+                notice("No Lyrics", "这首歌没有歌词", None, false).into_any_element()
+            }
+        };
+
+        let head = header(
+            track.as_ref(),
+            duration,
+            budget >= 640.0,
+            self.shell.clone(),
+            window,
+            cx,
+        );
+        // 遮罩淡入时页头再往下落 8px，正文晚一档。减少动态效果时两者都不位移。
+        let reduce = cx.reduce_motion();
+        let head = if reduce {
+            head.into_any_element()
+        } else {
+            drop_in("lyrics-head", 0, 8.0, head).into_any_element()
+        };
+        // 上下留出与进度线的空隙，否则第一句会被贴着线切掉半个字。
+        let body = div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .py(px(theme::GAP_XL))
+            .child(body);
+        let body = if reduce {
+            body.into_any_element()
+        } else {
+            drop_in("lyrics-body", MOTION_BODY_DELAY_MS, 12.0, body).into_any_element()
         };
 
         div()
-            // 遮罩必须绑鼠标监听。gpui 只对注册了鼠标监听的元素做命中测试，光有 `id` 不挡点击。
+            // 遮罩须自己拦下鼠标。命中测试默认会继续往下走，主区里的卡片仍被判定为悬停，
+            // 它的浮层提示就会画在这一屏之上。
             .id("lyrics-overlay")
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(|_, _, cx| cx.stop_propagation())
-            .on_scroll(|_, _, cx| cx.stop_propagation())
+            .occlude()
             .absolute()
             .top_0()
             .left_0()
@@ -305,18 +441,22 @@ impl Render for LyricsView {
             .flex_col()
             .overflow_hidden()
             .bg(theme::bg())
-            .px(px(theme::GAP_XL))
-            .pt(px(theme::GAP_XL))
-            .pb(px(theme::GAP_LG))
             .child(crate::common::ornament::page_backdrop())
-            .child(header(
-                track.as_ref().map(|track| track.title.as_str()),
-                track.as_ref().and_then(|track| track.artist.as_deref()),
-                self.shell.clone(),
-                window,
-                cx,
-            ))
-            .child(div().flex_1().min_h_0().flex().child(body))
+            // 遮罩盖掉了主区卡片顶上的三色条，这一屏自己再起一条。
+            .child(crate::common::ornament::tri_strip())
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .px(px(theme::GAP_XL))
+                    .pt(px(theme::GAP_XL))
+                    .pb(px(theme::GAP_LG))
+                    .child(head)
+                    .child(body)
+                    .into_any_element(),
+            )
             // 遮罩淡入 200ms；退出时 shell 直接移除。
             .with_animation(
                 "lyrics-overlay-in",
@@ -326,60 +466,187 @@ impl Render for LyricsView {
     }
 }
 
-/// 顶部一行，曲目身份 + 关闭按钮。
+/// 页面顶部：眉标与关闭按钮、歌名、一行真实字段，最后一条细线收尾。
 fn header(
-    title: Option<&str>,
-    artist: Option<&str>,
+    track: Option<&Track>,
+    duration: Duration,
+    wide: bool,
     shell: Entity<ShellEntity>,
     window: &mut Window,
     cx: &mut App,
-) -> impl IntoElement {
+) -> Div {
     let close = crate::common::button::IconButton::new("lyrics-close", Glyph::Cross)
         .label("关闭歌词")
-        .box_size(32.)
-        .glyph_size(15.)
+        .box_size(28.)
+        .glyph_size(14.)
         .color(theme::text_muted())
         .on_click(move |_, _, cx| shell.update(cx, ShellEntity::toggle_lyrics))
         .hover_progress(window, cx)
         .render();
 
+    let title = track.map_or("未在播放", |track| track.title.as_str());
+    let shown_duration = track.and_then(|track| track.duration).unwrap_or(duration);
+
     div()
         .flex_none()
+        .w_full()
+        .min_w_0()
         .flex()
-        .items_start()
-        .justify_between()
-        .gap(px(theme::GAP_MD))
+        .flex_col()
         .child(
             div()
+                .w_full()
                 .flex()
-                .flex_col()
-                .min_w_0()
-                .child(crate::common::section::eyebrow("Lyrics / 歌词"))
-                .child(
-                    div()
-                        .flex_none()
-                        .text_size(px(theme::FONT_SUBTITLE))
-                        .font_weight(theme::WEIGHT_TITLE)
-                        .text_color(theme::text())
-                        .truncate()
-                        .child(title.unwrap_or("未在播放").to_owned()),
-                )
-                .when_some(artist, |info, artist| {
-                    info.child(
-                        div()
-                            .flex_none()
-                            .text_size(px(theme::FONT_CAPTION))
-                            .text_color(theme::text_muted())
-                            .truncate()
-                            .child(artist.to_owned()),
-                    )
-                }),
+                .items_center()
+                .justify_between()
+                .gap(px(theme::GAP_MD))
+                .child(crate::common::section::eyebrow("Lyrics"))
+                .child(close),
         )
-        .child(close)
+        .child(
+            div()
+                .id("lyrics-title")
+                .mt(px(theme::GAP_XS))
+                .w_full()
+                .min_w_0()
+                .truncate()
+                .text_size(px(theme::FONT_TITLE))
+                .font_weight(theme::WEIGHT_TITLE)
+                .text_color(theme::text())
+                .tooltip(crate::common::tooltip::builder(title.to_owned()))
+                .child(title.to_owned()),
+        )
+        .child(
+            div()
+                .mt(px(theme::GAP_XS))
+                .child(meta_row(track, shown_duration, wide)),
+        )
+        .child(
+            div()
+                .mt(px(theme::GAP_LG))
+                .child(crate::common::section::rule()),
+        )
 }
 
-/// 居中一块提示文字，用于加载中、没有歌词与没在播放三种情形。
-fn notice(headline: &'static str, detail: Option<&'static str>) -> impl IntoElement {
+/// 歌名下方的一行字段。艺术家与专辑可截断，数字与规格不折行。
+fn meta_row(track: Option<&Track>, duration: Duration, wide: bool) -> Div {
+    // 没有曲目时不写「未知艺术家」，那会把「没在播放」说成一首歌。
+    let Some(track) = track else {
+        return div();
+    };
+    let mut row = div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .gap(px(theme::GAP_SM))
+        .overflow_hidden();
+    let mut first = true;
+
+    let artist = track.artist.clone();
+    row = push_field(
+        row,
+        &mut first,
+        artist.unwrap_or_else(|| UNKNOWN_ARTIST.to_owned()),
+        true,
+    );
+    if wide && let Some(album) = track.album.clone() {
+        row = push_field(row, &mut first, album, true);
+    }
+    if duration > Duration::ZERO {
+        row = push_field(row, &mut first, format_duration(duration), false);
+    }
+    if let Some(format) = track.format() {
+        row = push_field(row, &mut first, format.to_uppercase(), false);
+    }
+    let audio = track.audio;
+    if let Some(rate) = audio.sample_rate {
+        row = push_field(row, &mut first, sample_rate_label(rate), false);
+    }
+    match (audio.bit_depth, audio.bitrate) {
+        (Some(bits), _) if wide => {
+            row = push_field(row, &mut first, format!("{bits} bit"), false);
+        }
+        (None, Some(kbps)) if wide => {
+            row = push_field(row, &mut first, format!("{kbps} kbps"), false);
+        }
+        _ => {}
+    }
+
+    row
+}
+
+fn push_field(row: Div, first: &mut bool, text: String, truncate: bool) -> Div {
+    let row = if *first {
+        row
+    } else {
+        row.child(field_separator())
+    };
+    *first = false;
+    row.child(field_item(text, truncate))
+}
+
+fn field_item(text: String, truncate: bool) -> Div {
+    let item = div()
+        .font(theme::field_font())
+        .text_size(px(theme::FONT_FIELD_SIZE))
+        .text_color(theme::text_faint());
+    let item = if truncate {
+        item.min_w_0().truncate()
+    } else {
+        item.flex_none()
+    };
+    item.child(text)
+}
+
+fn field_separator() -> Div {
+    div()
+        .flex_none()
+        .font(theme::field_font())
+        .text_size(px(theme::FONT_FIELD_SIZE))
+        .text_color(theme::border())
+        .child("│")
+}
+
+/// 空状态的眉标。与 [`crate::common::section::eyebrow`] 同款，只是字级大一档。
+fn notice_eyebrow(text: &'static str) -> Div {
+    div()
+        .flex_none()
+        .font(theme::label_font())
+        .text_size(px(NOTICE_EYEBROW))
+        .font_weight(theme::WEIGHT_BUTTON)
+        .text_color(theme::text_faint())
+        .child(SharedString::from(format!("// {}", text.to_uppercase())))
+}
+
+/// 居中一块提示，用于加载中、没有歌词与没在播放三种情形。
+fn notice(
+    eyebrow: &'static str,
+    headline: &'static str,
+    detail: Option<String>,
+    loading: bool,
+) -> Div {
+    let mark = if loading {
+        div()
+            .flex_none()
+            .w(px(280.))
+            .child(crate::common::anim::unknown_progress())
+            .into_any_element()
+    } else {
+        // 斜线纹只在这里和禁用态出现，空状态因此不必再画一个框。
+        // 宽度与高度跟着眉标一起放大，否则它只是一条可有可无的灰线。
+        div()
+            .relative()
+            .flex_none()
+            .w(px(240.))
+            .h(px(12.))
+            .overflow_hidden()
+            .child(crate::common::ornament::hatch_fill(
+                theme::text().opacity(0.22),
+            ))
+            .into_any_element()
+    };
+
     div()
         .flex_1()
         .min_w_0()
@@ -387,22 +654,26 @@ fn notice(headline: &'static str, detail: Option<&'static str>) -> impl IntoElem
         .flex_col()
         .items_center()
         .justify_center()
-        .gap(px(theme::GAP_SM))
+        .gap(px(theme::GAP_MD))
+        .child(mark)
+        .child(notice_eyebrow(eyebrow))
         .child(
             div()
                 .flex_none()
-                .text_size(px(theme::FONT_SUBTITLE))
-                .text_color(theme::text_muted())
+                .text_size(px(theme::FONT_DISPLAY))
+                .font_weight(theme::WEIGHT_TITLE)
+                .text_color(theme::text())
                 .child(headline),
         )
         .when_some(detail, |block, detail| {
             block.child(
                 div()
                     .flex_none()
-                    .max_w(px(420.))
+                    .max_w(px(460.))
                     .text_center()
-                    .text_size(px(theme::FONT_CAPTION))
-                    .text_color(theme::text_faint())
+                    .line_height(px(theme::FONT_BODY * 1.6))
+                    .text_size(px(theme::FONT_BODY))
+                    .text_color(theme::text_muted())
                     .child(detail),
             )
         })
@@ -416,7 +687,7 @@ fn lyrics_column(
     word: Option<usize>,
     playback: &Entity<PlaybackEntity>,
     budget: f32,
-) -> impl IntoElement {
+) -> Div {
     let anchor = active.unwrap_or(0);
     // 整列共用一个字号。邻行只是它退一档，所以两档都先算一次。
     let current = active_size(budget);
@@ -442,23 +713,42 @@ fn lyrics_column(
         let size = if is_active { current } else { idle };
         let original_box = line_box(size);
 
-        let original = div()
-            .flex_none()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .justify_center()
-            // 过长的句子会折行，故宽度封顶于正文预算，行数也按同一预算计算。
-            .max_w(px(budget))
-            .line_height(px(original_box))
-            .text_size(px(size))
-            .font_weight(if is_active {
-                theme::WEIGHT_TITLE
-            } else {
-                theme::WEIGHT_TRACK
-            })
-            .text_color(theme::text())
-            .children(original_spans(line, index, is_active, word, opacity));
+        // 宽度必须落在容器上。把整句包进一个 `flex_none` 的子项时，它按最大内容宽度测量，
+        // 放大后只会横向撑出正文列，永远不折行 —— flex 只在子项之间折，不在子项内部折。
+        let text_w = text_column(budget);
+        let original = if is_active && !line.words.is_empty() {
+            // 逐字行：每格一个子项，只在格与格之间折行，各自按演唱进度调亮度。
+            div()
+                .flex_none()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .justify_center()
+                .max_w(px(text_w))
+                .min_w_0()
+                .line_height(px(original_box))
+                .text_size(px(size))
+                .font_weight(theme::WEIGHT_TITLE)
+                .text_color(theme::text())
+                .children(word_spans(line, index, word))
+        } else {
+            // 整行是一个文本元素，交给文本系统断行：中文没有空格，只有它能判断换行点。
+            div()
+                .flex_none()
+                .max_w(px(text_w))
+                .min_w_0()
+                .text_center()
+                .line_height(px(original_box))
+                .text_size(px(size))
+                .font_weight(if is_active {
+                    theme::WEIGHT_TITLE
+                } else {
+                    theme::WEIGHT_TRACK
+                })
+                .text_color(theme::text())
+                .opacity(opacity)
+                .child(wrap_text(&line.text, size, is_active, text_w))
+        };
 
         // 药丸按内容收缩；槽位高度只用于滚动偏移。
         let group = SharedString::from(format!("lyric-row-{index}"));
@@ -479,7 +769,9 @@ fn lyrics_column(
             pill = pill.child(
                 div()
                     .flex_none()
-                    .max_w(px(budget))
+                    .max_w(px(text_w))
+                    // 缺这一条时文本按最小内容宽度撑开，max_w 压不住，长译文整行溢出正文列。
+                    .min_w_0()
                     .text_center()
                     .line_height(px(trans_box))
                     .opacity(opacity)
@@ -489,12 +781,27 @@ fn lyrics_column(
             );
         }
 
+        // 行首竖条。当前句一直亮着，其余行只在指到时出现，表明这一句可以点。
+        // 颜色走 trace 而不是强调色：浅色主题里黄色压在纸上只有 1.1:1，细条等于看不见。
+        let marker = div()
+            .absolute()
+            .left_0()
+            .top_0()
+            .bottom_0()
+            .w(px(if is_active { 3. } else { 2. }))
+            .bg(theme::trace())
+            .when(!is_active, |bar| {
+                bar.opacity(0.0)
+                    .group_hover(group.clone(), |style| style.opacity(0.45))
+            });
+
         div()
             .id(SharedString::from(format!("lyric-{index}")))
             .group(group)
             .flex_none()
             .w_full()
             .h(px(heights[index]))
+            .relative()
             .flex()
             .flex_col()
             .items_center()
@@ -502,7 +809,18 @@ fn lyrics_column(
             .text_center()
             .cursor_pointer()
             .on_click(seek_handler(playback, line.start))
-            .child(pill)
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .max_w(px(text_w))
+                    .min_w_0()
+                    .child(pill)
+                    // 竖条排在药丸之后，才不会被悬停底色盖住。
+                    .child(marker),
+            )
     });
 
     let offset = active_center_from_top(&heights, anchor);
@@ -540,24 +858,8 @@ fn lyrics_column(
         )
 }
 
-/// 当前行的正文。存在逐字时间戳时每格一个元素，正在演唱的那格在其时长内由暗转亮；
-/// 无逐字信息时整行作为一个元素。
-fn original_spans(
-    line: &LyricLine,
-    row: usize,
-    is_active: bool,
-    word: Option<usize>,
-    opacity: f32,
-) -> Vec<AnyElement> {
-    if !is_active || line.words.is_empty() {
-        return vec![
-            div()
-                .flex_none()
-                .opacity(opacity)
-                .child(line.text.clone())
-                .into_any_element(),
-        ];
-    }
+/// 当前行的逐字正文。每格一个元素，正在演唱的那格在其时长内由暗转亮。
+fn word_spans(line: &LyricLine, row: usize, word: Option<usize>) -> Vec<AnyElement> {
     let sung = word.unwrap_or(0);
     line.words
         .iter()
@@ -597,14 +899,34 @@ fn original_spans(
         .collect()
 }
 
+/// 从上方落到位。遮罩自身在淡入，这里只补位移，两段不会叠成一次更慢的淡入。
+fn drop_in<E>(id: &'static str, delay_ms: u64, offset: f32, el: E) -> AnimationElement<E>
+where
+    E: Styled + IntoElement + 'static,
+{
+    let mut animations = Vec::with_capacity(2);
+    if delay_ms > 0 {
+        animations.push(Animation::new(Duration::from_millis(delay_ms)));
+    }
+    animations
+        .push(Animation::new(Duration::from_millis(MOTION_IN_MS)).with_easing(theme::ease_snap()));
+
+    el.with_animations(SharedString::from(id), animations, move |el, ix, t| {
+        // 延迟那一段停在起点；最后一段才真正位移。
+        let shown = if ix == 0 && delay_ms > 0 { 0.0 } else { t };
+        el.relative().top(px(-offset * (1.0 - shown)))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use super::{
         LINE_BOX_RATIO, PILL_PAD_Y, RAMP_MAX, RAMP_MIN, ROW_GAP, TRANSLATION_STEP,
-        active_center_from_top, active_size, idle_size, line_box, pill_height, slot_height,
-        text_budget, text_width, translation_rows, translation_size, visual_rows,
+        active_center_from_top, active_size, idle_size, line_box, pill_height, sample_rate_label,
+        slot_height, text_budget, text_column, text_width, translation_rows, translation_size,
+        visual_rows, wrap_text,
     };
     use crate::theme;
     use capstan_core::{LyricLine, LyricWord};
@@ -673,6 +995,56 @@ mod tests {
             slot_height(&long, budget)
         );
         assert!(slot_height(&long, budget) > slot_height(&short, budget));
+    }
+
+    /// 放不下的句子要折行，且优先断在标点后：按字符切会把一个词拆到两行。
+    #[test]
+    fn 长句折行时优先断在标点处() {
+        let size = 26.0;
+        let column = 600.0;
+        let text = "目前にして押し寄せてくる最後の痛みを、ああ越えたら";
+        let wrapped = wrap_text(text, size, true, column);
+        let rows: Vec<&str> = wrapped.lines().collect();
+        assert_eq!(rows.len(), 2, "断点不对：{wrapped}");
+        assert!(rows[0].ends_with('、'), "第一行没断在标点后：{wrapped}");
+        for row in &rows {
+            assert!(
+                text_width(row, size, true) <= column,
+                "折行后仍然超宽：{row}"
+            );
+        }
+        assert_eq!(
+            wrap_text("短句", size, true, column),
+            "短句",
+            "放得下就不该动它"
+        );
+    }
+
+    /// 英文有词边界，手工按字符切会把单词拆开，交给文本系统处理。
+    #[test]
+    fn 英文不手工折行() {
+        let text = "a very long english line that has no business being split mid-word";
+        assert_eq!(wrap_text(text, 26.0, true, 300.0), text);
+    }
+
+    /// 没有标点的长句照样要折行，只是断点由字符决定。
+    #[test]
+    fn 没有标点也能折行() {
+        let column = 600.0;
+        let wrapped = wrap_text(&"字".repeat(30), 26.0, true, column);
+        assert_eq!(wrapped.lines().count(), 2, "{wrapped}");
+        assert!(
+            wrapped
+                .lines()
+                .all(|row| text_width(row, 26.0, true) <= column)
+        );
+    }
+
+    /// 药丸内边距不能算进正文宽度，否则文字会贴着行边。
+    #[test]
+    fn 正文列宽扣掉药丸内边距() {
+        assert_eq!(text_column(500.0), 500.0 - 2.0 * theme::GAP_LG);
+        assert_eq!(text_column(10.0), 1.0, "极窄窗口不能扣成 0 或负数");
     }
 
     /// 译文常远长于原文，行数需按其自身字号计算，不可仅按原文预留高度。
@@ -914,5 +1286,13 @@ mod tests {
         assert_eq!(karaoke.word_index(Duration::from_secs(9)), Some(2));
         // 没有逐字信息的行返回 None，界面整行一起点亮。
         assert_eq!(line("甲乙", None, 0).word_index(Duration::ZERO), None);
+    }
+
+    #[test]
+    fn 采样率写成千赫() {
+        assert_eq!(sample_rate_label(48_000), "48 kHz");
+        assert_eq!(sample_rate_label(44_100), "44.1 kHz");
+        assert_eq!(sample_rate_label(96_000), "96 kHz");
+        assert_eq!(sample_rate_label(192_000), "192 kHz");
     }
 }
