@@ -24,9 +24,7 @@ mod sections;
 pub use cards::{RecentCard, popular_cards, recent_cards, recommend_cards};
 
 use entries::entry_card;
-use sections::{
-    horizontal_section, list_section, recent_card, section_title, showcase_frame,
-};
+use sections::{horizontal_section, list_section, recent_card, section_title, showcase_frame};
 
 const PAD: f32 = theme::PAGE_PAD;
 const RECENT_MAX: usize = 8;
