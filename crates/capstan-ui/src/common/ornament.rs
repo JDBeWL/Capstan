@@ -183,7 +183,7 @@ fn paint_patch(
     };
     let bounds = Bounds {
         origin: point(px(origin.0), px(origin.1)),
-        size: gpui::size(px(extent.0), px(extent.1)),
+        size: size(px(extent.0), px(extent.1)),
     };
     window
         .paint_image(bounds, bounds, Corners::default(), image, 0, false)
