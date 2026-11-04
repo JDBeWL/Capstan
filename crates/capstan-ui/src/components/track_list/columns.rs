@@ -1,6 +1,6 @@
 //! 表头列宽拖拽。分隔线是绝对定位的细条，只改相邻列的宽度，不参与布局。
-//! gpui 没有单独的手势 API，这里借拖拽系统的 `on_drag_move`。它的文档本来就是给
-//! 「调整大小」这类非拖放交互准备的：拖动开始后，指针移出元素也照样收得到移动事件。
+//! gpui 没有单独的手势 API，这里借拖拽系统的 `on_drag_move`。它面向「调整大小」这类
+//! 非拖放交互，拖动开始后指针移出元素仍能收到移动事件。
 
 use crate::platform::*;
 use crate::settings::TrackColumns;
@@ -27,12 +27,12 @@ impl ColumnEdge {
 }
 
 /// 拖拽载荷只带方向。宽度由指针的绝对位置反推，不从按下点累加：
-/// 按下会让 gpui 重绘一帧，元素闭包里存的起点跟着重建，累加式会从 0 起跳。
+/// 按下会让 gpui 重绘一帧，元素闭包里存的起点跟着重建，累加式会从 0 重新开始。
 struct ColumnDrag {
     edge: ColumnEdge,
 }
 
-/// gpui 要求拖拽影像是视图实体。调列宽不需要跟着鼠标走的卡片，给个空壳。
+/// gpui 要求拖拽影像是视图实体。调列宽不需要跟随鼠标的卡片，给一个空占位视图。
 struct NoGhost;
 
 impl Render for NoGhost {
@@ -51,7 +51,7 @@ fn width_from_pointer(center: f32, current: f32, pointer: f32) -> f32 {
 }
 
 /// 把新宽度写回对应的列，其余列不动。改出来的差值记到空白上：
-/// 标题是剩余宽度，因此只有拖标题自己才会改变标题，拖别的列只动那一列和空白。
+/// 标题是剩余宽度，因此只有拖动标题列本身才会改变标题，拖别的列只动那一列和空白。
 pub(super) fn apply(columns: &mut TrackColumns, edge: ColumnEdge, old: f32, new: f32, gap: f32) {
     let delta = new - old;
     match edge {
@@ -62,10 +62,9 @@ pub(super) fn apply(columns: &mut TrackColumns, edge: ColumnEdge, old: f32, new:
     columns.gap = (gap - delta).max(0.0);
 }
 
-/// 表头上的一根分隔线。`width` 是这一列当前画出来的宽度，`gap` 是能借用的空白；
-/// 拖动最多把这列加宽到「当前 + 空白」，不挤别的列。
-/// 线常显：这个绝对定位的小命中区拿不到 `on_hover`，悬停高亮不可靠，
-/// 改用一条浅色竖线标记可拖位置，指针形状再补一层提示。
+/// 表头上的一根分隔线。`width` 是这一列当前宽度，`gap` 是可借用的空白；
+/// 拖动最多把该列加宽到「当前 + 空白」，不挤别的列。
+/// 线常显。绝对定位的小命中区拿不到 `on_hover`，悬停高亮不可靠，改用浅色竖线标记可拖位置。
 pub(super) fn handle(
     edge: ColumnEdge,
     width: f32,
@@ -86,7 +85,7 @@ pub(super) fn handle(
             cx.new(|_| NoGhost)
         })
         .on_drag_move::<ColumnDrag>(move |event, _, cx| {
-            // 三根分隔线挂着同一种载荷，只有起点属于自己时才响应。
+            // 三根分隔线挂着同一种载荷，只有起点匹配时才响应。
             if event.drag(cx).edge != edge {
                 return;
             }
@@ -117,7 +116,7 @@ mod tests {
 
     #[test]
     fn each_divider_sizes_the_column_on_its_left() {
-        // 把手在列的右缘：指针右移，列变宽。
+        // 把手在列的右缘。指针右移，列变宽。
         assert_eq!(width_from_pointer(100.0, 36.0, 110.0), 46.0);
         assert_eq!(width_from_pointer(620.0, 520.0, 630.0), 530.0);
         assert_eq!(width_from_pointer(840.0, 220.0, 850.0), 230.0);
@@ -125,7 +124,7 @@ mod tests {
 
     #[test]
     fn the_reference_edge_survives_the_handle_moving() {
-        // 标题列左缘固定：第一帧中心 620、宽 520，指针 630 → 宽 530。
+        // 标题列左缘固定。第一帧中心 620、宽 520，指针 630 → 宽 530。
         let width = width_from_pointer(620.0, 520.0, 630.0);
         // 下一帧把手随宽度右移；固定左缘仍是 100，指针 640 → 宽 540。
         let center = 620.0 + (width - 520.0);

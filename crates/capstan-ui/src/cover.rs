@@ -1,6 +1,5 @@
-//! 封面缓存，按封面内容哈希与缩放档位去重，解码时在软件里缩到界面要用的尺寸。
-//! 必须在软件内缩放。gpui 的 Windows 渲染器按原始尺寸上传图集，
-//! 纹理固定 `MipLevels: 1` 且不生成 mip 链。
+//! 封面缓存，按封面内容哈希与缩放档位去重，解码时在软件内缩到界面尺寸。
+//! 必须在软件内缩放。gpui 的 Windows 渲染器按原始尺寸上传图集，纹理固定 `MipLevels: 1` 且不生成 mip 链。
 //! LRU 淘汰会连带清掉指向它的槽位，观察方发现图没了就重新请求。
 
 use std::cell::Cell;
@@ -202,7 +201,7 @@ impl CoverCache {
             let decoded = executor.spawn(async move { decode(&registry) }).await;
             drop(slot);
             this.update(cx, |cache, cx| {
-                // 淘汰要一路做到显存。gpui 按 `ImageId` 把上传过的图钉在图集里，
+                // 淘汰要一路做到显存。gpui 按 `ImageId` 把上传过的图固定在图集里，
                 // 不调 `drop_image` 就不释放。
                 let evicted = cache.store_key(key, decoded);
                 let evicted_any = !evicted.is_empty();
@@ -368,7 +367,7 @@ impl Decoded {
         }
     }
 
-    /// 拆成位图与字节数。`Fresh` 在这一步才建 `RenderImage`，避免缓存里已有同一张图时白建。
+    /// 拆成位图与字节数。`Fresh` 在这一步才建 `RenderImage`，避免缓存里已有同一张图时无谓创建。
     fn into_parts(self) -> (Arc<RenderImage>, usize) {
         match self {
             Self::Fresh { frame, bytes, .. } => (Arc::new(RenderImage::new([frame])), bytes),
@@ -653,7 +652,7 @@ mod tests {
         );
     }
 
-    /// 取用要刷新使用时刻，一直显示的那张不能因为别的封面不断解码而被挤掉。
+    /// 取用要刷新使用时刻，一直显示的那张不能因为别的封面不断解码而被淘汰。
     #[test]
     fn reading_a_cached_bitmap_refreshes_its_lru_turn() {
         let mut cache = super::CoverCache {

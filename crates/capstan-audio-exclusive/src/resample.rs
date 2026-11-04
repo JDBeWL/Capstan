@@ -322,7 +322,7 @@ mod tests {
         assert!((0.4..0.55).contains(&peak), "峰值 {peak} 偏离了原始的 0.5");
     }
 
-    /// 素材比一个数据块还短。不能卡住、不能 panic，也不能一个样本都不给。
+    /// 素材比一个数据块还短。不能停滞、不能 panic，也不能一个样本都不给。
     #[test]
     fn a_source_shorter_than_one_chunk_still_yields_samples() {
         let source = Tone::new(64, 1, 44_100, 1_000.0);

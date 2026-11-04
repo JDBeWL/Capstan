@@ -41,7 +41,7 @@ impl SettingsPanel {
         let sub = cx.observe(&settings, |_, _, cx| cx.notify());
         // 数据卡写着各项计数，所以要 observe 曲库；曲库仅在扫描时每 80ms notify 一批。
         let library_sub = cx.observe(&library, |_, _, cx| cx.notify());
-        // 只关心输出模式，observe 播放实体会跟着进度的 10Hz 重绘一起白跑。
+        // 只关心输出模式，observe 播放实体会跟随进度的 10Hz 通知一起无效重绘。
         let mode_sub = cx.subscribe(&playback, |_, _, event: &PlaybackEvent, cx| {
             if matches!(event, PlaybackEvent::OutputModeChanged) {
                 cx.notify();
@@ -170,7 +170,7 @@ impl Render for SettingsPanel {
             output_player.update(cx, |playback, _cx| playback.set_exclusive_output(exclusive));
         });
 
-        // `center_width()` 已扣掉侧栏与右面板：一栏够不够宽排并排的快捷键表只看它。
+        // `center_width()` 已扣掉侧栏与右面板，一栏够不够宽排并排的快捷键表只看它。
         // 页面铺满主区，返回按钮始终压在标题那一列上，有返回键就得给它让位。
         let (wide, back_inset) = {
             let shell = self.shell.read(cx);
@@ -308,7 +308,7 @@ impl Render for SettingsPanel {
 
         // 内容比窗口高时会被裁掉且够不着，所以整块可滚；`track_scroll` 同时是滚动条读偏移量的来源。
         // 左轨与曲库、首页对齐（都从 `PAGE_PAD` 起），但整行不铺到右边缘：
-        // 设置是「标签 + 控件」的行，拉满一屏之后中间会空出七八百像素，读起来比收窄更累。
+        // 设置是「标签 + 控件」的行，拉满一屏之后中间会空出七八百像素，阅读负担比收窄更大。
         let scroll_area = div()
             .id("settings-scroll")
             .flex_1()
@@ -326,7 +326,7 @@ impl Render for SettingsPanel {
             .relative()
             .flex()
             .flex_col()
-            // 不铺底色，铺一层不透明会把浮在左上角的返回按钮整个盖掉。
+            // 不铺底色，铺一层不透明会完全覆盖浮在左上角的返回按钮。
             .child(header(back_inset))
             .child(scroll_area)
             .child(crate::common::scroll::scrollbar(
@@ -341,7 +341,7 @@ const CONTENT_MAX_W: f32 = 760.0;
 /// 一栏宽过这个数才把快捷键表分成三栏并排。
 const WIDE_MIN: f32 = 700.0;
 
-/// 一节设置：小字眉标 + 中文标题，下面直接接行。不铺底色、不加边框、不画页签——
+/// 一节设置。小字眉标 + 中文标题，下面直接接行。不铺底色、不加边框、不画页签。
 /// 分区只交给行间的 1px 细线，页面上没有第二层容器。
 fn section(english: &str, title: &str) -> Div {
     div().w_full().flex().flex_col().child(
@@ -363,7 +363,7 @@ fn section(english: &str, title: &str) -> Div {
     )
 }
 
-/// 细线列表的一行：上下留白 + 一条下细线。行是高是矮由内容决定。
+/// 细线列表的一行，上下留白 + 一条下细线。行是高是矮由内容决定。
 fn row() -> Div {
     div()
         .w_full()
@@ -431,8 +431,8 @@ fn header(back_inset: bool) -> impl IntoElement {
         )
 }
 
-/// 快捷键表里每组的小标题。用 `text_muted` 而不是 `text_faint`。它是一组行的抬头，
-/// 比行文字还淡的话整块会先糊掉。
+/// 快捷键表里每组的小标题。用 `text_muted` 而非 `text_faint`；它是一组行的抬头，
+/// 比行文字更淡会失去层次。
 fn sub_title(text: &str) -> impl IntoElement {
     div()
         .font(theme::label_font())
@@ -442,7 +442,7 @@ fn sub_title(text: &str) -> impl IntoElement {
         .child(text.to_owned())
 }
 
-/// 一行设置：左边名字，右边一组互斥选项。同一行里解决，不占两行高度。
+/// 一行设置。左边名字，右边一组互斥选项。同一行里解决，不占两行高度。
 /// `on_pick` 收到选项下标，由调用方映射成枚举。回调签名压成 `Picker`，
 /// 到处写全 `Rc<dyn Fn…>` 已跨过 clippy 的类型复杂度上限。
 type Picker = Rc<dyn Fn(usize, &mut App)>;
@@ -512,7 +512,7 @@ fn segmented(
         .flex()
         .gap(px(gap))
         .p(px(pad))
-        // 控件自己是一块浅灰切角座，不再加一圈墨线：行已经有细线了，
+        // 控件本身是一块浅灰切角座，不再加一圈墨线。行已经有细线了，
         // 每个控件再套一层边框，页面会重新变成一堆表单。
         .bg(theme::elevated())
         .child(
@@ -566,10 +566,9 @@ fn segmented(
     track
 }
 
-/// 一行「名字 + 值」的只读信息（快捷键表的每一行、独占格式那类短值）。
-/// 名字吃剩余宽度、放不下就折行；值固定不收缩、靠右。反过来做的话，像
-/// `后退一层。歌词 → 返回 → 面板 → 搜索` 这样的长名字会把按键挤成省略号，要查的东西全被藏起来。
-/// 字号用 `FONT_CAPTION` 而不是 `FONT_MICRO`，10px 的中文在浅色底上糊成一片。
+/// 一行「名字 + 值」的只读信息（快捷键表、独占格式那类短值）。
+/// 名字占剩余宽度，放不下就折行；值固定不收缩、靠右。反过来会让长名字把按键挤成省略号；
+/// 字号用 `FONT_CAPTION` 而非 `FONT_MICRO`，10px 中文在浅色底上难以辨认。
 fn info_row(label: &str, value: impl Into<String>) -> impl IntoElement {
     div()
         .flex()
@@ -594,7 +593,7 @@ fn info_row(label: &str, value: impl Into<String>) -> impl IntoElement {
 }
 
 /// 一行「名字 + 长值」（数据目录那种路径）。与 [`info_row`] 相反。值必须能截断，
-/// 否则一条 `/Users/…/Library/Application Support/…` 会把整张卡顶宽。
+/// 否则一条 `/Users/…/Library/Application Support/…` 会把整张卡撑宽。
 fn path_row(label: &str, value: String) -> impl IntoElement {
     div()
         .flex()
@@ -635,7 +634,7 @@ fn stat_cell(label: &str, value: String) -> Div {
         )
         .child(
             // 数字下面那行说明也用 `FONT_CAPTION` + `text_muted`，10px 的淡灰在纸色底上
-            // 只剩下一道影子，读不出这一格统计的是什么。
+            // 几乎不可见，无法辨认统计内容。
             div()
                 .text_size(px(theme::FONT_CAPTION))
                 .text_color(theme::text_muted())
@@ -893,8 +892,8 @@ fn roots_block(
                     },
                 )),
         )
-        // 与上面两颗不是一回事。那两颗管「文件夹里多了什么」，这颗管「文件里写了什么」。
-        // 混在一行里容易被当成同一个动作的强弱版。曲库空着时它没有意义，索性不画。
+        // 两个按钮分别处理「文件夹里多了什么」与「文件里写了什么」。
+        // 混在一行里容易被当成同一动作的强弱版。曲库空着时重读标签没有意义，因此不画。
         .when(has_tracks, |block| {
             block.child(
                 div()
@@ -996,7 +995,7 @@ impl SettingsEntity {
         self.update_and_save(cx, |settings| settings.library_listing = listing);
     }
 
-    /// 曲库侧的偏好：随机、循环、排序键、跟随播放。四项一次写入，一次操作只落一遍盘。
+    /// 曲库侧的偏好。随机、循环、排序键、跟随播放。四项一次写入，一次操作只落一遍盘。
     pub fn set_library_prefs(
         &mut self,
         shuffle: bool,

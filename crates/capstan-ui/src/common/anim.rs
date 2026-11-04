@@ -1,4 +1,4 @@
-//! 一次性入场与未知进度。短、硬、机械，时长和曲线都取自 `theme`。
+//! 一次性入场与未知进度。时长与曲线取自 `theme`，不使用回弹。
 //! gpui 的 `Animation` 没有 delay，错开用一段不改样式的先行动画拼出来。
 
 use std::time::Duration;
@@ -61,7 +61,7 @@ where
 }
 
 /// 换页。用页面色盖板从右往左退开，前缘留一道墨线；慢起硬停。
-/// GPUI 这一支没有 clip-path，盖板擦除是快门的近似。
+/// GPUI 这一支没有 clip-path，盖板擦除只能近似实现。
 pub fn page_enter<E>(id: impl Into<ElementId>, el: E) -> AnimationElement<E>
 where
     E: Styled + ParentElement + IntoElement + 'static,

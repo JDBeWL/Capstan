@@ -1,7 +1,6 @@
 //! 音频链路集成测试。`AudioHandle::spawn_with` 注入假后端，不需要声卡。
-//! 完整验证「命令 → 线程 → 事件与快照」，包括只在真机偶发的时序问题（切歌瞬间误报结束）。
-//! `clippy.toml` 的 `allow-*-in-tests` 覆盖不到 `tests/` 下的集成测试 crate，
-//! 故在顶部显式允许 unwrap 与 expect。
+//! 覆盖「命令 → 线程 → 事件与快照」全链路，包括真机上偶发的切歌瞬间误报结束。
+//! `clippy.toml` 的 `allow-*-in-tests` 覆盖不到 `tests/` 下的集成测试 crate，故在顶部显式允许 unwrap 与 expect。
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::path::{Path, PathBuf};
@@ -456,7 +455,7 @@ fn asking_for_exclusive_without_a_backend_falls_back_and_says_so() {
 
     // 注入式假后端没有独占实现。要独占必须如实退回共享，而不是让开关看起来生效了。
     // 两条事件按「先报原因、再报结果」的顺序发出，所以这里也按同样的顺序收。
-    // 走 Notice 而不是 Error：共享输出照常出声，界面不该因此把播放状态打回 Idle。
+    // 走 Notice 而不是 Error。共享输出照常出声，界面不该因此把播放状态打回 Idle。
     handle.send(PlayerCommand::SetOutputMode { exclusive: true });
 
     let event = wait_for(&rx, |e| matches!(e, PlayerEvent::Notice(_))).expect("降级要让人知道原因");
@@ -556,7 +555,7 @@ fn a_device_that_is_not_present_falls_back_instead_of_pretending() {
     wait_for(&rx, |e| matches!(e, PlayerEvent::Loaded { .. })).expect("应当收到 Loaded");
 
     // 从菜单里选不到不存在的设备，但存档里的标识会失效（换机器、换驱动、设备已拔出），
-    // 恢复设置时就会走到这条路上。此时必须退回默认设备，而不是对着不存在的标识干等。
+    // 恢复设置时就会走到这条路上。此时必须退回默认设备，而不是等待一个不存在的标识。
     handle.send(PlayerCommand::SetDevice {
         id: Some("wasapi:{0.0.0.00000000}.{no-such-endpoint}".to_owned()),
     });

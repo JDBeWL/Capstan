@@ -1,4 +1,4 @@
-//! 跨列表拖拽的载荷：一首曲目。落点是队列行与侧栏歌单。
+//! 跨列表拖拽的载荷，一首曲目。落点是队列行与侧栏歌单。
 //! 歌单页内部的重排仍走 `track_list::drag` 的 `DragRow`，两者是不同载荷，互不干扰。
 
 use capstan_core::TrackId;
@@ -15,7 +15,7 @@ pub struct DragTrack {
     pub title: SharedString,
 }
 
-/// 跟着鼠标走的小卡片。gpui 的拖拽影像必须是一个视图实体，所以它只是个会画标题的壳。
+/// 跟着鼠标走的小卡片。gpui 的拖拽影像必须是视图实体，所以它只是绘制标题的占位视图。
 pub struct DragGhost {
     title: SharedString,
 }

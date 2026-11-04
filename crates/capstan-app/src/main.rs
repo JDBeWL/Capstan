@@ -1,5 +1,5 @@
 //! Capstan 入口。
-// 防止Windows下的panic弹窗挡住日志，panic信息无法收集，以及关闭release下的命令行窗口。
+// 防止 Windows 下的 panic 弹窗阻断日志收集，并在 release 下关闭命令行窗口。
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod keymap;
@@ -47,7 +47,7 @@ fn main() {
             // 底栏左右两栏各 240px、进度条两端时间标签各 52px。
             window_min_size: Some(size(px(settings::MIN_WINDOW_W), px(settings::MIN_WINDOW_H))),
             titlebar: Some(TitlebarOptions {
-                // `appears_transparent: true` 关掉系统标题栏（ONLY macOS / Windows），拖拽与窗口控件仍由 GPUI 应答
+                // `appears_transparent: true` 关闭系统标题栏，仅 macOS 与 Windows 支持；拖拽与窗口控件仍由 GPUI 应答。
                 // `title` 进任务栏 tooltip 与无障碍树的窗口名，留空会报出匿名窗口。
                 title: Some(SharedString::from("Capstan")),
                 appears_transparent: true,

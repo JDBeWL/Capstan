@@ -84,7 +84,7 @@ impl ArtistGroup {
     }
 }
 
-/// 组内名字去重从线性扫描切换成哈希集合的阈值。普通专辑/艺术家通常只有一两个名字，
+/// 组内名字去重从线性扫描切换成哈希集合的阈值。普通专辑与艺术家通常只有一两个名字，
 /// 线性比较比哈希更便宜；合辑、高产艺术家这种成百上千的组才需要换，否则是平方复杂度。
 const LINEAR_DEDUP_LIMIT: usize = 16;
 
@@ -377,7 +377,7 @@ mod tests {
     }
 
     /// 分组列表与曲目列表必须用同一种序，否则「BUZZ CUTZ 排在 Blue Archive 前面」
-    /// 这种一眼看上去就是排序坏了的顺序会留在侧栏里。
+    /// 这种明显错误的顺序会留在侧栏里。
     #[test]
     fn group_order_ignores_ascii_case() {
         let tracks = vec![
@@ -629,7 +629,7 @@ mod tests {
 
     #[test]
     fn ascii_comma_splits_too_but_the_ideographic_comma_does_not() {
-        // `25時、ナイトコードで。` 是一个组合的正式名字，按顿号切会劈出「25時」这种假艺术家。
+        // `25時、ナイトコードで。` 是一个组合的正式名字，按顿号切会得到「25時」这种错误艺术家。
         let tracks = vec![
             with("a", Some("初星学園, SHiNTA"), Some("x")),
             with(

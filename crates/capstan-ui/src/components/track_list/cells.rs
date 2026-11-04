@@ -101,7 +101,7 @@ pub(super) fn title_cell(
         .pr(px(theme::GAP_MD))
         .justify_center()
         .cursor_pointer()
-        // 拖到队列行或侧栏歌单。轻点仍是播放 / 勾选，gpui 只在真的拖出距离后才起拖。
+        // 拖到队列行或侧栏歌单。轻点仍是播放或勾选，gpui 只在真的拖出距离后才起拖。
         .on_drag(
             DragTrack {
                 id: track_id,
@@ -142,7 +142,7 @@ pub(super) fn title_cell(
         );
 
     if two_lines {
-        // 副标题自己拿宽度。`w_full` 在 gpui 下解不出一个确定宽度，`truncate` 就只剩裁切、
+        // 副标题须自行确定宽度。`w_full` 在 gpui 下解不出一个确定宽度，`truncate` 就只剩裁切、
         // 没有省略号；专辑列之所以能收尾，是因为它的单元格写死了宽度。
         let subtitle_w =
             (env.title_width - env.thumb_size() - theme::GAP_MD - theme::GAP_MD).max(0.0);
@@ -182,10 +182,10 @@ pub(super) fn title_cell(
 }
 
 /// 超过这么多字符就不再拆成链接、整行当一段文字排。
-/// 一排可点的名字各自 truncate，只会把每个名字都切成两三个字，反倒谁也读不出来。
+/// 一排可点的名字各自 truncate，只会把每个名字都切成两三个字，反而无法辨认。
 const SUBTITLE_PLAIN_CHARS: usize = 40;
 
-/// 副标题：艺术家。短名单拆成可点的人名，长名单（合唱曲目的 CV 墙）整行一句。
+/// 副标题，即艺术家。短名单拆成可点的人名，长名单（合唱曲目的 CV 墙）整行一句。
 fn subtitle_line(
     index: usize,
     artist: Option<String>,
@@ -205,7 +205,7 @@ fn subtitle_line(
         return base.into_any_element();
     };
     let parts = capstan_core::artist_keys_str(Some(&name));
-    // 只有名单本身太长时才退回整行一句。人数多但名字短（「甲 / 乙 / 丙」）时逐个可点，
+    // 只有名单本身太长时才退回整行一句。人数多但名字短（「甲、乙、丙」）时逐个可点，
     // 每一位都跳得过去，行宽也放得下。
     if name.chars().count() > SUBTITLE_PLAIN_CHARS {
         return base

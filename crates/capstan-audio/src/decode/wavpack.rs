@@ -50,7 +50,7 @@ struct CachedPackage {
     package: Arc<Package>,
 }
 
-/// 只留一格。正常播放/拖动都在同一首上，切歌后再回来重读一次是可以接受的。
+/// 只留一格。正常播放与拖动都在同一首上，切歌后再回来重读一次是可以接受的。
 static CACHE: OnceLock<Mutex<Option<CachedPackage>>> = OnceLock::new();
 
 fn cache() -> MutexGuard<'static, Option<CachedPackage>> {

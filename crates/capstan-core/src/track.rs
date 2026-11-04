@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-/// 曲目的稳定标识。对路径求 FNV-1a。不用 `DefaultHasher`。跨 Rust 版本不保证一致，落盘会换 id。
+/// 曲目的稳定标识。对路径求 FNV-1a。不使用 `DefaultHasher`，它跨 Rust 版本不保证一致，落盘会换 id。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub struct TrackId(pub u64);
 
@@ -71,7 +71,7 @@ pub enum FieldSource {
 }
 
 /// 三个文本字段各自的来源。老 `library.json` 里没有这一段，缺省按 [`FieldSource::Tag`] 读。
-/// 那些条目的标题确实来自标签，只有读标签失败的那几条会被说成来自标签，无伤大雅。
+/// 那些条目的标题确实来自标签，只有读标签失败的那几条会被说成来自标签，影响可忽略。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldSources {
     pub title: FieldSource,
@@ -79,10 +79,8 @@ pub struct FieldSources {
     pub album: FieldSource,
 }
 
-/// 文件的时间戳与大小，用来判断「重扫时这一首还要不要重读标签」。
-///
-/// 两项都可能是 `None`（读不到、或旧版本落盘的条目里根本没有这一段）。
-/// 任一边拿不准就一律当「变了」。多读一次标签只是慢，漏读会让旧标签永远留在库里。
+/// 文件的时间戳与大小，用来判断重扫时这一首还要不要重读标签。
+/// 两项都可能是 `None`；任一边拿不准就一律当「变了」，多读一次标签只是慢，漏读会让旧标签永远留在库里。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileStamp {
     /// 修改时间，Unix 毫秒。
@@ -107,10 +105,8 @@ impl FileStamp {
         }
     }
 
-    /// 是否为同一份文件。本方未读到时间戳时恒为 `false`。
-    ///
-    /// 只看修改时间不够。某些文件系统的时间精度是两秒，同一秒内覆盖的文件会漏判；
-    /// 加上大小能把这一类挡住大半。
+    /// 是否为同一份文件；本方未读到时间戳时恒为 `false`。
+    /// 只看修改时间不够，某些文件系统的时间精度是两秒，同一秒内覆盖的文件会漏判；加上大小能排除大部分。
     pub fn matches(&self, other: &Self) -> bool {
         self.modified.is_some() && self.modified == other.modified && self.size == other.size
     }
@@ -163,11 +159,8 @@ impl Track {
         }
     }
 
-    /// 把上一版里手改过的字段搬回来。
-    ///
-    /// 重读标签会用磁盘上的值原地替换条目，但用户手改过的那几项必须留着。
-    /// 重扫是自动的、重读全部标签是用户主动点的，哪一种都不该把人的修正抹掉。
-    /// 目前还没有编辑标签的界面，这条护栏是给那一天先留好的座位。
+    /// 恢复上一版里手改过的字段。重读标签会用磁盘值原地替换条目，但用户手改过的字段必须保留；
+    /// 重扫与重读全部标签都不该抹掉人的修正。
     pub fn keep_manual(&mut self, previous: &Self) {
         if previous.sources.title == FieldSource::Manual {
             self.title.clone_from(&previous.title);
@@ -382,7 +375,7 @@ mod tests {
 
     #[test]
     fn 可播性看编码有没有解码实现而不是无损与否() {
-        // 有损且引擎解不了。标签、时长都读得到，就是放不出声。
+        // 有损且引擎解不了。标签与时长都能读到，只是无法播放。
         assert!(!Track::fallback(Path::new("/m/x.wma")).is_playable());
         assert!(!Track::fallback(Path::new("/m/x.wma")).is_lossless());
         // 无损且能播。
@@ -498,7 +491,7 @@ mod tests {
         assert!(AudioInfo::default().details().is_empty());
     }
 
-    /// 指纹只回答一个问题，这两次读到的还是同一份文件吗。
+    /// 指纹只回答一个问题，即两次读取是否为同一份文件。
     #[test]
     fn 指纹只认同一次读取() {
         let dir = std::env::temp_dir().join(format!("mp-stamp-{}", std::process::id()));

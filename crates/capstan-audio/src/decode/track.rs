@@ -1,4 +1,4 @@
-//! 按**内容**（不是扩展名）挑解码器，如 `MAC ` → `ape-decoder`、`wvpk` → `oxideav-wavpack`、
+//! 按实际内容而非扩展名挑解码器，如 `MAC ` → `ape-decoder`、`wvpk` → `oxideav-wavpack`、
 //! `OggS` + `OpusHead` → `opus-pure`，ASF（WMA）拒绝，其余交给 symphonia。
 //! 判扩展名不够。改了名的 APE 会被 symphonia 的 MPEG 探测当成 MP3 帧同步，放出满刻度噪声。
 
@@ -16,7 +16,7 @@ use super::decoder::SymphoniaDecoder;
 use super::opus::OpusSource;
 use super::wavpack::WavPackSource;
 
-/// 各解码器的大小差一个数量级（Opus 带解码状态缓冲）；每首只建一次、生命周期内只搬一次。
+/// 各解码器的大小差一个数量级（Opus 带解码状态缓冲）；每首只建一次，生命周期内只移动一次。
 #[allow(clippy::large_enum_variant)]
 pub enum TrackDecoder {
     Symphonia(SymphoniaDecoder),

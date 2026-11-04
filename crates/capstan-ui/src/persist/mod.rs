@@ -19,7 +19,7 @@ use serde::de::DeserializeOwned;
 pub use error::PersistError;
 
 const APP_DIR: &str = "Capstan";
-/// 改名前的老目录。里面是用户唯一的曲库索引与设置，首次启动时整体搬过来。
+/// 改名前的老目录。里面是用户唯一的曲库索引与设置，首次启动时整体迁移过来。
 const LEGACY_DIR: &str = "Lyre";
 
 /// 后台写线程合并连续写入的窗口。UI 线程只入队，磁盘延迟不进入输入路径。
@@ -46,7 +46,7 @@ fn base_dir() -> Option<PathBuf> {
     }
 }
 
-/// 各平台用户数据目录。首次调用时顺手接管改名前的目录，之后走缓存 ——
+/// 各平台用户数据目录。首次调用时接管改名前的目录，之后走缓存。
 /// 每次落盘都去 stat 一遍不值得。
 pub fn data_dir() -> Option<PathBuf> {
     static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -61,8 +61,8 @@ pub fn data_dir() -> Option<PathBuf> {
     .clone()
 }
 
-/// 把改名前的数据目录整体搬到新名字下。`rename` 同卷是原子的；跨卷或目标被占用时退回
-/// 复制，复制失败就删掉半成品，留待下次启动重试 —— 宁可重来，也不要一半曲库。
+/// 把改名前的数据目录整体迁移到新名字下。`rename` 同卷是原子的；跨卷或目标被占用时退回
+/// 复制，复制失败就删掉半成品，留待下次启动重试。宁可重来，也不要一半曲库。
 fn adopt_legacy(from: &Path, to: &Path) {
     if to.exists() || !from.is_dir() {
         return;
@@ -512,7 +512,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// 七份 store 的载荷形状一变，老用户手上的文件就读不回来了。
+    /// 各份 store 的载荷形状一变，老用户手上的文件就读不回来了。
     #[test]
     fn seven_store_payload_shapes_stay_unchanged() {
         use crate::resume::Resume;
@@ -520,7 +520,6 @@ mod tests {
         use capstan_core::{CollectionId, Collections, TrackId};
         use std::path::Path;
 
-        // settings.json。对象，每个设置项一个字段。
         let settings = render_pretty(&Settings::default()).unwrap();
         assert!(settings.starts_with("{\n  \"appearance\""), "{settings}");
         assert!(settings.contains("\"density\""), "{settings}");
@@ -530,16 +529,14 @@ mod tests {
             "侧栏粒度要落盘，否则每次启动都回到跟随主区：{settings}"
         );
 
-        // likes.json / recents.json。裸数字数组，因 `TrackId` 是单字段元组结构体。
+        // `TrackId` 是单字段元组结构体，落盘为裸数字。
         let ids = vec![TrackId(1), TrackId(999)];
         assert_eq!(render_pretty(&ids).unwrap(), "[\n  1,\n  999\n]");
         assert_eq!(render_compact(&ids).unwrap(), "[1,999]");
 
-        // follows.json，JSON 字符串数组。
         let names = vec!["A".to_owned(), "B".to_owned()];
         assert_eq!(render_pretty(&names).unwrap(), "[\n  \"A\",\n  \"B\"\n]");
 
-        // resume.json。对象含路径与毫秒，不是裸数组。
         let resume = Resume::new(Path::new("D:/音乐/a.flac"), 83_000);
         let text = render_pretty(&resume).unwrap();
         assert!(
@@ -547,14 +544,14 @@ mod tests {
             "{text}"
         );
 
-        // collections.json。对象，必须带 `next`。丢了它，重启后新歌单会顶用老 id。
+        // `next` 不能丢，否则重启后新歌单会复用旧 id。
         let mut collections = Collections::default();
         let first = collections.create("深夜写歌").expect("建一个").id;
         assert_eq!(first, CollectionId(0));
         assert!(render_pretty(&collections).unwrap().contains("\"next\": 1"));
         assert!(render_compact(&collections).unwrap().contains("\"next\":1"));
 
-        // library.json。裸 `Vec<Track>` 数组，且为紧凑排版，因条目可能上千。
+        // 条目可能上千，`library.json` 用紧凑排版。
         let tracks: Vec<capstan_core::Track> = Vec::new();
         let text = render_compact(&tracks).unwrap();
         assert_eq!(text, "[]");

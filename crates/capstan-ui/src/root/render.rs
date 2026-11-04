@@ -1,5 +1,5 @@
 //! 根视图的 `Render` 实现与元素树装配。
-//! `read(cx)` 集中在 [`Frame::read`] 一次做完，其余函数只吃那份快照。
+//! `read(cx)` 集中在 [`Frame::read`] 一次做完，其余函数只读取那份快照。
 
 use std::time::Duration;
 
@@ -22,7 +22,7 @@ const SEEK_STEP_LONG: Duration = Duration::from_secs(crate::shortcuts::SEEK_LONG
 const VOLUME_STEP: f32 = crate::shortcuts::VOLUME_STEP;
 const DROP_FADE: Duration = Duration::from_millis(120);
 
-// 元素 id 与键位上下文是命中测试与键位绑定的键，写错不报错
+// 元素 id 与键位上下文是命中测试与键位绑定的键，写错不会报错。
 /// 键位上下文名。权威在 `shortcuts.rs`，`capstan-app` 的 `keymap.rs` 读的是同一个常量。
 const KEY_CONTEXT: &str = crate::shortcuts::CONTEXT;
 /// 搜索页探索区的滚动容器。
@@ -222,9 +222,19 @@ impl Render for RootView {
             .bg(theme::window_base())
             .font(theme::ui_font())
             .text_color(theme::text())
+            // 顶栏不能按视图缓存。gpui 复用上一帧子树时会拷回 hitbox 与 dispatch 子树，
+            // 但不拷 `window_control_hitboxes`；拖拽区与最小化、最大化、关闭按钮依赖它，
+            // 命中缓存后 `WM_NCHITTEST` 落回 HTCLIENT，窗口无法拖动。
             .child(self.top_bar.clone())
             .child(self.main_content(&frame, window, cx))
-            .child(self.bottom_bar.clone())
+            // 底栏不含窗口控制区，缓存安全；尺寸固定，内容只在自身通知时变化。
+            .child(
+                self.bottom_bar.clone().cached(
+                    StyleRefinement::default()
+                        .w_full()
+                        .h(px(frame.bottom_bar_h)),
+                ),
+            )
             // 浮层排在最后，后画的在上面。
             .children(self.overlays(&frame))
     }
@@ -284,7 +294,11 @@ impl RootView {
                     .min_h_0()
                     .flex()
                     .flex_col()
-                    .child(self.nav_content(frame, cx)),
+                    .child(if frame.lyrics_open {
+                        div().into_any_element()
+                    } else {
+                        self.nav_content(frame, cx).into_any_element()
+                    }),
             )
             // 屏幕开始的三色条。绝对定位，不占页头留白。
             .child(

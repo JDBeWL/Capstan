@@ -1,7 +1,6 @@
 //! 自绘窗口控件，含最小化、最大化、还原与关闭。
-//! Windows 上点击不经 GPUI，而走 `WM_NCHITTEST` → `DefWindowProc`，
-//! 按钮因此自带系统级按下态；其它平台需由 `on_click` 兜底。
-//! 这些按钮必须是拖拽区的兄弟节点。命中测试取第一个命中的条目。
+//! Windows 上点击不经 GPUI，而走 `WM_NCHITTEST` → `DefWindowProc`，按钮因此自带系统级按下态；其它平台需由 `on_click` 兜底。
+//! 这些按钮必须是拖拽区的兄弟节点，命中测试取第一个命中的条目。
 
 use crate::icon::{Glyph, icon_inherit};
 use crate::platform::*;

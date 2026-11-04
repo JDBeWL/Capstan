@@ -200,7 +200,7 @@ fn frame_of(sample: f32, frames: usize) -> i64 {
     (f64::from(sample) * frames as f64).round() as i64
 }
 
-/// symphonia 对 WAV 的 `SeekMode::Accurate` 不做到帧精确，落点恒为数据包边界（本素材 1152 帧/包），
+/// symphonia 对 WAV 的 `SeekMode::Accurate` 不做到帧精确，落点恒为数据包边界，本素材每包 1152 帧，
 /// 容差取一个包；这个偏差在 44.1kHz 素材上约 26ms。
 const SEEK_TOLERANCE_FRAMES: i64 = 1_200;
 

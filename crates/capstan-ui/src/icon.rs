@@ -59,7 +59,7 @@ pub enum Glyph {
     Plus,
     Sort,
     Music,
-    /// 拖拽手柄（两列圆点）。写成实心点。Lucide 的 `grip-vertical` 是描边圆，缩到 14px 会糊成一片。
+    /// 拖拽手柄（两列圆点）。写成实心点。Lucide 的 `grip-vertical` 是描边圆，缩到 14px 会混成一片。
     Grip,
 
     Bell,
@@ -183,7 +183,7 @@ fn svg_source(glyph: Glyph) -> &'static str {
         Glyph::HeartFilled => filled!(
             r#"<path d="M12 21.1l-1.38-1.26C5.5 15.24 2.2 12.24 2.2 8.55 2.2 5.55 4.55 3.2 7.55 3.2c1.7 0 3.33.79 4.45 2.04 1.12-1.25 2.75-2.04 4.45-2.04 3 0 5.35 2.35 5.35 5.35 0 3.69-3.3 6.69-8.42 11.29L12 21.1z"/>"#
         ),
-        // 半实心圆。外圈描边 + 右半实心，缩到 14px 仍看得出明暗两半。
+        // 半实心圆。外圈描边 + 右半实心，缩到 14px 仍可辨认明暗两半。
         Glyph::Appearance => filled!(
             r#"<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/>"#,
             r#"<path d="M12 3a9 9 0 0 1 0 18Z"/>"#

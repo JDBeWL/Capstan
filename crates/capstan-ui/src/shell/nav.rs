@@ -86,7 +86,7 @@ impl ShellEntity {
     }
 
     /// `set_nav` 的状态变更本体，不 notify。
-    /// 换区段顺带收起歌词遮罩。它盖住整块主区，留着会挡住新区段。
+    /// 换区段顺带收起歌词遮罩。它盖住整块主区，保留会遮挡新区段。
     fn apply_nav(&mut self, nav: NavSection) -> bool {
         if self.nav == nav {
             return false;
@@ -116,7 +116,7 @@ impl ShellEntity {
         !self.nav_history.is_empty()
     }
 
-    /// 看一眼后退落点，不弹出。悬停提示要问这里而不是当前作用域，否则文案是反的。
+    /// 查看后退落点，不弹出。悬停提示要问这里而不是当前作用域，否则文案是反的。
     pub fn peek_history(&self) -> Option<(NavSection, Scope)> {
         self.nav_history.last().cloned()
     }
@@ -126,7 +126,7 @@ impl ShellEntity {
         !self.nav_forward.is_empty()
     }
 
-    /// 压入一个可返回的落点，相邻重复折叠；顺带清空前进栈，不分给调用方。
+    /// 压入一个可返回的落点，相邻重复折叠，同时清空前进栈。
     /// 进入详情时调，返回时不要调。
     pub fn push_history(&mut self, section: NavSection, scope: Scope, cx: &mut Context<Self>) {
         self.nav_forward.clear();
@@ -152,7 +152,7 @@ impl ShellEntity {
         Some(popped)
     }
 
-    /// 清空两侧历史。点侧栏导航项是一次平级跳跃，两条栈都不作数。
+    /// 清空两侧历史。点侧栏导航项是一次平级跳跃，两条栈都失效。
     pub fn clear_history(&mut self) {
         self.nav_history.clear();
         self.nav_forward.clear();
@@ -182,7 +182,7 @@ pub fn enter_scope(
 }
 
 /// 跳到某个区段（首页、曲库、专辑与艺术家）并退出作用域，先记下当前位置供顶栏 ← 退回。
-/// 记的是**离开前**的 (区段, 作用域)。退出作用域后 `scope()` 已是 `All`，那时再记就记错。
+/// 记的是离开前的 (区段, 作用域)。退出作用域后 `scope()` 已是 `All`，那时再记就记错。
 pub fn go_to(
     section: NavSection,
     shell: &Entity<ShellEntity>,
@@ -277,7 +277,7 @@ mod tests {
     }
 
     /// 复现 `push_history` 的两条规则，即新导航清空前进栈、栈顶相同就不压。
-    /// 不直接调它。造 `Context` 要 gpui 的 `test-support` feature，而对依赖项不生效。
+    /// 造 `Context` 需要 gpui 的 `test-support` feature，该 feature 对依赖项不生效，因此测试另写一份。
     fn push(shell: &mut ShellEntity, section: NavSection, scope: Scope) {
         let snapshot = (section, scope);
         shell.nav_forward.clear();

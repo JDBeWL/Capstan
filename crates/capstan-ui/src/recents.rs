@@ -29,7 +29,7 @@ impl Recents {
         persist::save_lossy(FILE, self.ids.clone());
     }
 
-    /// 记一笔。同一首反复播放只挪到最前，不占两格。
+    /// 记录一条。同一首反复播放只移到最前，不占两格。
     pub fn record(&mut self, id: TrackId) {
         self.ids.retain(|existing| *existing != id);
         self.ids.insert(0, id);

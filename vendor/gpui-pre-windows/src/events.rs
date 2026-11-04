@@ -1000,7 +1000,7 @@ impl WindowsWindowInner {
             return drag_area;
         }
 
-        // [PATCH by Lyre] 上游只识别顶边与上面两个角，左 / 右 / 下三边因此无法缩放
+        // [PATCH by Capstan] 上游只识别顶边与上面两个角，左 / 右 / 下三边因此无法缩放
         // （应用侧用 `Window::resize` 兜底的话，`SWP_NOMOVE` 会把拖左边变成反向拉伸）。
         // 这里补齐四边四角，只返回 `HT*` 码，缩放本身交给 Windows 做。见 `PATCH.md`。
         let mut rect = Default::default();

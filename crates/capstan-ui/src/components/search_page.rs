@@ -42,7 +42,7 @@ fn group_columns(usable: f32, groups: usize) -> usize {
     }
 }
 
-/// 最佳结果与分组栏能否并排。按实际命中的分组数算，空分组不占宽，也不硬挤。
+/// 最佳结果与分组栏能否并排。按实际命中的分组数计算，空分组不占宽度，宽度不足时不合并且排。
 fn results_side_by_side(usable: f32, groups: usize) -> bool {
     groups > 0
         && usable
@@ -95,7 +95,7 @@ impl SearchPage {
         cx: &mut Context<Self>,
     ) -> Self {
         let observe = cx.observe(&library, |_, _, cx| cx.notify());
-        // 只对当前结果里等的那几张封面重绘，整页 observe 会让每次解码都重算分组与 Hero。
+        // 只对当前结果中等待的封面重绘；整页 observe 会在每次解码时重算分组与 Hero。
         let on_cover = cx.subscribe(&covers, |this, _, event: &CoverCacheEvent, cx| {
             let relevant = match event {
                 CoverCacheEvent::Ready(key) => this
@@ -162,7 +162,7 @@ impl SearchPage {
                     .take(BLOCK_MAX)
                     .map(|&index| all_albums[index].clone())
                     .collect();
-                // 收藏是虚拟歌单，不在 `Collections` 里，匹配要先问 `label_for` 拿名字。
+                // 收藏是虚拟歌单，不在 `Collections` 里，匹配时须先通过 `label_for` 取名字。
                 let mut list_total = 0usize;
                 let list_matches: Vec<(Scope, HeroInfo)> = library
                     .list_scopes()
@@ -282,7 +282,7 @@ impl Render for SearchPage {
                     .child(summary),
             );
 
-        // 搜索结果也保留这层页头。与浏览页、详情页同一套顶部结构，往下一眼能看出还在搜索里。
+        // 搜索结果保留这层页头，与浏览页、详情页共用顶部结构，便于确认仍处于搜索页。
         let mut page = div()
             .id("search-page")
             .flex_none()
@@ -296,7 +296,8 @@ impl Render for SearchPage {
         } else if loading {
             page.child(loading_state())
         } else {
-            page.child(self.browse_list(usable, cx))
+            page.child(self.recent_searches(window, cx))
+                .child(self.browse_list(usable, cx))
         };
 
         page.into_any_element()
@@ -304,6 +305,71 @@ impl Render for SearchPage {
 }
 
 impl SearchPage {
+    /// 最近搜索。只在空查询时显示；点击条目回填查询词，右侧「清空」删除全部记录。
+    fn recent_searches(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let entries: Vec<String> = self.library.read(cx).search_history().to_vec();
+        if entries.is_empty() {
+            return div().into_any_element();
+        }
+
+        let mut chips = div()
+            .flex()
+            .flex_wrap()
+            .gap(px(theme::GAP_SM))
+            .pt(px(theme::GAP_MD));
+        for (index, query) in entries.into_iter().enumerate() {
+            chips = chips.child(history_chip(index, query, &self.library));
+        }
+
+        let library = self.library.clone();
+
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .w_full()
+            .px(px(theme::PAGE_PAD))
+            .pb(px(theme::GAP_XL))
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .items_end()
+                    .gap(px(theme::GAP_MD))
+                    .pb(px(theme::GAP_SM))
+                    .border_b_1()
+                    .border_color(theme::text())
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .child(crate::common::section::eyebrow("Recent"))
+                            .child(
+                                div()
+                                    .text_size(px(theme::FONT_TITLE))
+                                    .font_weight(theme::WEIGHT_TITLE)
+                                    .text_color(theme::text())
+                                    .child("最近搜索"),
+                            ),
+                    )
+                    .child(crate::common::button::text_button_animated(
+                        "search-history-clear",
+                        "清空",
+                        crate::common::button::ButtonKind::Ghost,
+                        window,
+                        cx,
+                        move |_, _, cx| {
+                            library.update(cx, LibraryEntity::clear_search_history);
+                        },
+                    )),
+            )
+            .child(chips)
+            .into_any_element()
+    }
+
     /// 未输入时的浏览列表，条目从专辑分组派生。曲库没有流派元数据。
     fn browse_list(&self, usable: f32, cx: &mut Context<Self>) -> AnyElement {
         let groups = App::update_entity(cx, &self.library, |library, _| library.albums());
@@ -366,8 +432,7 @@ impl SearchPage {
             .into_any_element()
     }
 
-    /// 浏览列表的一行：编号 / 名称 / 数量，细线分隔。
-    /// 一行一项比一排带边框的方块好扫，条目多了也只是往下长。
+    /// 浏览列表的一行，依次为编号、名称与数量。
     fn browse_row(&self, index: usize, group: &AlbumGroup) -> AnyElement {
         let title = group.title.clone();
         let id = group.representative;
@@ -625,7 +690,7 @@ impl SearchPage {
         }
     }
 
-    /// `fill`。并排时钉 `TOP_W`，换行独占时铺满整行，避免右侧留一大块空白。
+    /// 并排时宽度固定为 `TOP_W`，独占一行时铺满整行，避免右侧留白。
     fn top_column(&self, track: &Track, fill: bool, cx: &mut App) -> AnyElement {
         let mut col = div()
             .flex_none()
@@ -772,7 +837,7 @@ impl SearchPage {
                     .id(SharedString::from(format!("search-all-{title}")))
                     .flex_none()
                     .cursor_pointer()
-                    // 悬停给 chip 底，不给黄字：黄在浅色下压纸只有 1.05:1。
+                    // 悬停只给 chip 底色，不用黄字；黄色在浅色主题下与纸色对比度仅 1.05:1。
                     .mx(px(-4.))
                     .px(px(4.))
                     .text_size(px(theme::FONT_CAPTION))
@@ -955,7 +1020,7 @@ fn section_label(section: NavSection) -> &'static str {
     }
 }
 
-/// 结果行的行首一格：专辑用标题首字，艺术家（圆）用人形图标。
+/// 结果行的行首一格。专辑用标题首字，艺术家（圆）用人形图标。
 #[allow(clippy::too_many_arguments)]
 fn thumb(
     covers: &Entity<CoverCache>,
@@ -977,6 +1042,33 @@ fn thumb(
         .then(|| crate::common::cover::initial_of(label))
         .flatten();
     crate::common::cover::thumb(covers, library, id, size, radius, glyph, initial, cx)
+}
+
+/// 一条最近搜索。点击只回填查询词；输入框由 `SearchBox` 镜像曲库的查询词同步变化。
+fn history_chip(index: usize, query: String, library: &Entity<LibraryEntity>) -> AnyElement {
+    let library = library.clone();
+    let fill = query.clone();
+    div()
+        .id(("search-history", index))
+        .flex_none()
+        .flex()
+        .items_center()
+        .h(px(26.))
+        .px(px(theme::GAP_SM))
+        .bg(theme::elevated())
+        .cursor_pointer()
+        .text_size(px(theme::FONT_CAPTION))
+        .text_color(theme::text_muted())
+        .hover(|style| style.bg(theme::hover()).text_color(theme::text()))
+        // 长查询词在窄窗口里要截断，全文交给浮层。
+        .max_w(px(240.))
+        .truncate()
+        .tooltip(crate::common::tooltip::builder(fill.clone()))
+        .on_click(move |_, _, cx| {
+            library.update(cx, |library, cx| library.set_query(fill.clone(), cx));
+        })
+        .child(query)
+        .into_any_element()
 }
 
 fn loading_state() -> impl IntoElement {

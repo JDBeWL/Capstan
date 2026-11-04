@@ -28,7 +28,7 @@ pub struct ScanProgress {
     /// 已经读完标签的曲目数。
     pub found: usize,
     /// 这一轮真正要读的曲目数，即进度分母。`0` 表示目录还没走完、分母还不明。
-    /// 不能用 `total_files`：补扫时磁盘上有 1200 首、库里已有 1195 首，
+    /// 不能用 `total_files`。补扫时磁盘上有 1200 首、库里已有 1195 首，
     /// 分母写 1200 会被读成「还剩 1195 首没处理」。
     pub total: usize,
 }
@@ -123,12 +123,8 @@ impl LibraryEntity {
         );
     }
 
-    /// 重读全部曲目的标签。
-    ///
-    /// 和 [`Self::rescan`] 是两件事。那个只把新文件补进来，已经在库的一首都不碰；
-    /// 这个不看指纹、不在乎文件有没有变，每一首都重新开容器解析。标签是在 Capstan 之外被改过
-    /// （别的编辑器、脚本、重新下的版本）时，只有这里能把改动带回来。
-    ///
+    /// 重读全部曲目的标签。与 [`Self::rescan`] 不同。后者只补入新文件，已在库的曲目不动；
+    /// 这里不看指纹，每首重新解析容器。标签在 Capstan 之外被修改（其它编辑器、脚本、重新下载）时，只有这里能把改动带回来。
     /// 手改过的字段不受影响，见 [`capstan_core::Track::keep_manual`]。
     pub fn refresh_tags(&mut self, cx: &mut Context<Self>) {
         // 首屏还在后台读盘时曲库是空的，这时候刷新等于什么都没做。
@@ -208,11 +204,11 @@ impl LibraryEntity {
         }
     }
 
-    /// 起一轮扫描。同一时刻只有一轮。新的一来，旧的先被叫停。
+    /// 起一轮扫描。同一时刻只有一轮，新任务到来时先停止旧任务。
     // `_scan` 只写不读，作用是在 Drop 时取消扫描。
     #[allow(clippy::used_underscore_binding)]
     fn start_scan(&mut self, request: ScanRequest, cx: &mut Context<Self>) {
-        // 旧任务的接收端马上会被换掉，先把它的停止标志立起来，省下白读的标签。
+        // 旧任务的接收端马上会被换掉，先设置停止标志，避免读取无效标签。
         if let Some(cancel) = self.scan_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
         }
@@ -307,7 +303,7 @@ impl LibraryEntity {
 
                 let alive = this
                     .update(cx, |this, cx| {
-                        // 分母要立起来，界面才知道现在是「读到哪了」而不是「不知道读到哪」。
+                        // 分母要尽早确定，界面才知道当前读取进度。
                         if let Some(count) = to_read.take()
                             && let Some(progress) = this.scanning.as_mut()
                         {
@@ -323,7 +319,7 @@ impl LibraryEntity {
                             if let Some(progress) = this.scanning.as_mut() {
                                 progress.found += read;
                             }
-                            // 带过滤条件时新曲目也要按条件进投影，否则导入时列表看着毫无变化；
+                            // 带过滤条件时新曲目也要按条件进投影，否则导入时列表看起来没有变化；
                             // 刷新标签改了标题同理。命中集合会变。
                             if this.is_filtering() {
                                 this.recompute_visible(cx);
@@ -363,7 +359,7 @@ impl LibraryEntity {
 }
 
 /// 后台线程。展开目录 → 挑出库里没有的 → 逐首读标签，一批一批发回去。
-/// 参数按值收。这是线程入口，所有东西都得从 `start_scan` 那边搬进来。
+/// 参数按值传入。这是线程入口，所有参数都由 `start_scan` 提供。
 #[allow(clippy::needless_pass_by_value)]
 fn run_scan(
     inputs: Vec<PathBuf>,
@@ -390,7 +386,7 @@ fn run_scan(
         cached: cached.as_ref(),
     };
 
-    // 分片读。每片之间看一眼停止标志。换扫描目标时，剩下的标签不必再读完。
+    // 分片读，每片之间检查停止标志；换扫描目标时，剩余的标签不必再读完。
     for slice in fresh.chunks(SCAN_CHUNK) {
         if cancel.load(Ordering::Relaxed) {
             return;
@@ -444,7 +440,7 @@ mod tests {
             .collect()
     }
 
-    /// 「新增的歌会不会被扫到」全靠这一层筛。在库的要挡掉，不在库的要留下。
+    /// 「新增的歌会不会被扫到」全靠这一层筛。在库的要排除，不在库的要保留。
     #[test]
     fn 补扫只挑库里没有的() {
         let found = fresh_paths(

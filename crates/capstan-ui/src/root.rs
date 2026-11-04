@@ -271,7 +271,7 @@ impl RootView {
                     this.toast
                         .update(cx, |toast, cx| toast.show_plain(message, cx));
                 }
-                // 曲库侧的偏好（随机、循环、排序、跟随播放）由曲库自己决定何时改，
+                // 曲库侧的偏好（随机、循环、排序、跟随播放）由曲库实体决定何时改，
                 // 落盘只在根视图做，设置实体是 `settings.json` 的唯一写者。
                 LibraryEvent::PrefsChanged => this.remember_library_prefs(cx),
                 // 曲库是后台读完的，拿到曲目后再装回上次播放位置。
@@ -575,7 +575,7 @@ impl RootView {
         }));
     }
 
-    /// 记住窗口位置与尺寸。拖拽期间回调会连着来几十次，等手停下来再落盘。
+    /// 记住窗口位置与尺寸。拖拽期间回调会连续触发数十次，等拖动结束后再落盘。
     #[allow(clippy::used_underscore_binding)]
     fn remember_window(&mut self, window: &Window, cx: &mut Context<Self>) {
         let Some(rect) = windowed_rect(window) else {
@@ -622,7 +622,7 @@ impl RootView {
 const WINDOW_SAVE_DELAY_MS: u64 = 600;
 
 /// 窗口在窗口态下的位置与尺寸。最大化与全屏时 gpui 报的是还原尺寸，存下来会让下次
-/// 以窗口态开局，与用户关窗时看到的样子不符，因此只认窗口态。
+/// 以窗口态开局，与用户关窗时的状态不符，因此只认窗口态。
 fn windowed_rect(window: &Window) -> Option<crate::settings::WindowRect> {
     let WindowBounds::Windowed(bounds) = window.window_bounds() else {
         return None;

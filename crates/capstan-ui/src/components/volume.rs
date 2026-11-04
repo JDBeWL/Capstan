@@ -90,7 +90,7 @@ impl VolumeControl {
     }
 
     /// 落盘的是「用户要的音量」而不是此刻的增益，静音时 `muted_from` 记着前者。
-    /// 只在一次操作结束时调用。跟着拖动每帧写会把 `settings.json` 刷爆。
+    /// 只在一次操作结束时调用。跟随拖动每帧写入会频繁改写 `settings.json`。
     fn persist(&self, cx: &mut Context<Self>) {
         let muted = self.muted_from.is_some();
         let volume = self
@@ -238,7 +238,7 @@ impl Render for VolumeControl {
             }))
             .child(
                 // 轨道两端各让出一个滑块半径，行程与 `ratio_in_track` 的换算一致：
-                // 指针在哪，滑块中心就到哪。
+                // 滑块中心跟随指针位置。
                 div()
                     .absolute()
                     .left(px(THUMB_R))
@@ -289,7 +289,7 @@ impl Render for VolumeControl {
             );
 
         let bubble = self.drag.map(|value| {
-            // 跟着滑块中心走，但两端夹进轨道内，不然 0% / 100% 时气泡会探出底栏边缘。
+            // 跟随滑块中心，但两端夹进轨道内，否则 0% / 100% 时气泡会超出底栏边缘。
             let center = THUMB_R + value * (BAR_W - 2.0 * THUMB_R);
             let left = (center - BUBBLE_W / 2.0).clamp(0.0, BAR_W - BUBBLE_W);
             div()

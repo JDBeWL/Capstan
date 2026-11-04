@@ -57,7 +57,7 @@ impl LibraryEntity {
     pub fn apply_settings(&mut self, settings: &crate::settings::Settings, cx: &mut Context<Self>) {
         self.set_recursive(settings.recursive_import, cx);
         self.list_follows_playback = settings.follow_playback;
-        // 排序键要在首屏合并之后才用得上曲目：此刻 `playlist` 还是空的，
+        // 排序键要在首屏合并之后才用得上曲目。此刻 `playlist` 还是空的，
         // `finish_initial_load` 会拿 `self.sort` 重排合并后的列表。
         self.sort = settings.sort_key;
         self.shuffle = settings.shuffle;
@@ -150,7 +150,7 @@ impl LibraryEntity {
     /// 从当前可见列表开始播放。先把队列定为可见行（按显示顺序），再跳到这一首。
     /// 可见列表恰好就是整库时不起队列，队列继续跟着曲库走。
     pub fn activate_in_view(&mut self, id: TrackId, cx: &mut Context<Self>) -> Option<Track> {
-        // 必须先拦。`set_queue` 会把队列重设成可见行，播不了的曲目会换掉队列却没放出声。
+        // 必须先拦截。`set_queue` 会把队列重设成可见行；目标曲目无法播放时，队列已被替换却没有出声。
         if self.refuse_unplayable(id, cx) {
             return None;
         }
@@ -200,7 +200,7 @@ impl LibraryEntity {
     /// 把一批曲目定成队列并从第一首开始播。批量条的「播放」用它。
     pub fn activate_selection(&mut self, ids: &[TrackId], cx: &mut Context<Self>) -> Option<Track> {
         let first = *ids.first()?;
-        // 先拦播不了的：`set_queue` 会换掉队列，播不出来就白换了。
+        // 先拦截无法播放的曲目，否则 `set_queue` 换掉队列后仍播不出声。
         if self.refuse_unplayable(first, cx) {
             return None;
         }
@@ -209,7 +209,7 @@ impl LibraryEntity {
         self.activate(first, cx)
     }
 
-    /// 让播放队列的光标落在这一首上。续播时用：`set_now_playing` 只挪列表光标，
+    /// 让播放队列的光标落在这一首上。续播时用。`set_now_playing` 只挪列表光标，
     /// 队列光标不动的话，重启后「下一曲」会从队首而不是上次那首之后接着走。
     pub fn sync_playlist_cursor(&mut self, id: TrackId, cx: &mut Context<Self>) {
         if self.playlist.jump_to(id) {
@@ -219,7 +219,7 @@ impl LibraryEntity {
 
     /// 选中某首并广播「该播它了」，返回被选中的曲目。只跳转，不改队列内容。
     pub fn activate(&mut self, id: TrackId, cx: &mut Context<Self>) -> Option<Track> {
-        // 所有播放入口（列表、队列面板、专辑卡、键盘 `Enter`）最终都汇到这里，是最后一道闸。
+        // 所有播放入口（列表、队列面板、专辑卡、键盘 `Enter`）最终都汇到这里，是最终拦截点。
         if self.refuse_unplayable(id, cx) {
             return None;
         }
@@ -291,7 +291,7 @@ impl LibraryEntity {
         }
     }
 
-    /// 写入折算后的模式；`reshuffle` 为真时推进洗牌种子，换一副新的随机序。
+    /// 写入折算后的模式；`reshuffle` 为真时推进洗牌种子，生成新的随机序。
     fn apply_mode(&mut self, reshuffle: bool, cx: &mut Context<Self>) {
         if reshuffle {
             self.seed = self

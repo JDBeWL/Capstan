@@ -56,7 +56,7 @@ pub enum LibraryEvent {
     },
     /// 一次操作未能完成，附带的文案直接展示给用户，即底部提示。
     Failed(String),
-    /// 曲库侧的偏好变了：随机、循环、排序键、跟随播放。落盘由 `RootView` 统一负责，
+    /// 曲库侧的偏好变了。随机、循环、排序键、跟随播放。落盘由 `RootView` 统一负责，
     /// 曲库不持有设置实体，也不该知道 `settings.json` 长什么样。
     PrefsChanged,
 }
@@ -97,7 +97,7 @@ pub struct LibraryEntity {
     /// 导入过的文件夹。曲库只存曲目，没有「是从哪扫来的」这层信息，
     /// 补扫新歌与「我加过哪几个文件夹」都要靠这份根。
     roots: Roots,
-    /// 当前这轮扫描的停止标志。换目标时先立起来，后台线程才不会白读剩下的标签。
+    /// 当前这轮扫描的停止标志。换目标时先设置，后台线程才不会继续读取无效标签。
     scan_cancel: Option<Arc<AtomicBool>>,
     /// 随机轴，另一轴是 [`Self::repeat`]，由 [`Self::effective_mode`] 折算成 `PlayMode`。
     shuffle: bool,
@@ -111,6 +111,8 @@ pub struct LibraryEntity {
     collections: Collections,
     /// 最近播放，跨重启。
     recents: crate::recents::Recents,
+    /// 最近搜索，跨重启。搜索页未输入时列它。
+    history: crate::search_history::SearchHistory,
     /// 首屏还在等后台读 `library.json`。加载期间不落盘，避免把只有新导入项的曲库覆盖回去。
     loading: bool,
     /// 首屏加载任务，只写不读，留着它才能在实体销毁时取消。
@@ -156,6 +158,7 @@ impl LibraryEntity {
             followed: crate::follows::Follows::load(),
             collections: crate::collections_store::load(),
             recents: crate::recents::Recents::load(),
+            history: crate::search_history::SearchHistory::load(),
             loading: true,
             load_task: None,
             _scan: None,
@@ -325,7 +328,7 @@ impl LibraryEntity {
         self.playlist.mode()
     }
 
-    /// 当前排序键。读的是实体自己那份：首屏合并前后都要给出用户选的那一档。
+    /// 当前排序键。读的是实体自身保存的那份，首屏合并前后都要给出用户选的那一档。
     pub fn sort_key(&self) -> SortKey {
         self.sort
     }

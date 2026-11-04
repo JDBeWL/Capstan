@@ -1,7 +1,6 @@
 //! 等高线。缓坡上的涟漪，等值线从片的一边穿到另一边，不闭合成圈。
-//! `assets/contours/draw-contours.mjs` 同源，先在网格上算一层
-//! 「坡度 + 波浪」的标量场，再用 marching squares 把等值线连成折线，只留横穿整片的开放线。
-//! 一片算一次就够，几何按像素尺寸缓存在线程里；换窗口大小时才重算。
+//! `assets/contours/draw-contours.mjs` 同源。先在网格上算「坡度 + 波浪」标量场，再用 marching squares 连成折线，只留横穿整片的开放线。
+//! 几何按像素尺寸缓存在线程里，换窗口大小时才重算。
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -11,7 +10,7 @@ use std::rc::Rc;
 const CELL: f32 = 6.0;
 /// 相邻两条等值线的间距。坡度项在片内大约跨两个单位，条数由此反推。
 const SPACING: f32 = 20.0;
-/// 每隔几条加粗一条，像地形图上的计曲线，一眼看得出坡的走向。
+/// 每隔几条加粗一条，像地形图上的计曲线，可辨认坡的走向。
 const INDEX_EVERY: usize = 5;
 /// 整片往中心收的衰减档数。越靠边的线画得越淡，片就没有轮廓。
 /// 档数够多，最外一档淡到看不见，线才不会被片边掐断。
@@ -114,7 +113,7 @@ fn is_scrap(line: &[(f32, f32)]) -> bool {
     (right - left).hypot(bottom - top) < 40.0
 }
 
-/// 按离片心的远近把一条线切成几段。同一段共用一个透明度档，片缘自然就淡没了。
+/// 按离片心的远近把一条线切成几段。同一段共用一个透明度档，片缘自然淡出至不可见。
 fn split_by_fade(
     runs: &mut Vec<Run>,
     line: &[(f32, f32)],

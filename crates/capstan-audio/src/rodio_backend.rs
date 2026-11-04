@@ -56,7 +56,7 @@ struct Loaded {
     /// 当前音源的起点。rodio 的 `get_pos()` 在每次 `append` 后从 0 重新计数，
     /// 重建式 seek 之后要把它加回去，否则进度条每次都跳回开头。
     base: Duration,
-    /// 重建时需要保持原来的播放/暂停状态。
+    /// 重建时需要保持原来的播放或暂停状态。
     playing: bool,
 }
 
@@ -249,7 +249,7 @@ impl RodioBackend {
 
     /// 交付下一段音频。链路正在出声就先淡出再换；已经静着就直接换。
     fn hand_off(&mut self, action: Handoff) {
-        // 已经在淡出。换成新动作照旧等到点交接，旧链路的增益早就推向 0 了。
+        // 已经在淡出。换成新动作仍等到点交接，旧链路增益已趋近 0。
         if let Some(pending) = self.pending.as_mut() {
             pending.action = action;
             return;
@@ -310,7 +310,7 @@ impl RodioBackend {
         player.pause();
 
         // 从「此刻播到的位置」续上，不能用 `current.base`。base 只在 load / seek 时更新，
-        // 拿它重建会把上次手动跳转之后播过的那一段全丢掉，进度直接退回去。
+        // 用它重建会丢弃上次手动跳转后的已播放片段，进度直接倒退。
         let resume_at = self.current.is_some().then(|| self.position());
 
         let mut gain = None;
@@ -327,7 +327,7 @@ impl RodioBackend {
         let old_device = std::mem::replace(&mut self.device, sink);
         self.pending = None;
 
-        // 平滑切换。旧流继续出声、增益推向 0，几十毫秒后才断开。盖住新流预建的那段空窗。
+        // 平滑切换。旧流继续出声、增益推向 0，几十毫秒后才断开，覆盖新流预建的空窗。
         // 不平滑时立即断开。
         if self.smooth_switch && self.gain.is_some() {
             if let Some(control) = self.gain.take() {
@@ -454,7 +454,7 @@ impl AudioBackend for RodioBackend {
     }
 
     fn position(&self) -> Duration {
-        // 挂起期间报的是交接目标。此刻出声的还是上一段，报它会让进度条来回跳。
+        // 挂起期间报的是交接目标。此刻出声的仍是上一段，报它会导致进度条反复跳动。
         if let Some(pending) = &self.pending {
             return pending.position();
         }
@@ -546,7 +546,7 @@ mod tests {
         path
     }
 
-    /// 先让解码线程把素材搬进通道再读。欠载时 `LockFreeSource` 会输出 0.0 维持流，
+    /// 先让解码线程把素材写入通道再读。欠载时 `LockFreeSource` 会输出 0.0 维持流，
     /// 样本数与声道相位都会对不上。
     fn drain(source: Box<dyn rodio::Source<Item = f32> + Send>) -> Vec<f32> {
         std::thread::sleep(Duration::from_millis(100));

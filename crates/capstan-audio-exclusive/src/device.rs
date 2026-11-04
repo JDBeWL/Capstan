@@ -25,7 +25,7 @@ const FALLBACK_RATES: [u32; 11] = [
 /// 初始化失败时的重试次数。设备刚被别的程序放开、驱动还在收尾，重试几次常常就成了。
 const INIT_RETRIES: usize = 3;
 
-/// 单次协商的总时限。候选格式有几十种、每种重试三次，不设上限会让用户干等好几秒。
+/// 单次协商的总时限。候选格式有几十种、每种重试三次，不设上限会让用户长时间等待。
 const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// 独占模式下设备要求的周期，按 128 字节对齐。Intel HDA 一类设备不对齐会直接拒绝初始化。

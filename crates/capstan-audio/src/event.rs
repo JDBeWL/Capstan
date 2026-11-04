@@ -57,7 +57,7 @@ impl OutputMode {
     }
 }
 
-/// 音频线程到 UI 的事件，只承载语义变化；高频进度走 [`crate::Snapshot`]，否则一秒 20 条消息会打爆 UI 通知。
+/// 音频线程到 UI 的事件，只承载语义变化；高频进度走 [`crate::Snapshot`]，否则每秒 20 条消息会使 UI 通知过载。
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlayerEvent {
     /// 曲目装载完成，附带解码出的时长。
@@ -82,7 +82,7 @@ pub enum PlayerEvent {
         detail: String,
     },
     Error(String),
-    /// 出声没坏、但和用户当时的选择不一样的降级（选定设备被拔掉、独占退回共享）。
-    /// 与 [`Self::Error`] 分开：降级不该把播放状态打回 `Idle`。
+    /// 出声未中断、但已偏离用户所选设备的降级（设备被拔掉、独占退回共享）。
+    /// 与 [`Self::Error`] 分开，降级不该把播放状态打回 `Idle`。
     Notice(String),
 }

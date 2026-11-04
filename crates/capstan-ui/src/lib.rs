@@ -17,7 +17,7 @@ pub mod library_store;
 /// 「喜欢」集合与持久化。
 pub mod likes;
 pub mod logging;
-/// 统一的 JSON 持久化层，负责数据目录定位、原子替换，以及八份 store 共用的读写语义。
+/// 统一的 JSON 持久化层，负责数据目录定位、原子替换，以及各份 store 共用的读写语义。
 pub mod persist;
 pub mod platform;
 /// 播放队列（`queue.json`）读写。重启后接着上次那条显式队列。
@@ -28,6 +28,8 @@ pub mod resume;
 pub mod root;
 /// 曲库根（`roots.json`）读写。记住导入过的文件夹，补扫从这里出发。
 pub mod roots_store;
+/// 最近搜索（`search-history.json`）。
+pub mod search_history;
 pub mod settings;
 pub mod shell;
 /// 键位与步进量的唯一来源，`capstan-app` 的绑定和设置页的展示都读它。

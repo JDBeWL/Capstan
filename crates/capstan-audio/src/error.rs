@@ -16,7 +16,7 @@ pub enum AudioError {
     Probe(String),
 
     /// 格式已识别，但引擎没有对应的解码实现。
-    /// 与 [`Self::Probe`] 的区别是失败阶段：`Probe` 表示无法识别格式，本变体要求给出格式名。
+    /// 与 [`Self::Probe`] 的区别是失败阶段。`Probe` 表示无法识别格式，本变体要求给出格式名。
     #[error("不支持的音频格式：{0}")]
     Unsupported(String),
 

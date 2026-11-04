@@ -45,7 +45,7 @@ pub fn pair_heading(english: impl Into<SharedString>, chinese: impl Into<SharedS
         )
 }
 
-/// 页头大标题。黄块不再做装饰；层级交给眉标与字重。
+/// 页头大标题。黄块只作填充，不用作装饰；层级交给眉标与字重。
 pub fn page_title(text: impl Into<SharedString>) -> Div {
     div()
         .min_w_0()
@@ -67,7 +67,7 @@ pub fn field(text: impl Into<SharedString>) -> Div {
 }
 
 /// 页头那行字段，后面拖一条极淡的斜线纹带，把标题和右边的控件接起来。
-/// 带子占满剩余宽度，窄窗口下自行收缩，不会挤压字段。
+/// 纹样带占满剩余宽度，窄窗口下自行收缩，不挤压字段。
 pub fn field_band(text: impl Into<SharedString>) -> Div {
     div()
         .w_full()

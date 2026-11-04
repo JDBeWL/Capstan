@@ -24,7 +24,7 @@ impl LibraryEntity {
         self.set_focus_at(id, row, cx);
     }
 
-    /// 行号已经知道时直接落座，省掉一次 `row_of` 反查。
+    /// 行号已经知道时直接定位，省掉一次 `row_of` 反查。
     fn set_focus_at(&mut self, id: TrackId, row: Option<usize>, cx: &mut Context<Self>) {
         // 要放在早返回之前。首行再按 `↑` 落点没变，但用户在用键盘，底色该亮。
         self.cursor_visible = true;
@@ -38,7 +38,7 @@ impl LibraryEntity {
         cx.notify();
     }
 
-    /// 换曲时把光标挪到这一首。默认不发 `FocusMoved`——自动换曲不该把列表从用户手上拽走；
+    /// 换曲时把光标挪到这一首。默认不发 `FocusMoved`。自动换曲不该把列表焦点从用户处移走；
     /// 开着「跟随播放」时才发。那首不在可见列表里就清成 `None`，`↑↓` 与 `Enter` 都有兜底。
     pub(super) fn follow_playback(&mut self, id: TrackId, cx: &mut Context<Self>) {
         // 本次由播放推进引起，而非用户按键操作，底色不应随之出现。
@@ -49,7 +49,7 @@ impl LibraryEntity {
             self.focus = target;
             cx.notify();
         }
-        // 歌不在可见列表里时没什么可滚的，保持沉默而不是滚到开头。
+        // 歌不在可见列表里时无需滚动，不应退回到列表开头。
         if self.list_follows_playback
             && let Some(row) = row
         {
@@ -142,7 +142,7 @@ impl LibraryEntity {
     /// 光标停在一首引擎播不了的曲目上时返回 `None`（并弹一条说明）。
     pub fn play_focused(&mut self, cx: &mut Context<Self>) -> Option<Track> {
         let id = self.focus?;
-        // 和点击列表行走同一条路。先把队列换成当前可见区，否则从别的分组切过来时会跳不进原队列。
+        // 和点击列表行走同一条路。先把队列换成当前可见区，否则从别的分组切过来时无法进入原队列。
         self.activate_in_view(id, cx)
     }
 

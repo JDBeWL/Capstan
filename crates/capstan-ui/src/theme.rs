@@ -23,12 +23,9 @@ impl Appearance {
     }
 }
 
-/// 一套完整的主题取值，字段是原始 sRGB。函数只负责按当前明暗取色。
-/// 两套的层级关系一致。板比纸亮，切角露出的始终是更暗的纸。
-///
-/// 带 alpha 的颜色也在这里定值，不在调用处叠 `text().opacity(..)`：
-/// 墨色本身会随主题翻成浅色，派生出来的遮罩、荧光笔就会跟着翻，
-/// 深色下变成一层白雾。`scrim` 与 `mark_alpha` 就是为此单列的。
+/// 一套完整的主题取值，字段是原始 sRGB，函数只负责按当前明暗取色。两套的层级关系一致，板比纸亮，切角露出的始终是更暗的纸。
+/// 带 alpha 的颜色也在这里定值，不在调用处叠 `text().opacity(..)`。墨色会随主题翻成浅色，派生遮罩与荧光笔会跟着翻，深色下变成一层白雾。
+/// `scrim` 与 `mark_alpha` 为此单列。
 #[derive(Clone, Copy)]
 pub(crate) struct Palette {
     pub(crate) dark: bool,
@@ -80,11 +77,8 @@ const LIGHT: Palette = Palette {
     on_control: 0xffffff,
 };
 
-/// 深色。纸 #191919、板 #222222、墨 #EDEDED，黄不变。
-///
-/// 三级文字各自留出一档台阶：ink → ink2 → faint 依次为 #EDEDED → #C0C0C0 → #A3A3A3。
-///
-/// 遮罩 #000000 @ 0.63、荧光笔黄 @ 0.22 也在这里定，不从墨色派生。
+/// 深色主题为纸 #191919、板 #222222、墨 #EDEDED，黄不变。
+/// 三级文字留出一档台阶，ink → ink2 → faint 依次为 #EDEDED → #C0C0C0 → #A3A3A3；遮罩 #000000 @ 0.63、荧光笔黄 @ 0.22 也在这里定值，不从墨色派生。
 const DARK: Palette = Palette {
     dark: true,
     paper: 0x191919,
@@ -169,12 +163,12 @@ pub fn surface() -> Rgba {
 pub fn elevated() -> Rgba {
     c(palette().chip)
 }
-/// 列表行的悬停底色，退回纸色 —— 像被按下去一层。
+/// 列表行的悬停底色，退回纸色。像被按下去一层。
 pub fn hover() -> Rgba {
     c(palette().hover)
 }
 /// 键盘光标所在行的底色，从板色往外再走一档。
-/// 纸与板之间只有 1.10:1 的余量，塞不下两级「压下去」：浅色的板是纯白，只能都往下走；
+/// 纸与板之间只有 1.10:1 的余量，容纳不下两级「压下去」。浅色的板是纯白，只能都往下走；
 /// 深色的板上方还有空间，于是悬停退到纸色、光标抬到 chip 一侧，两个状态隔着板色各占一边。
 pub fn cursor() -> Rgba {
     c(palette().cursor)
@@ -218,7 +212,7 @@ pub fn text_faint() -> Rgba {
 pub fn accent() -> Rgba {
     c(palette().signal)
 }
-/// 黄块被指到时的填充。浅色压暗一档，深色提亮一档：两套主题里黄都是各自最亮的东西，
+/// 黄块被指到时的填充。浅色压暗一档，深色提亮一档。两套主题里黄都是各自最亮的东西，
 /// 再压暗就等于说「这块不活跃了」。
 pub fn accent_hover() -> Rgba {
     c(palette().accent_hover)
@@ -227,7 +221,7 @@ pub fn accent_hover() -> Rgba {
 pub fn text_on_accent() -> Rgba {
     c(palette().on_signal)
 }
-/// 荧光笔：输入框里选中的文字、搜索命中的片段。底色是黄的，上面照常写墨字。
+/// 荧光笔。输入框里选中的文字、搜索命中的片段。底色是黄的，上面照常写墨字。
 pub fn mark() -> Rgba {
     accent().opacity(palette().mark_alpha)
 }
@@ -237,7 +231,7 @@ pub fn control() -> Rgba {
     text()
 }
 /// 主控件悬停档，黄色。字与图形同时换成 [`text_on_accent`]。
-/// 与 [`accent`] 同值，单列是为了让按钮那边读起来是「控件被指到的样子」。
+/// 与 [`accent`] 同值，单列是为了让按钮侧表达「控件被指到的状态」。
 pub fn control_hover() -> Rgba {
     accent()
 }
@@ -450,7 +444,7 @@ pub const RIGHT_PANEL_W: f32 = 360.0;
 /// 240 只够四个汉字，长一点的日文曲名一律变成「ありが…」。
 pub const BOTTOM_LEFT_W: f32 = 360.0;
 /// 中档窗口（[`crate::shell::MEDIUM_MIN`]）下的左栏宽度。那一档主区只剩一条传输带，
-/// 左栏必须在这里停一下，否则传输键组会被挤掉。
+/// 左栏必须在这里停一下，否则传输键组会被挤压。
 pub const BOTTOM_LEFT_MEDIUM_W: f32 = 240.0;
 /// 窗口宽到这个数，左栏才涨到 [`BOTTOM_LEFT_W`]。
 pub const BOTTOM_LEFT_FULL_W: f32 = 1200.0;
@@ -662,7 +656,7 @@ mod tests {
             light.on_signal, dark.on_signal,
             "黄块上的字两套都必须是深墨"
         );
-        // 黄块悬停档各走各的：浅色压暗，深色提亮。
+        // 黄块悬停档各走各的。浅色压暗，深色提亮。
         assert_eq!(light.accent_hover, 0xe6e100);
         assert_eq!(dark.accent_hover, 0xfff84d);
         // 遮罩两套都是暗的。浅色是墨 50%，深色是纯黑 63%。
@@ -972,7 +966,7 @@ mod tests {
         for (mode, p) in modes() {
             let base = color(p.panel);
             let ratio = super::contrast_ratio(color(p.tag_fg), color(p.tag_bg), base);
-            // 标签是 10px 的小字，只满足 4.5 太紧：深色的标签底压到 #3A3A3A 时，
+            // 标签是 10px 的小字，只满足 4.5 太紧。深色的标签底压到 #3A3A3A 时，
             // 次要墨色正好落在 4.51:1，肉眼已经发虚。小字按 AAA 要求。
             assert!(
                 ratio >= 7.0,

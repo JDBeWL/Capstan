@@ -11,8 +11,8 @@ pub fn scrollbar<H: ScrollbarHandle + Clone>(handle: &H, id: &'static str) -> An
         .child(
             Scrollbar::vertical(handle)
                 .id(id)
-                // 该节点是滚动区的兄弟节点；若不自声明按自身布局取视口，则会依 handle 的边界计算，
-                // 与外层 `inset_0` 存在一处偏差，两者都属于不会报错的错误。
+                // 该节点是滚动区的兄弟节点；若不自行声明按自身布局取视口，就会按 handle 的边界计算，
+                // 与外层 `inset_0` 产生偏差，且两处偏差都不会报错。
                 .viewport_from_layout()
                 // 默认的 `Scrolling` 模式停手就淡出，淡出期间点不中。
                 .mode(ScrollbarMode::Always),

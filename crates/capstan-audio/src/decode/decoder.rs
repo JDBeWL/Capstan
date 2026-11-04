@@ -138,7 +138,7 @@ impl SymphoniaDecoder {
     pub fn new(path: &Path) -> Result<Self> {
         let mut file = File::open(path).map_err(AudioError::FileOpen)?;
 
-        // 可识别魔数的文件在格式探测前拦截。改了扩展名的 APE / WavPack / Ogg-Opus 会被 symphonia 当作可播放文件，实际输出满刻度噪声或全零。
+        // 可识别魔数的文件在格式探测前拦截。改名后的 APE、WavPack 与 Ogg-Opus 会被 symphonia 当作可播放文件，实际输出满刻度噪声或全零。
         // `initialize` 只由这里建出的实例调用。
         let mut head = Vec::with_capacity(capstan_core::SIGNATURE_PROBE_LEN);
         (&mut file)
@@ -182,8 +182,8 @@ impl SymphoniaDecoder {
         // 声道数同样取自容器头；写 0 的畸形头退成单声道，因它会同时充当除数与帧长。
         let source_channels = (params.channels.as_ref().map_or(2, Channels::count) as u16).max(1);
 
-        // 时长只按容器声明的采样率算。拿 CD 级的 44.1kHz 去推未知采样率的流，
-        // 会得到一个看着合理、实际错误的秒数。`try_from_secs_f64` 挡的是 inf / NaN。
+        // 时长只按容器声明的采样率算。用 CD 级的 44.1kHz 推断未知采样率的流，
+        // 会得到一个看似合理、实际错误的秒数。`try_from_secs_f64` 拦截的是 inf / NaN。
         let total_duration = match (track.num_frames, stated_rate) {
             (Some(frames), Some(rate)) => {
                 Duration::try_from_secs_f64(frames as f64 / f64::from(rate)).ok()

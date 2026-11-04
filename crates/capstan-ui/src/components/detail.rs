@@ -99,10 +99,8 @@ impl HeroInfo {
     }
 
     /// 副标题里可以点进艺术家页的名字。
-    ///
-    /// 专辑页的副标题是标签里的艺术家字段，多人时形如「甲 / 乙」。字段以 `/` 或 `,` 分隔时
-    /// 每位各是一个艺术家页，整串反而谁也对不上，所以要按 [`capstan_core::artist_keys_str`]
-    /// 拆开。艺术家页的副标题是「N 张专辑」、歌单页是一句说明，都不指向任何人。
+    /// 专辑页副标题取标签中的艺术家字段，多人时形如「甲 / 乙」。字段以 `/` 或 `,` 分隔时每位各是一个艺术家页，整串无法匹配，因此按 [`capstan_core::artist_keys_str`] 拆开。
+    /// 艺术家页副标题为「N 张专辑」，歌单页为一句说明，都不指向任何人。
     pub fn artist_names(&self) -> Vec<&str> {
         if self.kind != HeroKind::Album {
             return Vec::new();
@@ -434,7 +432,7 @@ fn shuffle_button(info: &HeroInfo, library: Entity<LibraryEntity>) -> AnyElement
             library.update(cx, |library, cx| {
                 // 用 set_shuffle 而不是 toggle。已经是随机时，再点一次不该把它关掉。
                 library.set_shuffle(true, cx);
-                // 挑第一首能播的，而不是死盯第一行，专辑里第一首可能正是引擎解不了的格式。
+                // 挑第一首能播的，而不是固定取第一行，专辑里第一首可能正是引擎解不了的格式。
                 library.play_first_playable(cx);
             });
         })
@@ -538,7 +536,7 @@ fn play_button(info: &HeroInfo, library: Entity<LibraryEntity>) -> AnyElement {
 }
 
 /// 封面槽。命中就显示图片，否则请求 + 占位。取图走 [`crate::common::cover::cover_state`]。
-/// 不能绕开它里的 `is_missing` 那一档，否则没有封面的专辑会每帧重发请求。
+/// 不能绕开其中的 `is_missing` 分支，否则没有封面的专辑会每帧重发请求。
 fn cover_slot(
     covers: &Entity<CoverCache>,
     library: &Entity<LibraryEntity>,

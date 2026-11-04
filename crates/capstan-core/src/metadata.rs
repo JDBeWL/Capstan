@@ -70,7 +70,7 @@ pub fn read_track_in(path: &Path, folder: &FolderContext<'_>) -> Result<Track> {
 }
 
 /// 完全不读文件内容，只按路径与文件名造一条曲目。
-/// 两条路会用到它。标签读失败（坏 ID3、整块标签缺失），以及 [`read_track_in`] 的兜底底稿。
+/// 两条路会用到它。标签读失败（坏 ID3、整块标签缺失），以及 [`read_track_in`] 的初始稿。
 pub fn infer(path: &Path, folder: &FolderContext<'_>) -> Track {
     let dirs = filename::hints_for(path);
     let stem = stem_of(path);

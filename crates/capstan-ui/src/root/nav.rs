@@ -94,7 +94,7 @@ pub(super) fn floating_back(
     let on_click = nav_click(shell, library, NavDirection::Back);
     let id = ElementId::from(FLOATING_BACK_ID);
     let hover = crate::common::hover::progress(id.clone(), window, cx);
-    // 黄底擦入到一半时图标跨在黑与黄之间，颜色跟着进度走才不会有一瞬间看不清。
+    // 黄底擦入到一半时图标跨在黑与黄之间，颜色须跟随进度，避免短暂失去可读性。
     let glyph_color = theme::text_on_control().blend(theme::text_on_accent().opacity(hover));
 
     div()
@@ -135,7 +135,7 @@ pub enum NavDirection {
     Forward,
 }
 
-/// 后退与前进的实际搬运。弹出落点后先 `restore_scope` 再 `set_nav`，反过来会渲染一帧错配的组合。
+/// 后退与前进的实际执行。弹出落点后先 `restore_scope` 再 `set_nav`，反过来会渲染一帧错配的组合。
 pub fn navigate(
     shell: &Entity<ShellEntity>,
     library: &Entity<LibraryEntity>,

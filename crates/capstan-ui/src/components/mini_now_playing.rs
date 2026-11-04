@@ -54,12 +54,12 @@ impl MiniNowPlaying {
             }
         });
 
-        // 封面是 LRU 淘汰的，正在播放这首可能被挤出去，靠这里自愈而不是永久停在占位图上。
+        // 封面是 LRU 淘汰的，正在播放这首可能被淘汰，由这里重新请求，而不是永久停在占位图。
         let cover_sub = cx.observe(&covers, |this, _, cx| {
             this.refresh_cover(cx);
         });
 
-        // 收藏态可能在别处翻转，所以要 observe 曲库，但只在真的变了才 notify，扫描期间曲库每 80ms notify 一次。
+        // 收藏态可能在别处翻转，所以要 observe 曲库，但仅在实际变化时 notify；扫描期间曲库每 80ms notify 一次。
         let like_sub = cx.observe(&library, |this, library, cx| {
             let liked = this
                 .cover_id
@@ -103,7 +103,7 @@ impl MiniNowPlaying {
             return;
         }
         if fresh.is_none() && self.cover.is_some() {
-            // 被挤出去了。重新发一次请求，等它解码完的那次 notify 把新图接上。
+            // 已被淘汰。重新发一次请求，等解码完成后的 notify 更新图像。
             let path = App::update_entity(cx, &self.library, |library, _| {
                 library.playlist().by_id(id).map(|track| track.path.clone())
             });
@@ -233,7 +233,7 @@ impl Render for MiniNowPlaying {
             title_row,
         );
 
-        // 左侧可点区域。点它展开「正在播放」。爱心在这个区域之外，免得点击冒泡到这里。
+        // 左侧可点区域。点它展开「正在播放」。爱心在这个区域之外，以免点击冒泡到这里。
         let info = div()
             .id("mini-info")
             .flex_1()
@@ -318,7 +318,7 @@ fn heart_button(
         .into_any_element()
 }
 
-/// 徽章上的字。有损由调用方挡掉，这里只剩两档。
+/// 徽章上的字。有损格式由调用方过滤，这里只剩两档。
 fn badge_label(quality: Quality) -> &'static str {
     if quality == Quality::HiRes {
         "HI-RES"
@@ -327,7 +327,7 @@ fn badge_label(quality: Quality) -> &'static str {
     }
 }
 
-/// 悬停提示。有规格时只说「点这里看」，数字留给浮层，免得两处重复。
+/// 悬停提示。有规格时只说「点这里看」，数字留给浮层，以免两处重复。
 fn badge_tip(audio: AudioInfo, format: Option<&str>) -> String {
     if !audio.is_empty() {
         return "点击查看音质详情".to_owned();
@@ -350,14 +350,14 @@ fn quality_badge(quality: Quality, audio: AudioInfo, format: Option<String>) -> 
         .flex_none()
         .px(px(theme::GAP_XS + 2.0))
         .py(px(1.))
-        // 音质是标签，不是「当前位置 / 可点 / 要看一眼」，不占强调色。
-        // 与列表里的 wav / mp3 格式标签同一种底，黄色留给真正需要拉眼睛的东西。
+        // 音质是标签，不是「当前位置、可点、需要查看」，不占强调色。
+        // 与列表里的 wav / mp3 格式标签同一种底，黄色留给需要强调的元素。
         .bg(theme::tag_bg())
         .text_size(px(theme::FONT_TAG))
         .font_weight(theme::WEIGHT_BUTTON)
         .text_color(theme::tag_fg())
         .cursor_pointer()
-        // 徽章落在「点开正在播放」的可点区域里，不拦下来会连面板一起弹开。
+        // 徽章落在「点开正在播放」的可点区域里，不拦截会连同面板一起打开。
         .on_click(|_, _, cx| cx.stop_propagation())
         .tooltip(crate::common::tooltip::builder(tip))
         .child(badge_label(quality));

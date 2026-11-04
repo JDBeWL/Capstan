@@ -62,7 +62,7 @@ struct LostStream {
     message: String,
     attempts: u32,
     next_retry: Instant,
-    /// 中断已经上报过，进程里每拍不要重复刷。
+    /// 中断已经上报过，进程内不要每拍重复上报。
     reported: bool,
 }
 
@@ -136,7 +136,7 @@ impl ExclusiveBackend {
         self.shared.starved.load(Ordering::Relaxed)
     }
 
-    /// 独占流起播过几次。同一台设备上连续放两首时这个数**不该**涨：
+    /// 独占流起播过几次。同一台设备上连续放两首时这个数不应增加：
     /// 涨了就说明中间的流被停掉又起了，接缝处会有一声卡顿。
     pub fn stream_starts(&self) -> u64 {
         self.shared.stream_starts.load(Ordering::Relaxed)
@@ -421,7 +421,7 @@ fn channel_count(value: u16) -> ChannelCount {
 impl AudioBackend for ExclusiveBackend {
     fn load(&mut self, path: &Path, autoplay: bool) -> std::result::Result<Duration, AudioError> {
         // 解码器只打开一次。口径要从它身上看，链路又得用它来建。
-        // 分开打开的话，WavPack 这类要通读一遍文件的格式会白读两遍。
+        // 分开打开的话，WavPack 这类需要通读文件的格式会被读取两遍。
         let decoder = TrackDecoder::open(path)?;
         let preferred = (decoder.sample_rate(), decoder.channels());
         self.preferred = Some(preferred);

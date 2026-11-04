@@ -1,6 +1,6 @@
 //! 独占输出的渲染线程，负责命令处理、事件驱动的样本搬运，以及音量与淡入淡出。
 //! COM 对象只在创建它的那条线程上使用，控制线程只经命令通道与它打交道。
-//! 淡入淡出按挂钟时间推进。设备停转时按帧计数走不完淡出，Stop/Pause 的状态会卡住。
+//! 淡入淡出按挂钟时间推进。设备停转时按帧计数走不完淡出，Stop/Pause 的状态会停滞。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -28,7 +28,7 @@ const UNDERRUN_REPORT: Duration = Duration::from_secs(1);
 /// 取一个周期再多一点的余量。
 const DRAIN_LINGER: Duration = Duration::from_millis(20);
 /// 一首放完之后还留着独占流多久。下一首通常几十毫秒后就到，接在同一条流上即可；
-/// 立刻停流的话，下次起播要重新抢占设备、重新锁时钟。独占下那一下听得见。
+/// 立刻停流的话，下次起播要重新抢占设备、重新锁时钟。独占下这段停顿可以听出。
 const IDLE_GRACE: Duration = Duration::from_secs(1);
 
 /// 送给渲染线程的命令。只有协商需要回执，其余是单向的。通道本身保序。
@@ -218,7 +218,7 @@ impl Renderer {
                         let device_endpoint = stream.device_endpoint().to_owned();
                         self.format = Some(format);
                         self.stream = Some(stream);
-                        // 新设备上重新起播时从头淡入，别带着上一台的增益。
+                        // 新设备上重新起播时从头淡入，不要沿用上一设备的增益。
                         self.fade = Fade::idle();
                         self.playing = false;
                         RenderResponse::Configured {
@@ -429,7 +429,7 @@ impl Renderer {
             return;
         }
 
-        // 环空了不代表设备缓冲里那点内容已经播完，再写一小会儿静音等它走完。
+        // 环空了不代表设备缓冲里的内容已经播完，再写入一小段静音等待其播放完毕。
         let deadline = *self
             .drain_deadline
             .get_or_insert_with(|| Instant::now() + DRAIN_LINGER);

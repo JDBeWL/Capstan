@@ -8,7 +8,7 @@ use rodio::{ChannelCount, SampleRate};
 
 use super::dsp::{self, LfeConfig, LfeLowPass};
 
-/// 把任意声道数/布局的音源转成输出设备要的声道数。
+/// 把任意声道数与布局的音源转成输出设备要的声道数。
 pub struct ChannelConvertSource<S> {
     inner: S,
     source_channels: usize,

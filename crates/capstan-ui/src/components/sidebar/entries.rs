@@ -19,7 +19,7 @@ use super::menu::collection_menu;
 use super::thumb::row_thumb;
 use crate::components::track_drag::DragTrack;
 
-/// 一行是「标题 + 副标题」两行，`SIDEBAR_ITEM_H`（40）塞不下；52 = 上下各 8px + 36px 缩略图。
+/// 一行是「标题 + 副标题」两行，`SIDEBAR_ITEM_H`（40）容纳不下；52 = 上下各 8px + 36px 缩略图。
 const LIB_ROW_H: f32 = 52.0;
 
 /// 侧栏列表该列哪一种粒度。手动选择落盘在 `settings.json` 的 `library_listing`。
@@ -245,7 +245,7 @@ pub(super) fn lib_row(
         .flex_none()
         .h(px(LIB_ROW_H))
         // `w_full` + `min_w_0` 缺一不可。`uniform_list` 的行默认按内容定宽，
-        // 长标题会把行顶宽、不截断，底色也铺不满整行。
+        // 长标题会把行撑宽且不截断，底色也铺不满整行。
         .w_full()
         .min_w_0()
         .flex()
@@ -378,7 +378,7 @@ pub(super) fn lib_row(
         );
     } else if let Some(id) = entry.id {
         // 选中只代表正在看这一组，播放键仍然要能起播。
-        // 悬浮键浮在行尾，不占布局宽度：没在播放的行，那 36px 应该留给标题。
+        // 悬浮键浮在行尾，不占布局宽度。没在播放的行，那 36px 应该留给标题。
         row = row.child(row_play_button(
             group,
             id,
@@ -418,9 +418,9 @@ fn row_play_button(
     library: Entity<LibraryEntity>,
     selected: bool,
 ) -> AnyElement {
-    // 起播前把队列换成这一组。当前队列可能停在别的专辑与艺术家，直接 `activate` 会跳不进去。
+    // 起播前把队列换成这一组。当前队列可能停在别的专辑与艺术家，直接 `activate` 无法进入目标队列。
     let play_title = title.to_owned();
-    // 选中行整条是黄的，黄键压黄底看不见，换成墨底反白；切角露出的也就是行底色。
+    // 选中行整条是黄的，黄键压在黄底上无法辨认，改用墨底反白；切角露出的也就是行底色。
     let (fill, glyph, backdrop) = if selected {
         (
             theme::control(),

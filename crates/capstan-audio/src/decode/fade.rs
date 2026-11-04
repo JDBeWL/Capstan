@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn gain_never_overshoots_the_target() {
-        // 目标比一步的行程还小。应当一步落到目标，而不是冲过去再退回来。
+        // 目标比一步的行程还小。应当一步落到目标，而不是越过目标再返回。
         let control = Arc::new(GainControl::new());
         control.set_target(0.4);
         let mut source = GainRamp::new(

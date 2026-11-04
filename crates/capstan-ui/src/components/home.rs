@@ -30,7 +30,7 @@ const PAD: f32 = theme::PAGE_PAD;
 const RECENT_MAX: usize = 8;
 const SECTION_MAX: usize = 12;
 
-/// 23 点后归入「夜深了」而不是「晚上好」；边界写错不会报错，只在某个时段说错话。
+/// 23 点后归入「夜深了」而不是「晚上好」；边界写错不会报错，只会在特定时段显示错误的问候语。
 fn greeting(hour: u32) -> &'static str {
     match hour {
         5..=11 => "早上好",
@@ -88,7 +88,7 @@ impl HomeView {
     ) -> Self {
         let observe_library = cx.observe(&library, |_, _, cx| cx.notify());
         let observe_shell = cx.observe(&shell, |_, _, cx| cx.notify());
-        // 不整体 observe 封面缓存，每张图解码完成都重绘整页会让分组与排序白跑。
+        // 不整体 observe 封面缓存，每张图解码完成都重绘整页会导致分组与排序无效重算。
         let on_cover = cx.subscribe(&covers, |this, _, event: &CoverCacheEvent, cx| {
             let relevant = match event {
                 CoverCacheEvent::Ready(key) => this
@@ -191,7 +191,7 @@ impl HomeView {
 
 impl Render for HomeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 横向区块的箭头要点完就重绘，所以拿的是本视图的句柄，不是 &mut self。
+        // 横向区块的箭头点击后要立即重绘，所以取本视图的句柄，而不是 &mut self。
         let view = cx.entity();
         let loading = self.library.read(cx).loading();
         self.sync_data(cx);
@@ -309,7 +309,7 @@ impl Render for HomeView {
             );
 
         // 字标 336 + 间距 48 + showcase 360 + 两侧 PAD 48，低于这个宽度宁可先不摆 showcase，
-        // 否则 `flex_1` 的左列被压到字标以下，「CAPSTAN」会顶到封面框上。
+        // 否则 `flex_1` 的左列被压到字标以下，「CAPSTAN」会压到封面框上。
         if center_width >= 800.0 {
             hero = hero.child(anim::enter(
                 "home-showcase",

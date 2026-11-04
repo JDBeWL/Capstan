@@ -156,7 +156,7 @@ impl IconButton {
             }
         } else {
             // 禁用态不进 Tab 序列。
-            // 光标要显式设成默认箭头；否则沿用指针形状，看着仍像可点。
+            // 光标要显式设成默认箭头；否则沿用指针形状，看起来仍像可点击。
             element = element.cursor_default();
         }
 
@@ -332,7 +332,7 @@ pub fn toggle_chip(
         .id(id)
         .relative()
         // 可收缩而不是 `flex_none`。详情页头图那一排在 560px 窗口下放不下四件东西，
-        // 不肯收缩就会被主区卡片裁掉最右的「更多」。文字由下面的 `truncate` 兜住。
+        // 不伸缩时最右的「更多」会被主区卡片裁掉。文字由下面的 `truncate` 兜住。
         .min_w_0()
         .flex()
         .items_center()

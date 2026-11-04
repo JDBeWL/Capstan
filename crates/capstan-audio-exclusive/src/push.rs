@@ -10,7 +10,7 @@ use std::time::Duration;
 use crate::error::{ExclusiveError, Result};
 use crate::ring::{RING_SAMPLES, RingWriter};
 
-/// 水位上限（秒）。超过就等渲染线程消费，不把内存撑爆。
+/// 水位上限（秒）。超过就等渲染线程消费，不使内存无限增长。
 const WATERMARK_SECONDS: usize = 2;
 /// 水位门控等待的单次上限。取消能被及时看到，全靠在它上面切时间。
 const GATE_TICK: Duration = Duration::from_millis(20);
@@ -149,7 +149,7 @@ mod tests {
         while collected.len() < TOTAL {
             let got = reader.read(&mut buffer);
             if got == 0 {
-                // 推送结束且环已排空才算真的没了。
+                // 推送结束且环已排空才算真正结束。
                 if done.load(Ordering::Acquire) == GENERATION && ring.backlog() == 0 {
                     break;
                 }
@@ -177,7 +177,7 @@ mod tests {
         let (_ring, writer, _reader) = SampleRing::new();
         let done = Arc::new(AtomicU64::new(0));
 
-        // 无穷源。水位一满就会停在门控上，只有取消能叫醒它。
+        // 无穷源。水位一满就会停在门控上，只有取消信号能使其退出。
         let push = spawn(
             std::iter::repeat_n(0.0f32, usize::MAX),
             writer,
@@ -269,7 +269,7 @@ mod tests {
         .expect("推送线程应当起得来");
 
         // 新推送线程先写满采样环，渲染线程才开始读取。
-        // 换手时渲染线程不是在等设备事件、就是在空转打盹，先醒来的是推送线程。这就是丢音的那条路。
+        // 换手时渲染线程不是在等设备事件、就是在空转等待，先被唤醒的是推送线程。这就是丢音的那条路。
         for _ in 0..400 {
             if done_new.load(Ordering::Acquire) == GENERATION + 1 {
                 break;

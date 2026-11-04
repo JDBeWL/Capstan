@@ -87,7 +87,7 @@ pub(super) fn handle_cell(index: usize, title: String, group: SharedString) -> A
         .into_any_element()
 }
 
-/// 跟着鼠标走的那张小卡片。gpui 的拖拽影像必须是一个视图实体，所以它只是个会画标题的壳。
+/// 跟着鼠标走的那张小卡片。gpui 的拖拽影像必须是视图实体，所以它只是绘制标题的占位视图。
 struct DragGhost {
     title: SharedString,
 }
@@ -120,7 +120,7 @@ mod tests {
         assert_eq!(boundary_of(0, DropEdge::Above), 0);
         assert_eq!(boundary_of(0, DropEdge::Below), 1);
         assert_eq!(boundary_of(3, DropEdge::Below), 4);
-        // 相邻两行的接缝报的是同一个边界，线才不会跳。
+        // 相邻两行的接缝报的是同一个边界，线才不会跳动。
         assert_eq!(
             boundary_of(2, DropEdge::Below),
             boundary_of(3, DropEdge::Above)

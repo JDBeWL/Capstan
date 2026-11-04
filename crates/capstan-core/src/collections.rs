@@ -36,7 +36,7 @@ impl Collection {
         self.tracks.contains(&id)
     }
 
-    /// 加入一首。新加入的排在最前——歌单按加入时间倒序，最近加的就在顶上。
+    /// 加入一首。新加入的排在最前，歌单按加入时间倒序，最近加入的排在最前。
     /// 已在册时返回 `false` 且不动位置。
     pub fn add(&mut self, id: TrackId) -> bool {
         if self.contains(id) {
@@ -101,7 +101,7 @@ pub struct Collections {
 
 impl Collections {
     /// 把发号器推到已有 id 之上。文件里的 `next` 比最大 id 还小（手改过、或旧版本写的）时，
-    /// `create` 会发出重复 id，那两个歌单就会互相顶掉封面与删除。
+    /// `create` 会发出重复 id，那两个歌单会互相覆盖封面并导致误删。
     pub fn normalize_next(&mut self) {
         if let Some(max) = self.items.iter().map(|item| item.id.0).max() {
             self.next = self.next.max(max + 1);

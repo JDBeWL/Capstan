@@ -299,7 +299,7 @@ impl Sidebar {
         };
 
         // 两块图标之间隔一条细线。细线画在黄块之前（下层），中间用等高空档占位：
-        // 黄块从上面滑过时不会把线割成两截。
+        // 黄块从上面滑过时不会把线截成两段。
         let step = theme::SIDEBAR_ITEM_H + theme::GAP_XS * 2.0 + 1.0;
         let mut rail = div()
             .flex_none()
@@ -507,8 +507,8 @@ fn empty_hint(library: Entity<LibraryEntity>) -> AnyElement {
             div()
                 .id("side-lib-empty-import")
                 .cursor_pointer()
-                // 悬停给一块 chip 底。黄只做填充：浅色下黄字压在纸色上只有 1.05:1，
-                // 鼠标一放上去字就没了。
+                // 悬停给一块 chip 底。黄只做填充。浅色下黄字与纸色对比度只有 1.05:1，
+                // 鼠标悬停时文字将不可见。
                 .mx(px(-4.))
                 .px(px(4.))
                 .text_size(px(theme::FONT_CAPTION))

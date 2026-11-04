@@ -1,15 +1,8 @@
 //! 从文件名推断缺失的标签。
 //!
-//! 文件名本身不包含「谁是歌手」这一信息。`周杰伦 - 七里香` 与 `七里香 - 周杰伦` 在语法上完全同构，
-//! 单条正则无法判定方向。因此此处不以「匹配即结论」，而是先切分、再对「角色分配」打分，
-//! 最后按置信度门限决定是否采信。判据全部来自文件名之外的证据：
-//!
-//! 1. **目录结构**，父目录作为专辑、祖父目录作为艺术家。人工整理过的目录比文件名可靠。
-//! 2. **库内已知艺人**，已有标签的曲目可提供一份名字词典。
-//! 3. **同目录一致性**。一个专辑目录内艺术家重复十余次，标题则不会。重复出现者即为艺术家。
-//!
-//! 三条证据均缺失时，仅剩「歌手在前」的位置先验，即 `PRIOR_ARTIST_FIRST`，恰好通过门限，
-//! 此即中文曲库的主流写法。证据不足时不作判定，由调用方保留原值。
+//! 文件名不包含「谁是歌手」的信息，`周杰伦 - 七里香` 与 `七里香 - 周杰伦` 语法同构，单条正则无法判定方向。
+//! 因此先切分、再对角色分配打分，按置信度门限采信；证据来自目录结构、库内已知艺人与同目录一致性。
+//! 三条均缺失时只剩「歌手在前」的先验 `PRIOR_ARTIST_FIRST`，恰好过门限，此即中文曲库主流写法；证据不足时由调用方保留原值。
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -56,13 +49,9 @@ pub fn artist_key(name: &str) -> String {
     normalise(name).to_lowercase()
 }
 
-/// 从路径推目录提示。
-///
-/// `Music`、`下载`、`新建文件夹` 这类泛用目录名不作为提示。它们表达的是「此处存放音乐」，
-/// 而非「此专辑的名称」。宁可舍弃一层信息，也不构造一批名为「Music」的专辑。
-///
-/// 「第几张碟」这类中间层需要向上跨越。`周杰伦/七里香/Disc 1/` 中，
-/// 专辑为七里香、艺术家为周杰伦，`Disc 1` 两者皆非。
+/// 从路径推目录提示。`Music`、`下载`、`新建文件夹` 这类泛用目录名不作为提示，
+/// 它们只表示「此处存放音乐」而非专辑名；宁可舍弃一层信息，也不构造一批名为「Music」的专辑。
+/// 「第几张碟」这类中间层需要向上跨越，`周杰伦/七里香/Disc 1/` 中专辑为七里香、艺术家为周杰伦，`Disc 1` 两者皆非。
 pub fn hints_for(path: &Path) -> DirHints<'_> {
     let mut found: Vec<&str> = Vec::with_capacity(2);
     let mut cursor = path.parent();
@@ -87,11 +76,8 @@ pub fn hints_for(path: &Path) -> DirHints<'_> {
     }
 }
 
-/// 同一目录里各文件「首段与次段」的出现次数。
-///
-/// 专辑目录里十首曲目的艺术家相同，标题各不相同，于是首段重复、次段不重复。
-/// 反过来 `歌名 - 歌手` 的目录里次段重复。这条判断不依赖任何词典，纯靠统计，
-/// 是整张表里唯一能自动适应「压制者习惯」的信号。
+/// 同一目录里各文件「首段与次段」的出现次数。专辑目录中艺术家重复、标题不重复，
+/// `歌名 - 歌手` 目录则次段重复；该判断不依赖词典，是整张表里唯一能自动适应压制者习惯的信号。
 #[derive(Clone, Debug, Default)]
 pub struct Siblings {
     heads: HashMap<String, usize>,
@@ -451,10 +437,8 @@ fn bracket_pair(ch: char) -> Option<(char, Bracket)> {
     }
 }
 
-/// 按分隔符切成正文段。
-///
-/// 「空格 - 空格」是最无歧义的分隔符，出现时只认它。名字与标题自带连字符的情况很常见，
-/// 如 `塞壬唱片-MSR,z1on,ReStudio`、`Secret of my heart-Hi-Res-5.1`；按裸 `-` 切会将其切断。
+/// 按分隔符切成正文段。「空格 - 空格」是最无歧义的分隔符，出现时只认它。
+/// 名字与标题自带连字符很常见，如 `塞壬唱片-MSR,z1on,ReStudio`、`Secret of my heart-Hi-Res-5.1`；按裸 `-` 切会将其切断。
 fn split_parts(body: &str) -> Vec<String> {
     if body.contains(SPACED_DASH) {
         body.split(SPACED_DASH).filter_map(trimmed).collect()
@@ -473,10 +457,7 @@ fn trimmed(part: &str) -> Option<String> {
 }
 
 /// 剥掉前导音轨号，返回音轨号与余下正文；判不出时原样返回。
-///
-/// 三道闸分别是数字最多三位、后面必须紧跟分隔符，以及空格分隔时数字要带前导零。
-/// `2002年的第一场雪` 于是不会被削掉四位数字；`7 rings` 里那个孤零零的 7 也不算。
-/// 它更像标题的一部分，而不是第 7 轨。
+/// 判据是数字最多三位、后面紧跟分隔符，空格分隔时数字带前导零；`2002年的第一场雪` 不会被削掉四位数字，`7 rings` 里的 7 也不当作音轨号。
 fn strip_track_no(body: &str) -> (Option<u32>, &str) {
     let text = body.trim_start();
     let text = strip_prefix(text);
@@ -678,10 +659,8 @@ fn has_junk_marker(folded: &str) -> bool {
     contains_any(folded, JUNK_MARKERS)
 }
 
-/// `folded` 是已经折过小写的文本。
-///
-/// ASCII 标记要求词边界，否则 `live` 会把 `Alive` 也命中；中文标记按子串算，
-/// 因为中文里没有词边界这回事。
+/// `folded` 是已折过小写的文本。ASCII 标记要求词边界，否则 `live` 会命中 `Alive`；
+/// 中文标记按子串匹配，中文没有词边界。
 fn contains_any(folded: &str, markers: &[&str]) -> bool {
     markers.iter().any(|marker| {
         if marker.is_ascii() {

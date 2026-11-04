@@ -14,7 +14,7 @@ fn main() {
 
 #[cfg(windows)]
 fn embed_version_info() {
-    // 交叉编译到非 Windows 目标时不该塞 Windows 资源。
+    // 交叉编译到非 Windows 目标时不应写入 Windows 资源。
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }

@@ -1,6 +1,5 @@
-//! Opus 与 Ogg 解码。
-//! symphonia 的 `all` 特性只注册 aac、adpcm、alac、flac、mpa、pcm、vorbis 七种。
-//! symphonia 能解析 Ogg 中的 Opus 流，但直到创建解码器才报告不支持；这里改用 `opus-pure`，纯 Rust 实现且自带 Ogg 封装。
+//! Opus 与 Ogg 解码。symphonia 的 `all` 特性只注册 aac、adpcm、alac、flac、mpa、pcm、vorbis 七种，
+//! 且 Ogg 中的 Opus 流直到创建解码器才报告不支持，因此改用纯 Rust 且自带 Ogg 封装的 `opus-pure`。
 //! Opus 恒在 48kHz 解码，头里的 `input_sample_rate` 只是原素材的说明，不影响解码。
 
 use std::fs::File;
@@ -831,7 +830,7 @@ mod tests {
         assert_eq!(pcm, vec![1.0, 3.0, 2.0, 8.0, 4.0, 5.0, 6.0, 7.0]);
     }
 
-    /// 换序必须逐帧发生，不能把整段当成一条来搬。
+    /// 换序必须逐帧发生，不能把整段当作一条处理。
     #[test]
     fn reordering_is_per_frame() {
         let mut pcm = vec![

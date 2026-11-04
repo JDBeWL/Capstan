@@ -11,10 +11,8 @@ use capstan_core::{
     scan_into_tracks,
 };
 
-/// 铺一棵曲库树。`a.mp3`、`B.FLAC`（扩展名大小写不敏感）、`notes.txt`、`sub/c.wav`；
-/// 其中 `notes.txt` 非音频，应被忽略。
-///
-/// `tag` 必须各用例不同。用例在同一进程里并行跑，共用目录会互相删数据。
+/// 铺一棵曲库树。`a.mp3`、`B.FLAC`（扩展名大小写不敏感）、`notes.txt`、`sub/c.wav`，其中 `notes.txt` 应被忽略。
+/// `tag` 必须各用例不同；用例在同一进程里并行跑，共用目录会互相删数据。
 fn fixture(tag: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
         "capstan-core-pipeline-{tag}-{}",
@@ -126,9 +124,8 @@ fn the_scanned_tracks_flow_through_queue_grouping_and_undo() {
     assert_eq!(playlist.len(), 3);
     assert_eq!(playlist.order().len(), 3);
 
-    // 分组直接吃 `tracks()`。这三首都没有标签，专辑名会退化到父目录名：
-    // 顶层两首归一组，`sub/` 里的那首自成一组。临时目录起了什么名字不在本用例的契约里，
-    // 这里只钉落点与「一首都不丢」。
+    // 分组直接使用 `tracks()`。这三首都没有标签，专辑名会退化到父目录名：
+    // 顶层两首归一组，`sub/` 里的那首自成一组。
     let albums = group_by_album(playlist.tracks());
     let titles: Vec<&str> = albums.iter().map(|album| album.title.as_str()).collect();
     assert_eq!(albums.len(), 2, "两个目录 = 两张专辑：{titles:?}");

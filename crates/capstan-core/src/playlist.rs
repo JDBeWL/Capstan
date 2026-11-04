@@ -210,9 +210,8 @@ impl Playlist {
         self.order.get(n).and_then(|id| self.by_id(*id))
     }
 
-    /// 并入曲目，返回新增的数量。同一 id 即同一路径不重复入库，但会用刚读到的标签原地替换旧条目：
-    /// 曲库落盘之后，「重新导入这个文件夹」就是刷新标签的唯一入口。替换不动位置。
-    ///
+    /// 并入曲目，返回新增数量。同一 id 不重复入库，但会用刚读到的标签原地替换旧条目，位置不变；
+    /// 曲库落盘之后，「重新导入这个文件夹」是刷新标签的唯一入口。
     /// 手改过的字段不参与替换，见 [`Track::keep_manual`]。
     pub fn push(&mut self, incoming: impl IntoIterator<Item = Track>) -> usize {
         let mut added = 0;
@@ -237,7 +236,7 @@ impl Playlist {
             self.touch();
         }
         if self.sort != SortKey::ImportOrder {
-            // 否则新歌全堆在末尾、刷新过标签的旧歌还停在原位，列表看着就没排过序。
+            // 否则新歌全堆在末尾、刷新过标签的旧歌停在原位，列表看起来没有排序。
             self.apply_sort();
         }
         added
@@ -394,7 +393,7 @@ impl Playlist {
         // 插入正在播放的队列。曲库视图里队列为 `None`，撤销移除仍回到播放顺序。
         if self.queue.is_none() {
             self.order.insert(order_index, id);
-            // 插在光标前要把光标顶后一格，否则它指向另一首。
+            // 插在光标前要使光标后移一格，否则它指向另一首。
             if order_index < self.pos {
                 self.pos += 1;
             }
@@ -461,7 +460,7 @@ impl Playlist {
         self.queue.as_deref()
     }
 
-    /// 编辑后把播放顺序整体写回显式队列：编辑即冻结，之后不再跟随曲库或可见列表。
+    /// 编辑后把播放顺序整体写回显式队列。编辑即冻结，之后不再跟随曲库或可见列表。
     /// 冻结的是当下这一份顺序，随机模式在这里不重洗。
     fn freeze_to_order(&mut self) {
         self.queue = Some(self.order.clone());
@@ -476,7 +475,7 @@ impl Playlist {
     }
 
     /// 把一批曲目插到播放顺序的第 `at` 位（`order` 空间，「下一首播放」传光标 + 1）。
-    /// 已经在队列里的曲目挪位而不是重复——重复 id 会让 `jump_to` 永远只命中第一个。
+    /// 已经在队列里的曲目挪位而不是重复。重复 id 会让 `jump_to` 永远只命中第一个。
     /// 不存在的 id 丢弃；什么都没变时不动队列。返回真正新增的首数。
     pub fn queue_insert(&mut self, ids: &[TrackId], at: usize) -> usize {
         let current = self.current_id();
@@ -892,7 +891,7 @@ mod tests {
         assert_eq!(p.next(), Advance::Stop, "顺序模式");
         assert_eq!(p.prev(), Advance::Restart, "往回走按既有约定重播当前");
 
-        // 循环档位也不能让它绕圈，绕一圈还是全播不了。
+        // 循环档位也无法改变结果，绕一圈仍然全部不可播放。
         p.set_mode(PlayMode::RepeatAll, 1);
         assert_eq!(p.next(), Advance::Stop, "列表循环下同样应当停下");
         p.set_mode(PlayMode::RepeatOne, 1);
@@ -910,7 +909,7 @@ mod tests {
         assert_eq!(p.current().unwrap().id, track(0).id);
     }
 
-    /// 自然播完那一拍走的是同一条路，不然一首 ape 放完就会卡在它上面。
+    /// 自然播完那一拍走的是同一条路，否则 ape 播完后会停在它上面。
     #[test]
     fn finishing_a_track_also_skips_unplayable_ones() {
         let mut p = Playlist::new();
@@ -928,7 +927,7 @@ mod tests {
     #[test]
     fn skipping_never_escapes_a_pinned_queue() {
         let mut p = Playlist::new();
-        // `set_queue` 会丢掉库里没有的 id，队列成员必须先真的在曲库里。
+        // `set_queue` 会丢掉库里没有的 id，队列成员必须首先存在于曲库中。
         p.push([track(0), unplayable(1), track(2)]);
         p.set_queue(Some(vec![track(0).id, unplayable(1).id]), 7);
         assert_eq!(p.order().len(), 2, "先确认队列真的有两首");
@@ -1090,7 +1089,7 @@ mod tests {
     }
 
     /// 重读标签会原地替换条目，但手改过的那几项不能被抹掉。
-    /// 否则每跑一次重扫，用户改的名字就被磁盘上的旧标签顶回去一次。
+    /// 否则每跑一次重扫，用户改的名字就被磁盘上的旧标签覆盖一次。
     #[test]
     fn 手改过的字段逃得过重读标签() {
         use crate::track::{FieldSource, FieldSources};
@@ -1279,7 +1278,7 @@ mod tests {
         );
     }
 
-    /// 队列面板按代次缓存行模型。只有结构与游标变化才前进，刷新标签不该让它白重建。
+    /// 队列面板按代次缓存行模型。只有结构与游标变化才前进，刷新标签不应触发无谓重建。
     #[test]
     fn revision_advances_on_queue_mutations_not_on_label_refresh() {
         let mut p = playlist(3);

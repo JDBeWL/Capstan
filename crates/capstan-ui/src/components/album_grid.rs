@@ -1,5 +1,5 @@
 //! 封面网格。专辑与艺术家两种分组共用一套渲染，用 `uniform_list` 虚拟化。
-//! 每张卡都向 `CoverCache` 请求封面，一次性请求几百张会把 LRU 互相挤出、封面反复闪回占位。
+//! 每张卡都向 `CoverCache` 请求封面，一次性请求几百张会互相淘汰，封面反复回退到占位。
 
 use std::rc::Rc;
 
@@ -374,7 +374,7 @@ fn card_item(
         .flex()
         .flex_col()
         .gap(px(theme::GAP_SM))
-        // 左右不留内边距：封面要铺满列宽才是正方形，标题与封面左缘对齐。
+        // 左右不留内边距。封面要铺满列宽才是正方形，标题与封面左缘对齐。
         // 上下内边距必须常态就有，hover 时才加会让卡片抖一下。
         .py(px(theme::GAP_SM))
         .cursor_pointer()
@@ -507,14 +507,14 @@ fn cover_cell(
                 theme::RADIUS_LG,
             ))
             .into_any_element(),
-        // 还在解码。画骨架屏，别让首字色块闪一下再被真封面顶掉。
+        // 还在解码。画骨架屏，避免首字色块短暂显示后被真封面替换。
         crate::common::cover::Cover::Pending => cell
             .child(crate::common::cover::skeleton(height, theme::RADIUS_LG))
             .into_any_element(),
     }
 }
 
-/// 没有封面时的占位统一走 [`crate::common::cover::monogram`]，此文件不再自己画。
+/// 没有封面时的占位统一走 [`crate::common::cover::monogram`]，此文件不再自行绘制。
 fn empty_grid() -> impl IntoElement {
     div()
         .size_full()
@@ -686,7 +686,7 @@ mod tests {
         }
     }
 
-    /// Windows 上真实造出来的文件名。中英混排、带冒号带括号，最容易在测量阶段漏算宽度。
+    /// Windows 上真实存在的文件名。中英混排、含冒号与括号，最容易在测量阶段漏算宽度。
     const REPRO_TITLES: [&str; 4] = [
         "Deluxe Expanded Remastered Collection Volume Seven",
         "A",

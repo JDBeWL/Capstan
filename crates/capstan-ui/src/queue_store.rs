@@ -1,4 +1,4 @@
-//! 播放队列落盘到 `queue.json`。存路径而不是 `TrackId`：id 由路径算出，换一轮导入可能变，
+//! 播放队列落盘到 `queue.json`。存路径而不是 `TrackId`。id 由路径算出，换一轮导入可能变，
 //! 路径才是跨启动稳定的键。`None` 表示队列跟着曲库走（没有显式队列），文件里写 `null`。
 
 use std::path::PathBuf;

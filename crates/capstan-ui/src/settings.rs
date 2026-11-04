@@ -58,7 +58,7 @@ impl WindowRect {
 #[serde(default)]
 pub struct TrackColumns {
     pub index: f32,
-    /// 时长列右侧、窗口右缘之前的空白。拖窄某列时它会变宽，拖宽时先吃它。
+    /// 时长列右侧、窗口右缘之前的空白。拖窄某列时它会变宽，拖宽时先占用它。
     pub gap: f32,
     /// 专辑列宽；窗口伸缩时按当前占比跟着标题一起变。
     pub album: f32,
@@ -68,7 +68,7 @@ impl Default for TrackColumns {
     fn default() -> Self {
         Self {
             index: crate::theme::ROW_INDEX_W,
-            // 默认不留空白：标题把能用的宽度全吃掉。
+            // 默认不留空白，标题占满可用宽度。
             gap: 0.0,
             album: crate::theme::COLUMN_ALBUM_W,
         }
@@ -88,7 +88,7 @@ impl TrackColumns {
 }
 
 /// 可持久化的界面偏好。进度、光标、滚动位置这类一过性状态不在这里。
-/// 音量、播放模式与窗口几何是例外：它们描述「用户上次要的样子」，而不是「这一次的位置」。
+/// 音量、播放模式与窗口几何是例外。它们描述「用户上次期望的状态」，而不是「这一次的位置」。
 // `#[serde(default)]`。缺字段用默认值补齐，否则新增设置项会让老配置文件整体失效。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -116,13 +116,13 @@ pub struct Settings {
     pub smooth_device_switch: bool,
     /// 用 WASAPI 独占输出。默认关。独占会占住设备，其它程序一起听不到声音。
     pub exclusive_output: bool,
-    /// 曲库列表 NO./专辑两列的宽度与列尾空白。标题列吃剩余宽度，不单独存。
+    /// 曲库列表 NO. 与专辑两列的宽度及列尾空白。标题列占用剩余宽度，不单独存。
     pub track_columns: TrackColumns,
-    /// 「你的音乐库」卡片上次手动点选的粒度（歌单 / 艺术家 / 专辑）。`None` 表示跟随主区区段。
+    /// 「你的音乐库」卡片上次手动点选的粒度（歌单、艺术家与专辑）。`None` 表示跟随主区区段。
     pub library_listing: Option<Listing>,
     /// 随机播放轴。与 `repeat` 合起来才是用户看到的播放模式。
     pub shuffle: bool,
-    /// 循环轴：关 / 列表循环 / 单曲循环。
+    /// 循环轴，关、列表循环与单曲循环。
     pub repeat: RepeatState,
     /// 曲库列表的排序键。曲目顺序本身随 `library.json` 落盘，这里记住的是用户选的是哪一档。
     pub sort_key: SortKey,
@@ -139,7 +139,7 @@ impl Default for Settings {
             density: Density::Compact,
             default_view: NavSection::Tracks,
             recursive_import: true,
-            // 默认值必须等于「加这几个字段之前的行为」，否则老用户的 settings.json 一升级就变了样。
+            // 默认值必须等于「加这几个字段之前的行为」，否则老用户的 settings.json 升级后行为会改变。
             default_panel: Some(PanelTab::NowPlaying),
             default_sidebar: None,
             resume_position: true,
@@ -241,7 +241,7 @@ mod tests {
         .clamped();
         assert_eq!(tiny.album, 64.0, "专辑列要能拖到很窄");
 
-        // 合法值原样保留，钳制不该顺手改动手动调好的宽度。
+        // 合法值原样保留，钳制不应修改用户手动调好的宽度。
         let fine = TrackColumns {
             index: 48.0,
             gap: 120.0,
@@ -322,7 +322,7 @@ mod tests {
         };
         assert_eq!(inside.fit(&primary), Some(inside));
 
-        // 副屏被拔掉：坐标落在不存在的区域里。
+        // 副屏被拔掉，坐标落在不存在的区域里。
         let gone = WindowRect {
             x: 3000.0,
             y: 200.0,
@@ -344,7 +344,7 @@ mod tests {
         assert_eq!(inside.fit(&[]), None);
     }
 
-    /// 存档里的尺寸可能来自更小的屏幕，开窗时至少要撑到窗口下限。
+    /// 存档里的尺寸可能来自更小的屏幕，开窗时至少扩展到窗口下限。
     #[test]
     fn a_tiny_saved_window_grows_to_the_minimum() {
         let rect = WindowRect {

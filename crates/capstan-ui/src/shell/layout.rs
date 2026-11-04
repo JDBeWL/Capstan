@@ -148,8 +148,8 @@ impl ShellEntity {
         self.right_panel.is_some() && !self.breakpoint.right_panel_overlays()
     }
 
-    /// 生效形态取手动值 `sidebar_override` 与断点默认中更收起的一个。手动收起后拉宽不弹开，
-    /// 窄窗口也不硬撑展开。`toggle_sidebar` 从这里起循环。
+    /// 生效形态取手动值 `sidebar_override` 与断点默认中更收起的一个。手动收起后拉宽不自动展开，
+    /// 窄窗口也不强制展开。`toggle_sidebar` 从这里起循环。
     pub fn sidebar(&self) -> SidebarState {
         let by_breakpoint = self.breakpoint.sidebar();
         match self.sidebar_override {
@@ -227,7 +227,7 @@ impl ShellEntity {
     }
 
     /// 由可用宽度算出 `(列数, 单卡宽度)`，两者必须同源算。
-    /// 卡宽是预测值，算法是一行 N 个等宽 `flex_1` 子项加 N-1 个固定间距，taffy 算出来就是这个值。
+    /// 卡宽是预测值，算法是一行 N 个等宽 `flex_1` 子项加 N-1 个固定间距，taffy 的布局结果即此值。
     pub(super) fn grid_metrics(available: f32) -> (usize, f32) {
         let usable = (available - GRID_PAD * 2.0).max(0.0);
         if usable <= 0.0 {
@@ -250,8 +250,8 @@ impl ShellEntity {
     }
 
     /// 底栏左栏宽度随窗口连续收缩而不是两态，否则中间列会整组横向瞬移。
-    /// 分两段斜坡：堆叠阈值到中档先涨到 [`theme::BOTTOM_LEFT_MEDIUM_W`]，
-    /// 中档以后才涨到满宽 [`theme::BOTTOM_LEFT_W`]——中档处主区只剩传输带，左栏不能抢那点地方。
+    /// 分两段斜坡。堆叠阈值到中档先涨到 [`crate::theme::BOTTOM_LEFT_MEDIUM_W`]，
+    /// 中档以后才涨到满宽 [`crate::theme::BOTTOM_LEFT_W`]。中档处主区只剩传输带，左栏不得再占用主区空间。
     pub fn bottom_left_width(&self) -> f32 {
         let (from, to, start, end) = if self.width <= MEDIUM_MIN {
             (
@@ -293,7 +293,7 @@ impl ShellEntity {
     }
 
     /// 重算宽度、断点与网格列数，返回是否需要重绘，即是否跨断点或列数变化。
-    /// 不碰 `sidebar_override`，改写它会把手动收起的侧栏弹开。
+    /// 不碰 `sidebar_override`，改写它会使手动收起的侧栏重新展开。
     fn resize_to(&mut self, width: f32) -> bool {
         if (width - self.width).abs() < f32::EPSILON {
             return false;
@@ -638,8 +638,8 @@ mod tests {
     #[test]
     fn bottom_left_width_never_jumps_across_the_medium_threshold() {
         let stride = 8.0;
-        // 上限按最陡那段斜坡算：窗口每走 `stride`，左栏最多长这么多。两态实现会在阈值处
-        // 一步跳完整个差值，撞的就是这条线；写死一个绝对值会在调整左栏目标宽度时误报。
+        // 上限按最陡那段斜坡算。窗口每走 `stride`，左栏最多增长该值。两态实现会在阈值处
+        // 一步跳完整个差值，触犯这条约束；写死绝对值会在调整左栏目标宽度时误报。
         let slope = ((theme::BOTTOM_LEFT_MEDIUM_W - theme::GAP_LG)
             / (MEDIUM_MIN - STACKED_BOTTOM_MIN))
             .max(

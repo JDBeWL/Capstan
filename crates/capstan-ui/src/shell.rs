@@ -36,7 +36,7 @@ pub struct ShellEntity {
     nav_history: Vec<(NavSection, Scope)>,
     /// 「后退」弹出的落点，供「前进」取用；任何新导航都会清空它。
     nav_forward: Vec<(NavSection, Scope)>,
-    /// 专辑网格每行几列，按可用宽度反推。卡宽由 `flex_1` 平分、封面高度恒定，钉死列数会拉扁卡片。
+    /// 专辑网格每行几列，按可用宽度反推。卡宽由 `flex_1` 平分、封面高度恒定，固定列数会压扁卡片。
     grid_columns: usize,
     /// 单卡宽度，与 `grid_columns` 同源算出（两者都出自 `grid_metrics`）。
     grid_card_width: f32,
@@ -130,7 +130,7 @@ impl ShellEntity {
     }
 
     /// 启动时应用落盘偏好，只在这一次生效。运行中回读它，手动收起就变成「关不掉」。
-    /// 断点仍压过偏好，窄窗口不许硬撑展开。
+    /// 断点仍压过偏好，窄窗口不得强制展开。
     pub fn apply_settings(&mut self, settings: &crate::settings::Settings, cx: &mut Context<Self>) {
         self.set_density(settings.density, cx);
         self.set_nav(settings.default_view, cx);

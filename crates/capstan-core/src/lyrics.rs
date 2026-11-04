@@ -1,4 +1,4 @@
-//! 歌词侧文件，负责 `.lrc`、`.ass`、`.ssa` 的解析与同目录查找。不读音频、不依赖 UI，可单测。
+//! 歌词侧文件，负责 `.lrc`、`.ass`、`.ssa` 的解析与同目录查找。不读音频、不依赖 UI。
 //! 双语是同一时间戳上的两行，第一条是原文。ASS 的角色依据 Style 名称识别，LDDC 把 `ts` 整块写在 `orig` 之前。
 
 use std::path::{Path, PathBuf};
@@ -180,7 +180,7 @@ pub fn parse_ass(text: &str) -> Lyrics {
             };
             continue;
         }
-        // 只在第一个冒号处切，正文里到处是冒号。
+        // 只在第一个冒号处切，正文中包含大量冒号。
         let Some((key, value)) = line.split_once(':') else {
             continue;
         };
@@ -758,7 +758,7 @@ Dialogue: 0,00:00:13.97,00:00:17.64,roma,,0,0,0,,romaji placeholder\n";
         assert_eq!(line.word_index(ms(3_379)), Some(0));
         assert_eq!(line.word_index(ms(3_380)), Some(1));
         assert_eq!(line.word_index(ms(6_600)), Some(10));
-        // 行首之前也要落在第一个字上，不能返回 None 让界面闪空。
+        // 行首之前也要落在第一个字上，不能返回 None 使界面出现空白。
         assert_eq!(line.word_index(ms(1_000)), Some(0));
         // 没有逐字信息的行返回 None，界面退化成整行点亮。
         assert_eq!(lyrics.lines[2].word_index(ms(14_000)), None);
@@ -1034,7 +1034,7 @@ Dialogue: 太短了\nComment: 0,00:00:05.00,00:00:06.00,orig,,0,0,0,,注释行\n
         std::fs::write(dir.join("gbk.lrc"), gbk_bytes).unwrap();
         assert_eq!(load_for_audio(&gbk).unwrap().lines[0].text, "测试");
 
-        // 有文件但一行歌词都没有。按「没有歌词」处理，别给界面一个空列表。
+        // 有文件但一行歌词都没有。按「没有歌词」处理，不应向界面返回空列表。
         let silent = dir.join("silent.mp3");
         std::fs::write(&silent, b"x").unwrap();
         std::fs::write(dir.join("silent.lrc"), "只有文字没有时刻").unwrap();

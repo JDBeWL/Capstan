@@ -15,7 +15,7 @@ rust-version = "1.99.1"
 license = "MIT OR Apache-2.0"
 
 [workspace.metadata.product]
-version = "0.4.0"
+version = "0.4.1"
 
 [workspace.dependencies]
 capstan-core = { path = "crates/capstan-core" }

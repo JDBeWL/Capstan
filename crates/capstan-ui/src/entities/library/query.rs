@@ -79,7 +79,7 @@ impl LibraryEntity {
         }
     }
 
-    /// 可见投影的代次。只在投影真的重算时前进，渲染路径用它判断要不要清理失效选择。
+    /// 可见投影的代次。只在投影重算时前进，渲染路径用它判断要不要清理失效选择。
     pub fn visible_generation(&self) -> u64 {
         self.visible_generation
     }
@@ -189,7 +189,7 @@ impl LibraryEntity {
             if let Some(id) = next {
                 self.set_focus(id, cx);
             }
-            // 系统替用户落的座（换作用域与改过滤），不是键盘走出来的。
+            // 换作用域与改过滤引起的焦点移动由系统决定，并非键盘操作。
             self.cursor_visible = false;
         }
     }
@@ -216,7 +216,8 @@ impl LibraryEntity {
                     .map(|(index, _)| index)
                     .collect(),
             ),
-            // 歌单按成员顺序出下标，`project_in` 保持传入顺序，所以拖拽排序的结果就是这里看到的顺序；解析不出的成员跳过。
+            // 歌单按成员顺序出下标，`project_in` 保持传入顺序，拖拽排序的结果就是这里的顺序；
+            // 解析不出的成员跳过。
             Scope::Collection(id) => Some(
                 self.collections
                     .get(*id)?
@@ -240,6 +241,30 @@ impl LibraryEntity {
 
     pub fn clear_query(&mut self, cx: &mut Context<Self>) {
         self.set_query(String::new(), cx);
+    }
+
+    /// 最近搜索，最近在前。
+    pub fn search_history(&self) -> &[String] {
+        self.history.entries()
+    }
+
+    /// 记一条搜索词。调用方只在用户确实停在这个查询上时调用，每次按键都记录会在历史中累积中间态。
+    pub fn record_search(&mut self, query: &str, cx: &mut Context<Self>) {
+        let before = self.history.clone();
+        self.history.record(query);
+        if self.history != before {
+            self.history.save();
+            cx.notify();
+        }
+    }
+
+    pub fn clear_search_history(&mut self, cx: &mut Context<Self>) {
+        if self.history.is_empty() {
+            return;
+        }
+        self.history.clear();
+        self.history.save();
+        cx.notify();
     }
 }
 

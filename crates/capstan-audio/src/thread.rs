@@ -35,7 +35,7 @@ pub(crate) fn run(
         open_exclusive,
         output_mode: OutputMode::Shared,
         current: None,
-        // 启动时还没开过流，把手上的选择当作已生效的目标，免得第一条命令就白切一次。
+        // 启动时还没开过流，把当前选择当作已生效的目标，以免第一条命令触发无效切换。
         device: initial_device.clone(),
         last_target: initial_device,
         default_id: device::default_device_id(),
@@ -68,7 +68,7 @@ struct AudioThread {
     /// 当前生效的输出模式。
     output_mode: OutputMode,
     /// 最近一次成功装载的曲目。切输出模式之后要用它把播放接回原位置。
-    /// 位置与播放状态本身从快照读，不另存一份，免得两份状态各自漂移。
+    /// 位置与播放状态本身从快照读，不另存一份，以免两份状态各自漂移。
     current: Option<PathBuf>,
     /// 用户选定的输出设备；`None` 表示跟随系统默认，拔掉时不清空。
     /// 这是用户意图，插回来要自动切回；设备不在时由 [`AudioThread::target_now`] 用系统默认设备。
@@ -304,7 +304,7 @@ impl AudioThread {
     }
 
     /// 现在该往哪台设备开流。选定的设备还在就用它；没选、或者选的那台被拔掉了，
-    /// 就用系统默认顶着。拔掉期间不能没声音，插回来还要自动切回去。
+    /// 就使用系统默认设备。拔掉期间不能没有声音，插回来还要自动切回去。
     fn target_now(&self) -> Option<String> {
         Self::target_of(self.device.as_deref(), &device::enumerate_output_devices())
     }
@@ -568,7 +568,7 @@ impl AudioThread {
         self.snapshot.set_position(position);
 
         if !finished {
-            // 真的流淌过音频数据了，之后 empty() 才是真的 empty。
+            // 已确实输出过音频数据，此后 empty() 才可信。
             self.seen_content = true;
             return;
         }
@@ -636,7 +636,7 @@ mod tests {
         }
     }
 
-    /// 由用例直接塞通知的后端；`is_finished` 恒真，用来验证断流不会被误判成播完。
+    /// 由用例直接注入通知的后端；`is_finished` 恒真，用来验证断流不会被误判成播完。
     struct NoticeBackend {
         notices: Arc<Mutex<VecDeque<BackendNotice>>>,
     }
@@ -719,7 +719,7 @@ mod tests {
         );
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
 
-        // 设备可能只是被别的程序临时占着。用户再点一次播放必须真的重试，而不是被 open_failed 挡住。
+        // 设备可能只是被别的程序临时占用。用户再点一次播放必须真正重试，而不是因 open_failed 被拦截。
         thread.handle(PlayerCommand::Play);
         assert_eq!(
             attempts.load(Ordering::SeqCst),

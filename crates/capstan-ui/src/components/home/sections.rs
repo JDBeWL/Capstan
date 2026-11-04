@@ -47,7 +47,7 @@ impl HomeView {
 }
 
 /// 「正好到头」的容差。`max_offset` 按 2 位小数取整，加上亚像素滚动，差零点几像素是常态；
-/// 不留容差的话，差 0.3px 就判成「没到头」，右箭头永远灰不下去。
+/// 不留容差的话，差 0.3px 就判成「没到头」，右箭头将始终无法置灰。
 const EDGE_EPS: f32 = 0.5;
 
 /// 一排的两端状态，箭头据此显隐。首帧（还没布局过）两个方向都算能滚。
@@ -553,7 +553,7 @@ fn cover_slot(
     }
 }
 
-/// 没有封面时的占位统一走 [`crate::common::cover::monogram`]，此文件不再自己画。
+/// 没有封面时的占位统一走 [`crate::common::cover::monogram`]，此文件不再自行绘制。
 /// 首页右侧的展示画框，切角封面 + 硬边斜线纹影子 + 墨色铭牌。
 /// 内容全部来自最近播放的那张专辑；没有记录时给出空状态。
 pub(super) fn showcase_frame(
@@ -711,7 +711,7 @@ mod tests {
     // 不写 `use super::*`，`platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
     use super::RowEdges;
 
-    /// 首帧放行。布局还没跑过时读到的 `bounds` / `max_offset` 都是 0，照它断言「到底」会让两枚箭头一起灭掉。
+    /// 首帧放行。布局还没跑过时读到的 `bounds` / `max_offset` 都是 0，据此断言「到底」会让两枚箭头同时隐藏。
     #[test]
     fn the_first_frame_claims_nothing() {
         let unmeasured = RowEdges::of(0.0, 0.0, 0.0);

@@ -52,7 +52,7 @@ pub fn bind(cx: &mut App) {
         KeyBinding::new(keys::TAB_PREV, FocusPrevControl, BROWSE),
     ]);
 
-    // macOS 键盘那个位置就是 Backspace，不补这条 Mac 用户按不到移除。
+    // macOS 键盘对应位置是 Backspace，缺少此绑定则 Mac 用户无法触发移除。
     #[cfg(target_os = "macos")]
     cx.bind_keys([KeyBinding::new("backspace", RemoveFocused, BROWSE)]);
 }

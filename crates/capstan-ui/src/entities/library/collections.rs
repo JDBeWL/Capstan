@@ -12,7 +12,7 @@ use super::scope::Scope;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CollectionSummary {
-    /// 当前曲库里真的解析得出的成员数。不是 `Collection::len()`，后者会报幽灵行。
+    /// 当前曲库实际可解析的成员数。不是 `Collection::len()`，后者会报幽灵行。
     pub count: usize,
     /// 用户为这个歌单指定的封面（数据目录里的那份拷贝）。
     pub cover_file: Option<PathBuf>,
@@ -34,7 +34,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 }
 
 /// 「插到第 `boundary` 位之前」换算成 [`capstan_core::Collection::move_item`] 要的落点下标。
-/// 往前挪时，被挪的那首空出来的位置会把后面的整体顶后一格，所以要减一；往后挪不用。
+/// 往前挪时，被挪那首空出的位置会使后续成员整体后移一格，所以要减一；往后挪不用。
 fn reorder_target(source: usize, boundary: usize) -> usize {
     if source < boundary {
         boundary - 1
@@ -73,7 +73,7 @@ impl LibraryEntity {
         Some(id)
     }
 
-    /// 删掉一个歌单。若正看着它就先退回整个曲库，否则面包屑会指向一个不存在的东西。
+    /// 删掉一个歌单。若正看着它就先退回整个曲库，否则面包屑会指向不存在的对象。
     pub fn delete_collection(&mut self, id: CollectionId, cx: &mut Context<Self>) -> bool {
         if !self.collections.remove(id) {
             return false;
@@ -365,7 +365,7 @@ mod tests {
 
         fn apply(rows: &[u64], from: usize, boundary: usize) -> Vec<u64> {
             let mut list = Collection::new(CollectionId(0), "演示");
-            // 直接摆好初始顺序，别让「新加入排最前」的默认搅进来。
+            // 直接摆好初始顺序，避免「新加入排最前」的默认顺序介入。
             list.tracks = rows.iter().map(|row| TrackId(*row)).collect();
             // 这几行都能解析成曲目，所以可见行号与成员下标是同一个轴。
             list.move_item(from, reorder_target(from, boundary));

@@ -7,15 +7,19 @@ use crate::entities::LibraryEntity;
 use crate::platform::*;
 use crate::theme;
 
-/// 攒 120ms 再提交。低于 80ms 等于没防抖，高于 200ms 列表明显迟钝。
+/// 等待 120ms 再提交。低于 80ms 起不到防抖作用，高于 200ms 列表明显迟钝。
 const DEBOUNCE: Duration = Duration::from_millis(120);
+
+/// 查询词停这么久没有变化才记进历史。120ms 防抖决定提交时机，
+/// 历史只记录用户真正停留过的查询，输入途中的中间态不留。
+const SETTLE: Duration = Duration::from_millis(1500);
 
 #[derive(Clone, Copy, Debug)]
 pub enum SearchBoxEvent {
     /// 用户开始打字。主区可能停在任意一页，靠这个事件把用户带到能看见结果的那页。
     /// 不带载荷，查询词只存在 `LibraryEntity::query` 里。
     Typing,
-    /// 框获得焦点。点它就该切到搜索页，否则点了界面没反应。
+    /// 框获得焦点。点它就该切到搜索页，否则点击没有反馈。
     Focused,
 }
 
@@ -65,7 +69,7 @@ impl SearchBox {
         if query == self.submitted {
             return;
         }
-        // 在飞的防抖代要作废，否则它会把刚镜像进去的文字当成旧值再提交一次。
+        // 进行中的防抖任务要作废，否则它会把刚镜像进去的文字当成旧值再提交一次。
         self.generation = self.generation.wrapping_add(1);
         query.clone_into(&mut self.submitted);
         // `set_value` 刻意不发 `InputEvent::Change`，所以这里不会被当成「用户在打字」。
@@ -103,7 +107,28 @@ impl SearchBox {
                     query.clone_into(&mut this.submitted);
                     this.library
                         .update(cx, |library, cx| library.set_query(query, cx));
+                    this.schedule_history(cx);
                 }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// 停下来之后把这次的查询词记进历史。任何后续输入都会推进代次，使进行中的任务作废。
+    fn schedule_history(&mut self, cx: &mut Context<Self>) {
+        let generation = self.generation;
+        let executor = cx.background_executor().clone();
+
+        cx.spawn(async move |this, cx| {
+            executor.timer(SETTLE).await;
+            this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                let query = this.library.read(cx).query().to_string();
+                this.library
+                    .update(cx, |library, cx| library.record_search(&query, cx));
             })
             .ok();
         })
@@ -116,7 +141,10 @@ impl SearchBox {
         let query = self.input.read(cx).value().to_string();
         query.clone_into(&mut self.submitted);
         self.library
-            .update(cx, |library, cx| library.set_query(query, cx));
+            .update(cx, |library, cx| library.set_query(query.clone(), cx));
+        // 回车是明确的「就搜这个」，不必等停顿。
+        self.library
+            .update(cx, |library, cx| library.record_search(&query, cx));
         cx.notify();
     }
 }
@@ -178,8 +206,8 @@ impl Render for SearchBox {
             .border_1()
             .border_color(border_color)
             .hover(|style| style.border_color(theme::text_faint()))
-            // `Input` 只有 32px 高、左右还各让出 12px 内边距，点这些空白不会聚焦；
-            // 整条转发一次焦点，点哪儿都算点进搜索框（点在 `Input` 内部时这次 `focus` 幂等）。
+            // `Input` 只有 32px 高且左右各留 12px 内边距，点击这些空白不会聚焦；
+            // 整条转发一次焦点，任意位置点击都聚焦搜索框；在 `Input` 内部时 `focus` 幂等。
             .cursor_text()
             .on_mouse_down(MouseButton::Left, {
                 let input = self.input.clone();
@@ -245,8 +273,8 @@ impl Render for SearchBox {
 mod tests {
     // 不写 `use super::*`，`platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
 
-    /// 两套主题下，组件库 `Input` 的文字色都要读过搜索框底色。
-    /// 文字色来自组件库全局态而不是 `crate::theme`，两边的明暗必须一起切。
+    /// 两套主题下，组件库 `Input` 的文字色对搜索框底色都须达到 AA 对比度。
+    /// 文字色来自组件库全局态而非 `crate::theme`，两边的明暗必须一起切换。
     #[test]
     fn input_text_reads_against_the_search_pill_in_both_themes() {
         use crate::platform::{Rgba, rgb};

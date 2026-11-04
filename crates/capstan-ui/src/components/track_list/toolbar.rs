@@ -105,7 +105,7 @@ pub(super) fn toolbar(
         follow,
     } = state;
 
-    // 进详情时让出左内边距，免得大标题被浮动返回按钮压住；与按钮位置同源于 `crate::root::HEADER_BACK_INSET`。
+    // 进详情时让出左内边距，以免大标题被浮动返回按钮压住；与按钮位置同源于 `crate::root::HEADER_BACK_INSET`。
     let back_inset = if scoped {
         crate::root::HEADER_BACK_INSET
     } else {
@@ -185,7 +185,7 @@ pub(super) fn toolbar(
     bar
 }
 
-/// 「跟随播放」开关。只管自动推进：手动点歌本来就会把那一行滚进视野。
+/// 「跟随播放」开关。只管自动推进，手动点歌本来就会把那一行滚进视野。
 fn follow_toggle(
     library: Entity<LibraryEntity>,
     on: bool,
@@ -268,7 +268,7 @@ fn scan_indicator(progress: ScanProgress) -> impl IntoElement {
         )))
 }
 
-/// 排序入口。不用 `context_menu`。它只在右键打开，左键点下去毫无反应。
+/// 排序入口。不用 `context_menu`。它只在右键打开，左键点击没有响应。
 fn sort_menu(
     library: Entity<LibraryEntity>,
     total: usize,
@@ -316,7 +316,7 @@ mod tests {
     };
     use crate::entities::ScopeKind;
 
-    /// 分母不明时不许编一个进度出来。
+    /// 分母不明时不得伪造进度。
     #[test]
     fn scan_counts_stays_honest_until_the_total_is_known() {
         assert_eq!(scan_counts(0, 0), "正在清点文件");

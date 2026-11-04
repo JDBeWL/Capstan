@@ -135,7 +135,7 @@ pub fn collect_audio_paths_with(inputs: &[PathBuf], recursive: bool) -> Vec<Path
 }
 
 /// 逐首读元数据、按 `chunk` 分批回调，让 UI 先显示前一批；阻塞函数，调用方负责放到后台线程。
-/// 单首失败退化成按路径推断，不中断整批；串行是刻意的，机械硬盘并发读会抢磁头。
+/// 单首失败退化成按路径推断，不中断整批；串行是刻意的，机械硬盘并发读取会争用磁头。
 pub fn scan_into_tracks<F>(paths: Vec<PathBuf>, chunk: usize, on_chunk: F) -> usize
 where
     F: FnMut(Vec<Track>),
@@ -152,8 +152,7 @@ pub struct ScanContext<'a> {
     pub cached: Option<&'a HashMap<TrackId, FileStamp>>,
 }
 
-/// 见 [`scan_into_tracks`]。返回的是**真正读了几首**，被 [`ScanContext::cached`] 跳过的
-/// 和扫描到的文件数不是一回事。
+/// 见 [`scan_into_tracks`]。返回实际读取的曲目数，与扫描到的文件数不是一回事。
 #[allow(clippy::implicit_hasher)]
 pub fn scan_into_tracks_with<F>(
     paths: Vec<PathBuf>,
@@ -425,7 +424,7 @@ mod tests {
         assert_eq!(tracks[0].title, "七里香");
     }
 
-    /// 文件一个字节都没变时，整段标签解析都该省掉。这是重导一个大目录不卡的关键。
+    /// 文件一个字节都没变时，整段标签解析都该省掉。这是重导大目录时避免界面卡顿的关键。
     #[test]
     fn 指纹没变的文件不再读标签() {
         let dir = std::env::temp_dir().join(format!("mp-scan-stamp-{}", std::process::id()));

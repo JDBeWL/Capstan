@@ -98,7 +98,7 @@ impl LockFreeSource {
                     if stop.load(Ordering::Relaxed) {
                         break;
                     }
-                    // 优先用消费端送回来的空块，只有冷启动/积压时才新分配。
+                    // 优先用消费端送回来的空块，只有冷启动或积压时才新分配。
                     // 音频回调线程再也不需要通过 drop 一整块 `Vec` 来释放内存。
                     let mut batch = match recycle_rx.try_recv() {
                         Ok(mut recycled) => {
@@ -214,7 +214,7 @@ impl LockFreeSource {
         self.chunk_pos = 0;
     }
 
-    /// 取下一块。通道空着时按 [`WhenEmpty`] 决定是等还是直接认输。
+    /// 取下一块。通道空着时按 [`WhenEmpty`] 决定是等待还是直接放弃。
     fn fetch(&self) -> Fetched {
         let Some(receiver) = self.receiver.as_ref() else {
             return Fetched::Done;

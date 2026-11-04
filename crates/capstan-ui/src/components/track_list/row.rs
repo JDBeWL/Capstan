@@ -17,7 +17,7 @@ pub(super) fn show_album_column(breakpoint_allows: bool, kind: ScopeKind) -> boo
     breakpoint_allows && kind != ScopeKind::Album
 }
 
-/// 列头。三处分隔线可拖：每根线管它左边那一列（NO./标题/专辑）。
+/// 列头。三处分隔线可拖，每根线管它左边那一列（NO.、标题与专辑）。
 /// 主区多余宽度落在时长右侧的空白里，拖一列不会牵动别的列。
 pub(super) fn column_header(env: &RowEnv, list: WeakEntity<TrackList>) -> impl IntoElement {
     let mut row = div()
@@ -29,13 +29,13 @@ pub(super) fn column_header(env: &RowEnv, list: WeakEntity<TrackList>) -> impl I
         .pr(px(theme::GAP_MD))
         .border_b_1()
         .border_color(theme::text())
-        // 列头只写中文，12px。10px 的拉丁字看得清，同样的字号的汉字只剩一道影子，
-        // 「TITLE / 标题」并排写的结果是英文清楚、中文糊掉。
+        // 列头只写中文，12px。10px 的拉丁字清楚，同字号汉字却会变模糊，
+        // 「TITLE / 标题」并排时中文先失去可读性。
         .font(theme::ui_font())
         .text_size(px(theme::FONT_CAPTION))
         .font_weight(theme::WEIGHT_BUTTON)
         .text_color(theme::text_muted())
-        // 勾选列与手柄列没有表头文字，但要占同样的宽，否则切换多选会在每行前面挖出一道错位。
+        // 勾选列与手柄列没有表头文字，但要占同样的宽，否则切换多选会造成整列错位。
         .when(env.selectable, |row| {
             row.child(div().flex_none().w(px(CHECK_W)))
         })
@@ -95,7 +95,7 @@ pub(super) fn column_header(env: &RowEnv, list: WeakEntity<TrackList>) -> impl I
                     columns::ColumnEdge::Album,
                     env.album_width,
                     env.gap,
-                    // 三根拖拽线里这是最后一根，句柄直接拿走这份弱引用，不必再克隆一次。
+                    // 三根拖拽线里这是最后一根，句柄直接取得这份弱引用，不必再克隆一次。
                     list,
                 )),
         );
@@ -224,7 +224,7 @@ pub(super) fn row(
     let mut element = div()
         .id(hover_id.clone())
         .group(group.clone())
-        // 落点区是绝对定位的，要有这个才钉在本行而不是钉在列表上。
+        // 落点区是绝对定位的，需要它才能固定在本行而非列表上。
         .relative()
         .h(px(row_height))
         .w_full()
@@ -270,12 +270,12 @@ pub(super) fn row(
         );
     }
 
-    // 行首两列都定宽，切换多选或进出歌单不该让整表的列跳一下。
+    // 行首两列都定宽，切换多选或进出歌单不应让整表的列跳动。
     if env.selectable {
         element = element.child(cells::check_cell(index, track_id, picked, list.clone()));
     }
     if env.reorderable {
-        // 拖拽影像要的是标题，只有真能拖的时候才付一次 clone。
+        // 拖拽影像需要标题，只有实际可拖时才付出一次 clone 开销。
         element = element.child(drag::handle_cell(index, track.title.clone(), group.clone()));
     }
 
@@ -310,7 +310,7 @@ pub(super) fn row(
             .into_any_element()
     } else {
         // 序号与悬停播放键重叠在同一格，用 `group_hover` 切换两层透明度。
-        // 不用父级 `hover` + 每行的 `hovered` 布尔。滑过一行就 notify 一次，滚动时每秒几十次重绘。
+        // 不用父级 `hover` + 每行的 `hovered` 布尔。鼠标经过一行就 notify 一次，滚动时每秒数十次重绘。
         let number_color = if state.is_focused() {
             theme::text_muted()
         } else {
@@ -458,7 +458,7 @@ pub(super) fn row(
             .tooltip(crate::common::tooltip::builder(reason));
     }
 
-    // 删除。本行向右擦出并变淡；它下面的行同步向上补位，等真正移除时正好接住。
+    // 删除。本行向右擦出并变淡；下方的行同步向上补位，真正移除时正好衔接。
     if motion.shift != 0.0 {
         element = element.top(px(motion.shift));
     }

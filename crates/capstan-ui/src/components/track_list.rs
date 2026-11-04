@@ -36,11 +36,11 @@ const CHECK_W: f32 = 32.0;
 const CHECK_BOX: f32 = 18.0;
 /// 标题行首的封面缩略图边长（舒适密度）。
 const THUMB: f32 = 40.0;
-/// 紧凑密度下的封面边长，40px 行高塞不下 40px 封面 + 文字。
+/// 紧凑密度下的封面边长，40px 行高容纳不下 40px 封面与文字。
 const THUMB_COMPACT: f32 = 32.0;
 /// 双行阈值。行高 >= 它才画两行，缩略图也用大号。必须落在两档行高（40 / 52）之间。
 const TWO_LINE_MIN: f32 = 48.0;
-/// 收藏列宽：容得下表头「LIKE / 喜欢」和居中的心形，并和右侧时长留出间隔。
+/// 收藏列宽。容得下表头「LIKE / 喜欢」和居中的心形，并和右侧时长留出间隔。
 const LIKE_W: f32 = 88.0;
 /// 标题列的最小宽度。再窄就只剩封面，表头文字会竖着排。
 const TITLE_MIN_W: f32 = 140.0;
@@ -76,7 +76,7 @@ pub struct TrackList {
     search_page: Entity<SearchPage>,
     /// 列宽的落盘点。拖动只改内存，停手后经它写 settings.json。
     settings: Entity<SettingsEntity>,
-    /// NO./专辑的存储宽度与列尾空白；标题列吃剩余宽度，时长是常量。
+    /// NO. 与专辑的存储宽度及列尾空白；标题列占用剩余宽度，时长是常量。
     columns: TrackColumns,
     /// 窗口伸缩时标题与专辑分摊宽度的占比。拖动分隔线后置空，下一次布局重新取样。
     album_ratio: Option<f32>,
@@ -779,7 +779,7 @@ fn column_fit(columns: TrackColumns, content_width: f32, album_allowed: bool) ->
     let mut title = content_width - fixed - album.unwrap_or(0.0) - gap;
 
     if title < TITLE_MIN_W {
-        // 标题先吃空白，再压专辑，保住地板。
+        // 标题先占用空白，再压缩专辑，保住下限。
         gap = (gap - (TITLE_MIN_W - title)).max(0.0);
         title = content_width - fixed - album.unwrap_or(0.0) - gap;
     }
@@ -812,7 +812,7 @@ struct RowEnv {
     /// 行首拖拽手柄 + 行内落点区。
     reorderable: bool,
     selectable: bool,
-    /// 编号/空白/专辑的存储值；标题宽度不存，时长是常量。
+    /// 编号、空白与专辑的存储值；标题宽度不存，时长是常量。
     columns: TrackColumns,
 }
 
@@ -862,7 +862,7 @@ mod tests {
 
     #[test]
     fn the_gap_from_compressing_a_column_holds_the_title_still() {
-        // 专辑缩到 100，空出 120：标题仍拿剩余宽度 316。
+        // 专辑缩到 100，空出 120，标题仍拿剩余宽度 316。
         let fit = column_fit(columns(36.0, 120.0, 100.0), 720.0, true);
         assert_eq!(fit.title, 316.0);
         assert_eq!(fit.album, Some(100.0));
@@ -871,7 +871,7 @@ mod tests {
 
     #[test]
     fn a_narrow_window_eats_the_gap_before_the_album() {
-        // 标题不够地板：先扣 120 的空白，还差 84 → 专辑让到 396。
+        // 标题不够地板。先扣 120 的空白，还差 84 → 专辑让到 396。
         let fit = column_fit(columns(36.0, 120.0, 480.0), 720.0, true);
         assert_eq!(fit.gap, 0.0, "先扣空白");
         assert_eq!(fit.album, Some(396.0), "再压专辑给标题留地板");

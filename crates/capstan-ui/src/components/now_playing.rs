@@ -63,7 +63,7 @@ impl NowPlaying {
         });
 
         // 封面解码完成时缓存会 notify。只在这一栏要画的那两张真的换了才重绘：
-        // 否则滚动曲库时每张落地封面都拖着整栏重排一次。
+        // 否则滚动曲库时每张完成解码的封面都会导致整栏重排一次。
         let cover_sub = cx.observe(&covers, |this, _, cx| {
             this.refresh_covers(cx);
         });
@@ -339,7 +339,7 @@ impl Render for NowPlaying {
             .flex_none()
             .relative()
             .w(px(theme::RIGHT_PANEL_W))
-            // 只写 `w()` 压不住内容。flex 默认 `min-width: auto`，长歌名会把面板顶宽。`min_w` + `max_w` 钉死。
+            // 只写 `w()` 压不住内容。flex 默认 `min-width: auto`，长歌名会把面板撑宽；需要 `min_w` 与 `max_w` 共同约束。
             .min_w(px(theme::RIGHT_PANEL_W))
             .max_w(px(theme::RIGHT_PANEL_W))
             .overflow_hidden()
@@ -452,7 +452,7 @@ fn artist_row(
     }))
     .on_click({
         let name = name.clone();
-        // 关注与跳转两处都要这个名字的句柄，各自持一份，别让先绑的那个把后绑的借空。
+        // 关注与跳转两处都要这个名字的句柄，各自持一份，避免先绑定的闭包占用后绑定者的借用。
         let library = library.clone();
         move |_, _, cx| {
             library.update(cx, |library, cx| {

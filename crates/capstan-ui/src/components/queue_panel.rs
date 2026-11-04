@@ -36,7 +36,7 @@ pub struct QueuePanel {
     _covers_sub: Subscription,
     scroll: ListState,
     // `observe(library)` 在任何曲库变化时都会触发，所以记住上次定位的曲目，
-    // 只在正在播放的那首真的换了时才滚动，否则用户翻看队列时会被拽回当前曲。
+    // 只在正在播放的那首确实换了时才滚动，否则用户翻看队列时会被强制滚回当前曲。
     last_anchored: Option<TrackId>,
     /// 缓存的轻量行模型。只存 `TrackId`，曲目数据在可视区里现查。
     rows: QueueRows,
@@ -254,8 +254,8 @@ impl Render for QueuePanel {
         div()
             .flex_none()
             .w(px(theme::RIGHT_PANEL_W))
-            // 只写 `w()` 压不住内容。flex 默认 `min-width: auto`，长歌名会把面板顶宽，
-            // 要 `min_w` + `max_w` 一起钉死。
+            // 只写 `w()` 压不住内容。flex 默认 `min-width: auto`，长歌名会把面板撑宽，
+            // 需要 `min_w` 与 `max_w` 共同约束。
             .min_w(px(theme::RIGHT_PANEL_W))
             .max_w(px(theme::RIGHT_PANEL_W))
             .overflow_hidden()
@@ -271,7 +271,7 @@ impl Render for QueuePanel {
                     .min_h_0()
                     .min_w_0()
                     .relative()
-                    // 拖到空白处 = 接在当前曲的下一行。行内落点会先消费掉拖拽，所以这里只在
+                    // 拖到空白处 = 接在当前曲的下一行。行内落点会先处理拖拽，所以这里只在
                     // 没压在任何一行上时才生效。
                     .on_drop::<DragTrack>({
                         let library = self.library.clone();
@@ -330,7 +330,7 @@ struct QueueKey {
     playing: Option<TrackId>,
 }
 
-/// 队列面板要显示整条队列：光标之前的项也是队列成员，不能只留几首当上下文。
+/// 队列面板要显示整条队列。光标之前的项也是队列成员，不能只留几首当上下文。
 fn queue_sources(order: &[TrackId], cursor: usize) -> (Vec<TrackId>, Vec<TrackId>) {
     let cursor = cursor.min(order.len());
     (order[..cursor].to_vec(), order[cursor..].to_vec())
@@ -615,8 +615,8 @@ fn queue_row(
         }
     });
 
-    // 上/下两半各是一个落点：上半插到这一行之前，下半插到之后。
-    // 插入位置在落的那一刻按曲目在 `order` 里的下标算，不能用行号：分段标签也占行号。
+    // 上下两半各是一个落点。上半插到这一行之前，下半插到之后。
+    // 插入位置在落的那一刻按曲目在 `order` 里的下标算，不能用行号，分段标签也占行号。
     row = row
         .child(queue_drop_zone(number, false, track_id, library))
         .child(queue_drop_zone(number, true, track_id, library));
@@ -658,7 +658,7 @@ fn queue_row(
         )
         .child(title_cell(number, track, title_color, meta_color));
 
-    // 队列行自己也能拖：拖到别的行上就是重排（`queue_insert` 对已在队列里的曲目是挪位）。
+    // 队列行本身也可拖拽，拖到别的行上就是重排（`queue_insert` 对已在队列里的曲目是挪位）。
     row = row.on_drag(
         DragTrack {
             id: track_id,
@@ -667,7 +667,7 @@ fn queue_row(
         |drag: &DragTrack, _, _, cx| cx.new(|_| DragGhost::new(drag.title.clone())),
     );
 
-    // 时长列固定宽度而不是 `flex_1`，后者的右边界取决于标题长度，会把这一列顶宽。
+    // 时长列固定宽度而不是 `flex_1`，后者的右边界取决于标题长度，会把这一列撑宽。
     let mut row = row.child(
         div()
             .flex_none()
@@ -691,7 +691,7 @@ fn queue_row(
             .tooltip(crate::common::tooltip::builder(reason));
     }
 
-    // 这里的「播放」只能跳播、不能重设队列。重设会把随机顺序洗回曲库顺序。
+    // 这里的「播放」只能跳播、不能重设队列。重设会丢弃当前随机顺序，回到曲库顺序。
     let hooks = crate::common::menu::TrackMenuHooks::none()
         .in_queue()
         .play({
@@ -791,10 +791,8 @@ fn index_cell(
         .into_any_element()
 }
 
-/// 标题格。第一行歌名，第二行「艺术家 · 专辑」。
-/// 队列行第二行写什么。只写艺术家：队列是有序的行，专辑名在这里不参与辨认，写上去只是占宽。
-/// 没有艺术家时退回专辑，但专辑若等于文件所在文件夹名（扫描时拿文件夹名兜的底），
-/// 就当它没填——否则整列都是同一个文件夹名，一眼看过去像全都一样。
+/// 队列行标题格的副标题。优先艺术家，缺失时退回专辑；专辑等于文件所在文件夹名时视为未填。
+/// 队列是有序的行，专辑名不参与辨认，只在没有艺术家时兜底。
 fn queue_meta(track: &Track) -> String {
     if let Some(artist) = track
         .artist
@@ -1123,7 +1121,7 @@ mod tests {
         assert_eq!(super::queue_meta(&track), "陈屿");
     }
 
-    /// 一个标签都没有的曲目：`subtitle()` 会拿文件夹名兜底，队列这一列不要那个兜底。
+    /// 一个标签都没有的曲目。`subtitle()` 会用文件夹名兜底，队列这一列不使用该兜底。
     #[test]
     fn a_track_without_tags_gets_no_second_line() {
         let track = capstan_core::Track::fallback(Path::new("/music/TestMusic/x.wav"));

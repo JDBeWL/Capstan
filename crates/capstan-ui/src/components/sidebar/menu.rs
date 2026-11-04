@@ -68,7 +68,7 @@ fn commit_rename(
 }
 
 /// 重命名对话框。输入框在开窗之前建。内容构建器会被反复调用，
-/// 在里面建实体等于每重绘一次就把用户正在打的字清空。
+/// 在其中创建实体会在每次重绘时清空用户正在输入的文字。
 fn open_rename_dialog(
     library: Entity<LibraryEntity>,
     id: CollectionId,
@@ -104,7 +104,7 @@ fn open_rename_dialog(
     });
 }
 
-/// 删除歌单。返回值恒为 `true`：删除没有失败路径，对话框随即关闭。
+/// 删除歌单。返回值恒为 `true`。删除没有失败路径，对话框随即关闭。
 fn commit_delete(library: &Entity<LibraryEntity>, id: CollectionId, cx: &mut App) -> bool {
     library.update(cx, |library, cx| library.delete_collection(id, cx));
     true
