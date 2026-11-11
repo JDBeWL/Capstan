@@ -1,6 +1,8 @@
 //! 歌词全屏视图。盖在主区卡片上，当前句居中、逐字点亮、点击跳转。
-//! 跟随进度重绘的粒度是「换行或换字」，不是每帧。
+//! 重绘只有两个来源，即换行与换字各一次，以及正在填的那一格每 `SWEEP_STEP` 一次。
+//! 后者只在确有一格字正在被填时推帧，其余时间这一屏静止。
 
+use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -40,11 +42,20 @@ const _: () = assert!(OPACITY_UNSUNG > OPACITY_NEAR);
 /// 逐字扫过的柔化带宽度，占一格的多少。canvas 逐像素绘制，已唱段实心，
 /// 末尾按该宽度由亮渐隐到暗；取约三分之一字身，接近卡拉OK字幕的渐变。
 const WIPE_FEATHER: f32 = 0.35;
-/// 逐字填充的刷新间隔下限。整页每帧重绘一次，帧率受这一帧的成本限制，间隔到了才画。
-const SWEEP_STEP: Duration = Duration::from_millis(12);
+/// 逐字填充的刷新间隔。这一屏每帧重排一次，帧率直接决定成本，间隔到了才画。
+/// 一格的演唱时长在 150–400 ms，60 Hz 已是每格 9–24 档，更密无法分辨，只增加 CPU 开销。
+const SWEEP_STEP: Duration = Duration::from_millis(16);
+
+/// 换行滚动的刷新间隔。呈现不等垂直同步，后端为 `Present(0)`，由 DWM 合成上屏，
+/// 因此只能多画几帧，保证每次合成都有新画面；滚动是 260 ms 内整列位移，比逐字填充快一个数量级，
+/// 帧率接近 60 Hz 时会周期性把同一帧合成两次，表现为丢帧。
+const SCROLL_STEP: Duration = Duration::from_millis(12);
 
 /// 换行滚动的时长。缓动起步快、贴近目标时收住，不回弹。
 const SCROLL_SECONDS: f32 = 0.26;
+/// 缓动结束后多补一帧的额度。`is_animating` 在渲染之前判断，只按 260 ms 判定
+/// 会把终点那一帧排除在外，最后一帧停在 99%，直到下一次换行才补齐。
+const SCROLL_SETTLE: Duration = Duration::from_millis(24);
 
 /// 空状态的眉标。比正文里的 `// ...` 大一档，否则会被下方 30px 的标题压住。
 const NOTICE_EYEBROW: f32 = 15.0;
@@ -92,8 +103,10 @@ impl Scroll {
     }
 
     fn is_animating(&self) -> bool {
-        self.started
-            .is_some_and(|started| started.elapsed().as_secs_f32() < SCROLL_SECONDS)
+        let Some(started) = self.started else {
+            return false;
+        };
+        started.elapsed().as_secs_f32() < SCROLL_SECONDS + SCROLL_SETTLE.as_secs_f32()
     }
 }
 
@@ -108,10 +121,24 @@ pub struct LyricsView {
     word: Option<usize>,
     /// 逐字填充的节拍器。见 [`Self::new`] 里的说明。
     _sweep_clock: Task<()>,
-    /// 音频快照的值与读到它的时刻。快照每 60ms 才写一次，直接使用会让逐字填充跳变。
-    pos_anchor: Option<(Duration, Instant)>,
+    /// 槽位高度表，与 [`Self::heights_key`] 配套。`slot_height` 要对每一行折行，
+    /// 每帧重算的开销随曲长线性增长，100 行 × 60 fps 即每秒六千次折行。
+    heights: Vec<f32>,
+    /// `heights` 对应的歌词与正文宽度。歌词用 `Rc` 地址判定，换曲即换地址。
+    heights_key: Option<(usize, f32)>,
     /// 列的滚动位置。换行时缓动过去，暂停时仍会走完。
     scroll: Scroll,
+    /// 当前句视图。逐字节拍只通知它；它挂在遮罩层上与本视图并列，不是本视图的子树。
+    active_row: Entity<ActiveRow>,
+    /// 遮罩原点（窗口坐标）。本视图的根与正文列各有一块 canvas 在 prepaint 时写入，
+    /// `ActiveRow` 按两者之差把正文列的矩形换算成遮罩内坐标。只有改窗口尺寸时才会变。
+    overlay_origin: Rc<Cell<Option<Point<Pixels>>>>,
+    /// 正文列矩形（窗口坐标）。
+    body_rect: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// 正文列宽预算。`render` 写一次，本视图与当前句读它定字号与折行点。
+    budget: f32,
+    /// 本帧的滚动偏移。本视图据此平移整列，当前句据此把行定位到同一条锚线上。
+    shown_offset: f32,
     _subs: Vec<Subscription>,
 }
 
@@ -126,25 +153,36 @@ impl LyricsView {
         // 暂停时播放实体不再通知，遮罩打开那一刻要靠外壳的这次通知补上当前句。
         let watch = cx.observe(&shell, |this, _, cx| this.sync_active(cx));
         // 逐字填充按播放位置计算，不用 `with_animation`，后者每帧重排整叠裁剪层。
-        // 这里按 `SWEEP_STEP` 固定相位推帧，间隔以绝对时刻对齐。
+        // 这里按固定相位推帧，间隔以绝对时刻对齐；滚动与填充各用各的间隔，见两个常量。
         let executor = cx.background_executor().clone();
         let sweep_clock = cx.spawn(async move |this, cx| {
+            let mut step = SWEEP_STEP;
             loop {
-                executor.timer(SWEEP_STEP).await;
-                match this.update(cx, |this, cx| {
-                    let sweeping = this.scroll.is_animating()
-                        || (this.shell.read(cx).shows_lyrics()
-                            && this.playback.read(cx).is_playing()
-                            && this.active_line_has_words(cx));
-                    if sweeping {
+                executor.timer(step).await;
+                // 只有滚动的缓动与正在填的那一格需要补帧。字间空隙与整行唱完后的间奏
+                // 这条链是静止的，继续重绘整屏只增加 CPU 开销。
+                step = match this.update(cx, |this, cx| {
+                    let scrolling = this.scroll.is_animating();
+                    let sweeping = scrolling || this.sweep_running(cx);
+                    if scrolling {
+                        // 整列都要随偏移平移，这一档无法省略。
                         cx.notify();
                     }
+                    if sweeping {
+                        // 当前句与本视图并列，通知它不会把整列标脏。
+                        this.active_row.update(cx, |_, cx| cx.notify());
+                    }
+                    if scrolling { SCROLL_STEP } else { SWEEP_STEP }
                 }) {
-                    Ok(()) => {}
+                    Ok(step) => step,
                     Err(_) => break,
-                }
+                };
             }
         });
+        // 当前句只持本视图的弱句柄，状态只有一份。创建时本实体尚未就位，
+        // `upgrade` 在此刻会失败，渲染期不会。
+        let weak = cx.weak_entity();
+        let active_row = cx.new(|_| ActiveRow::new(weak));
         Self {
             playback,
             shell,
@@ -153,46 +191,72 @@ impl LyricsView {
             active: None,
             word: None,
             _sweep_clock: sweep_clock,
-            pos_anchor: None,
+            heights: Vec::new(),
+            heights_key: None,
             scroll: Scroll {
                 from: 0.0,
                 to: 0.0,
                 started: None,
             },
+            active_row,
+            overlay_origin: Rc::new(Cell::new(None)),
+            body_rect: Rc::new(Cell::new(None)),
+            budget: 0.0,
+            shown_offset: 0.0,
             _subs: vec![observe, watch],
         }
     }
 
-    /// 把 60ms 一跳的音频快照补成连续时间。两次快照之间按单调时钟外推，
-    /// 新快照一到就以它为锚重新对齐，误差不超过一次快照间隔。
-    fn smooth_position(&mut self, raw: Duration, playing: bool, duration: Duration) -> Duration {
-        let now = Instant::now();
-        let anchored_at = match self.pos_anchor {
-            Some((value, at)) if playing && value == raw => at,
-            _ => {
-                self.pos_anchor = Some((raw, now));
-                now
-            }
-        };
-        let elapsed = now.saturating_duration_since(anchored_at);
-        (raw + elapsed).min(duration)
-    }
-
-    /// 当前句带不带逐字时间轴。没有就不必逐帧刷，整行只有两档亮度。
-    fn active_line_has_words(&self, cx: &App) -> bool {
-        if !self.shell.read(cx).shows_lyrics() {
+    /// 当前句的逐字时间轴是否仍在推进。只有这一段按帧重绘，开唱前、整行唱完后的间奏与
+    /// 无逐字轴的行只有静止的两档亮度。判据是位置落在第一格与最后一格之间，不用 `word`，
+    /// 因为后者由 10 Hz 进度泵更新，换字时最多滞后 100 ms，据它门控会误判为已唱完而停帧。
+    fn sweep_running(&self, cx: &App) -> bool {
+        if !self.shell.read(cx).shows_lyrics() || !self.playback.read(cx).is_playing() {
             return false;
         }
         let Loaded::Ready(lyrics) = &self.state else {
             return false;
         };
-        let Some(index) = self.active else {
+        let Some(line) = self.active.and_then(|index| lyrics.lines.get(index)) else {
             return false;
         };
-        lyrics
+        let (Some(first), Some(last)) = (line.words.first(), line.words.last()) else {
+            return false;
+        };
+        let position = self.playback.read(cx).position();
+        position >= first.start && position < last.end
+    }
+
+    /// 已解析好的歌词。当前句每帧从它读取，取不到即为空状态。
+    fn lyrics(&self) -> Option<&Lyrics> {
+        match &self.state {
+            Loaded::Ready(lyrics) => Some(lyrics),
+            Loaded::Idle | Loaded::Loading | Loaded::Missing => None,
+        }
+    }
+
+    /// 重算槽位高度表。整列每帧都要用它，但只有歌词更换或正文宽度变化时才需要重算。
+    fn ensure_heights(&mut self, lyrics: &Rc<Lyrics>, budget: f32) {
+        let key = (Rc::as_ptr(lyrics) as usize, budget);
+        if self.heights_key == Some(key) {
+            return;
+        }
+        self.heights = lyrics
             .lines
-            .get(index)
-            .is_some_and(|line| !line.words.is_empty())
+            .iter()
+            .map(|line| slot_height(line, budget))
+            .collect();
+        self.heights_key = Some(key);
+    }
+
+    /// 作废与当前这份歌词绑定的派生数据。换曲与换歌词都必须调用，
+    /// 否则高度表会用上一首的行高排这一首。
+    fn forget_lyrics(&mut self, cx: &mut Context<Self>) {
+        self.active = None;
+        self.word = None;
+        self.heights.clear();
+        self.heights_key = None;
+        self.refresh_active_row(cx);
     }
 
     /// 播放实体每次 `notify` 都会走到这里，约 10Hz，但只有换曲、换行、换字才可能重绘。
@@ -213,8 +277,7 @@ impl LyricsView {
             None if !matches!(self.state, Loaded::Idle) => {
                 self.path = None;
                 self.state = Loaded::Idle;
-                self.active = None;
-                self.word = None;
+                self.forget_lyrics(cx);
                 cx.notify();
             }
             _ => {}
@@ -227,8 +290,7 @@ impl LyricsView {
     fn request(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.path = Some(path.clone());
         self.state = Loaded::Loading;
-        self.active = None;
-        self.word = None;
+        self.forget_lyrics(cx);
 
         // `background_executor()` 返回借用，必须 clone 才能带进 'static 任务。
         let executor = cx.background_executor().clone();
@@ -244,8 +306,7 @@ impl LyricsView {
                         Some(lyrics) => Loaded::Ready(Rc::new(lyrics)),
                         None => Loaded::Missing,
                     };
-                    this.active = None;
-                    this.word = None;
+                    this.forget_lyrics(cx);
                     cx.notify();
                     // 读完后补算当前句。暂停时播放实体不会再通知，缺这一步要等下一次播放。
                     this.sync_active(cx);
@@ -254,6 +315,16 @@ impl LyricsView {
             .ok();
         })
         .detach();
+    }
+
+    /// 逐字层。它由遮罩层置于**本视图的兄弟**位置，见 [`ActiveRow`] 的说明。
+    pub fn active_row(&self) -> &Entity<ActiveRow> {
+        &self.active_row
+    }
+
+    /// 让当前句视图重新读取本视图的状态。换行、换词与换歌词都必须调用。
+    fn refresh_active_row(&self, cx: &mut Context<Self>) {
+        self.active_row.update(cx, |_, cx| cx.notify());
     }
 
     /// 重算当前行与当前字。遮罩关着就不动，两者都没变也不重绘。
@@ -267,10 +338,16 @@ impl LyricsView {
         let position = self.playback.read(cx).position();
         let next = lyrics.active_index(position);
         let next_word = next.and_then(|index| lyrics.lines[index].word_index(position));
-        if next != self.active || next_word != self.word {
+        if next != self.active {
             self.active = next;
             self.word = next_word;
+            // 换行时整列的邻行字号与浓淡都变，列与当前句都要重画。
+            self.refresh_active_row(cx);
             cx.notify();
+        } else if next_word != self.word {
+            self.word = next_word;
+            // 换字时只有当前句的字色变化，静态行不动。
+            self.refresh_active_row(cx);
         }
     }
 }
@@ -442,7 +519,7 @@ fn slot_height(line: &LyricLine, budget: f32) -> f32 {
     pill_height(line, active_size(budget), budget, true) + 2.0 * PILL_PAD_Y + ROW_GAP
 }
 
-/// 当前行的中心离正文列顶部多远，列从「容器正中」的锚点往上挪这个距离。
+/// 当前行的中心到正文列顶部的距离，列由「容器正中」的锚点向上偏移该距离。
 /// 不用外层 flex 居中。列比容器高得多，溢出的 flex 子项怎么居中由布局引擎的 overflow 对齐决定。
 fn active_center_from_top(heights: &[f32], active: usize) -> f32 {
     let Some(last) = heights.len().checked_sub(1) else {
@@ -463,18 +540,10 @@ fn sample_rate_label(rate: u32) -> String {
 
 impl Render for LyricsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (track, duration, raw_position, playing) = {
+        let (track, duration) = {
             let playback = self.playback.read(cx);
-            (
-                playback.current().cloned(),
-                playback.duration(),
-                playback.position(),
-                playback.is_playing(),
-            )
+            (playback.current().cloned(), playback.duration())
         };
-        let position = self.smooth_position(raw_position, playing, duration);
-        let active = self.active;
-        let word = self.word;
         let budget = {
             let shell = self.shell.read(cx);
             text_budget(
@@ -483,18 +552,26 @@ impl Render for LyricsView {
                 shell.right_panel().is_some(),
             )
         };
+        // 列宽与滚动偏移只在这里计算一次，当前句读的是同一份数。
+        // 逐字节拍里本视图不重绘，只有当前句那一个视图在动。
+        self.budget = budget;
+        let anchor = self.active.unwrap_or(0);
+        let offset = active_center_from_top(&self.heights, anchor);
+        self.scroll.animate_to(offset);
+        self.shown_offset = self.scroll.value();
+
+        // 槽位高度表按歌词与正文宽度缓存，换曲或窗口宽度变化时才重算一次。
+        // 逐字节拍每 16 ms 重绘一帧，这段处于每帧必经路径，必须先查表而不是重算。
+        let ready = match &self.state {
+            Loaded::Ready(lyrics) => Some(Rc::clone(lyrics)),
+            _ => None,
+        };
+        if let Some(lyrics) = &ready {
+            self.ensure_heights(lyrics, budget);
+        }
 
         let body = match (&self.state, track.as_ref()) {
-            (Loaded::Ready(lyrics), Some(_)) => lyrics_column(
-                lyrics,
-                active,
-                word,
-                &self.playback,
-                budget,
-                position,
-                &mut self.scroll,
-            )
-            .into_any_element(),
+            (Loaded::Ready(lyrics), Some(_)) => self.lyrics_body(lyrics),
             (Loaded::Loading, _) => notice(
                 "Loading",
                 "正在读取歌词",
@@ -542,8 +619,14 @@ impl Render for LyricsView {
             drop_in("lyrics-body", MOTION_BODY_DELAY_MS, 12.0, body).into_any_element()
         };
 
+        // 遮罩原点交给 `ActiveRow` 换算坐标。它与本视图同处一个遮罩框，坐标差即原点之差。
+        let origin_cell = Rc::clone(&self.overlay_origin);
+        let capture_origin = move |bounds: Bounds<Pixels>, _window: &mut Window, _cx: &mut App| {
+            origin_cell.set(Some(bounds.origin));
+        };
+
         div()
-            // 遮罩须自行拦截鼠标事件。命中测试默认会继续往下走，主区里的卡片仍被判定为悬停，
+            // 遮罩须自行拦截鼠标事件。命中测试默认继续向下传递，主区里的卡片仍被判定为悬停，
             // 它的浮层提示就会画在这一屏之上。
             .id("lyrics-overlay")
             .occlude()
@@ -556,6 +639,11 @@ impl Render for LyricsView {
             .flex_col()
             .overflow_hidden()
             .bg(theme::bg())
+            .child(
+                canvas(capture_origin, |_bounds, _state, _window, _cx| {})
+                    .absolute()
+                    .size_full(),
+            )
             .child(crate::common::ornament::page_backdrop())
             // 遮罩盖掉了主区卡片顶上的三色条，这一屏需另起一条。
             .child(crate::common::ornament::tri_strip())
@@ -578,6 +666,84 @@ impl Render for LyricsView {
                 Animation::new(Duration::from_millis(200)).with_easing(theme::ease_std()),
                 Styled::opacity,
             )
+    }
+}
+
+impl LyricsView {
+    /// 歌词正文。每行一个固定槽位，见 [`slot_height`]；由缓动偏移把当前句送到容器垂直中央。
+    /// 当前句由兄弟视图 [`ActiveRow`] 叠在同一个位置，这里给它留一块等高的空位。
+    fn lyrics_body(&self, lyrics: &Rc<Lyrics>) -> AnyElement {
+        let anchor = self.active.unwrap_or(0);
+        let (first, last) = visible_window(self.active, lyrics.lines.len());
+        let above: f32 = self.heights[..first].iter().sum();
+        let below: f32 = self.heights[last + 1..].iter().sum();
+
+        let mut column = div()
+            .relative()
+            .flex()
+            .flex_col()
+            .items_center()
+            .w_full()
+            .min_w_0()
+            // 位置由 `Scroll` 按时间计算，不交给动画系统：
+            // 后者会在动画期间随刷新率补帧并重绘整个窗口。
+            .top(px(-self.shown_offset))
+            .child(div().flex_none().h(px(above)));
+
+        for (index, line) in lyrics
+            .lines
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(last + 1 - first)
+        {
+            // 当前句由 `ActiveRow` 画在同一个位置，这里留等高空位，后面的行才不会错位。
+            if self.active == Some(index) {
+                column = column.child(div().flex_none().w_full().h(px(self.heights[index])));
+                continue;
+            }
+            column = column.child(lyric_row(
+                index,
+                line,
+                false,
+                None,
+                Duration::ZERO,
+                self.heights[index],
+                self.budget,
+                anchor,
+                &self.playback,
+            ));
+        }
+        column = column.child(div().flex_none().h(px(below)));
+
+        // 正文列的矩形交给 `ActiveRow`，它要按同一块区域定位与裁切。
+        let body_cell = Rc::clone(&self.body_rect);
+        let capture_body = move |bounds: Bounds<Pixels>, _window: &mut Window, _cx: &mut App| {
+            body_cell.set(Some(bounds));
+        };
+
+        div()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .relative()
+            .overflow_hidden()
+            .child(
+                canvas(capture_body, |_bounds, _state, _window, _cx| {})
+                    .absolute()
+                    .size_full(),
+            )
+            // 容器正中的 0 高锚点。列由此向上偏移，绕开「居中溢出盒子」的语义。
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(relative(0.5))
+                    .h(px(0.0))
+                    .child(column),
+            )
+            .into_any_element()
     }
 }
 
@@ -793,200 +959,269 @@ fn notice(
         })
 }
 
-/// 歌词正文。每行一个固定槽位，见 [`slot_height`]；药丸在槽位中居中，
-/// 靠弹簧偏移把当前行送到容器垂直中央。
-fn lyrics_column(
-    lyrics: &Rc<Lyrics>,
-    active: Option<usize>,
+/// 可见行窗口，当前句上下各 `VISIBLE_ROWS` 行。只渲染这一窗，全量渲染一帧约十几毫秒。
+const VISIBLE_ROWS: usize = 8;
+
+/// 当前句上下各 `VISIBLE_ROWS` 行的闭区间。没有当前句时从第一行起算。
+fn visible_window(active: Option<usize>, total: usize) -> (usize, usize) {
+    let Some(last_line) = total.checked_sub(1) else {
+        return (0, 0);
+    };
+    let anchor = active.unwrap_or(0).min(last_line);
+    (
+        anchor.saturating_sub(VISIBLE_ROWS),
+        (anchor + VISIBLE_ROWS).min(last_line),
+    )
+}
+
+/// 第 `index` 行顶边到容器正中锚线的距离，负值在上方。滚动偏移已计入。
+/// 列与当前句各排一次，几何只由高度表决定，两边算出的位置必须逐像素一致。
+fn row_top(heights: &[f32], offset: f32, index: usize) -> f32 {
+    heights[..index].iter().sum::<f32>() - offset
+}
+
+/// 一行歌词。`is_active` 为真时按当前句的字号与逐字进度上色，否则整行是一个文本元素。
+/// 列与当前句共用它，差别只在传进来的 `is_active` 与 `word`。
+#[allow(clippy::too_many_arguments)]
+fn lyric_row(
+    index: usize,
+    line: &LyricLine,
+    is_active: bool,
     word: Option<usize>,
-    playback: &Entity<PlaybackEntity>,
-    budget: f32,
     position: Duration,
-    scroll: &mut Scroll,
-) -> Div {
-    // 只渲染当前句上下各 `VISIBLE_ROWS` 行，全量渲染一帧约十几毫秒。
-    // 前后以等高占位补齐，滚动偏移仍按全量高度计算。
-    const VISIBLE_ROWS: usize = 8;
-    let anchor = active.unwrap_or(0);
-    // 整列共用一个字号。邻行只是它退一档，所以两档都先算一次。
-    let current = active_size(budget);
-    let idle = idle_size(budget);
-    let heights: Vec<f32> = lyrics
-        .lines
-        .iter()
-        .map(|l| slot_height(l, budget))
-        .collect();
+    height: f32,
+    budget: f32,
+    anchor: usize,
+    playback: &Entity<PlaybackEntity>,
+) -> Stateful<Div> {
+    let distance = if is_active {
+        0
+    } else {
+        index.abs_diff(anchor).max(1)
+    };
+    let opacity = match distance {
+        0 => 1.0,
+        1..=2 => OPACITY_NEAR,
+        _ => OPACITY_FAR,
+    };
+    let size = if is_active {
+        active_size(budget)
+    } else {
+        idle_size(budget)
+    };
+    let original_box = line_box(size);
 
-    let first = anchor.saturating_sub(VISIBLE_ROWS);
-    let last = (anchor + VISIBLE_ROWS).min(lyrics.lines.len().saturating_sub(1));
-    let above: f32 = heights[..first].iter().sum();
-    let below: f32 = heights[last + 1..].iter().sum();
-
-    let rows = lyrics
-        .lines
-        .iter()
-        .enumerate()
-        .skip(first)
-        .take(last + 1 - first)
-        .map(|(index, line)| {
-            let is_active = active == Some(index);
-            let distance = if is_active {
-                0
+    // 宽度约束必须落在容器上。整句包进 `flex_none` 子项时按最大内容宽度测量，
+    // 只会横向撑出正文列；flex 只在子项之间折行，不在子项内部折行。
+    let text_w = text_column(budget);
+    let original = if is_active && !line.words.is_empty() {
+        // 逐字行每格一个子项，只在格与格之间折行，各格按演唱进度调亮度。
+        div()
+            .flex_none()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .justify_center()
+            .max_w(px(text_w))
+            .min_w_0()
+            .line_height(px(original_box))
+            .text_size(px(size))
+            .font_weight(theme::WEIGHT_TITLE)
+            .text_color(theme::text())
+            .children(word_spans(line, word, position))
+    } else {
+        // 整行是一个文本元素，交给文本系统断行；中文没有空格，只有文本系统能判断换行点。
+        div()
+            .flex_none()
+            .max_w(px(text_w))
+            .min_w_0()
+            .text_center()
+            .line_height(px(original_box))
+            .text_size(px(size))
+            .font_weight(if is_active {
+                theme::WEIGHT_TITLE
             } else {
-                index.abs_diff(anchor).max(1)
-            };
-            let opacity = match distance {
-                0 => 1.0,
-                1..=2 => OPACITY_NEAR,
-                _ => OPACITY_FAR,
-            };
-            let size = if is_active { current } else { idle };
-            let original_box = line_box(size);
+                theme::WEIGHT_TRACK
+            })
+            .text_color(theme::text())
+            .opacity(opacity)
+            .child(wrap_text(&line.text, size, is_active, text_w))
+    };
 
-            // 宽度约束必须落在容器上。整句包进 `flex_none` 子项时按最大内容宽度测量，
-            // 只会横向撑出正文列；flex 只在子项之间折行，不在子项内部折行。
-            let text_w = text_column(budget);
-            let original = if is_active && !line.words.is_empty() {
-                // 逐字行每格一个子项，只在格与格之间折行，各格按演唱进度调亮度。
-                div()
-                    .flex_none()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .justify_center()
-                    .max_w(px(text_w))
-                    .min_w_0()
-                    .line_height(px(original_box))
-                    .text_size(px(size))
-                    .font_weight(theme::WEIGHT_TITLE)
-                    .text_color(theme::text())
-                    .children(word_spans(line, word, position))
-            } else {
-                // 整行是一个文本元素，交给文本系统断行；中文没有空格，只有文本系统能判断换行点。
-                div()
-                    .flex_none()
-                    .max_w(px(text_w))
-                    .min_w_0()
-                    .text_center()
-                    .line_height(px(original_box))
-                    .text_size(px(size))
-                    .font_weight(if is_active {
-                        theme::WEIGHT_TITLE
-                    } else {
-                        theme::WEIGHT_TRACK
-                    })
-                    .text_color(theme::text())
-                    .opacity(opacity)
-                    .child(wrap_text(&line.text, size, is_active, text_w))
-            };
+    // 药丸按内容收缩；槽位高度只用于滚动偏移。
+    let group = SharedString::from(format!("lyric-row-{index}"));
+    let mut pill = div()
+        .flex_none()
+        .flex()
+        .flex_col()
+        .items_center()
+        .px(px(theme::GAP_LG))
+        .py(px(PILL_PAD_Y))
+        .rounded(px(theme::RADIUS_LG))
+        .group_hover(group.clone(), |style| style.bg(theme::hover()))
+        .child(original);
 
-            // 药丸按内容收缩；槽位高度只用于滚动偏移。
-            let group = SharedString::from(format!("lyric-row-{index}"));
-            let mut pill = div()
-                .flex_none()
-                .flex()
-                .flex_col()
-                .items_center()
-                .px(px(theme::GAP_LG))
-                .py(px(PILL_PAD_Y))
-                .rounded(px(theme::RADIUS_LG))
-                .group_hover(group.clone(), |style| style.bg(theme::hover()))
-                .child(original);
-
-            for part in translation_rows(line) {
-                let trans_size = translation_size(size);
-                let trans_box = line_box(trans_size);
-                pill = pill.child(
-                    div()
-                        .flex_none()
-                        .max_w(px(text_w))
-                        // 缺这一条时文本按最小内容宽度撑开，max_w 压不住，长译文整行溢出正文列。
-                        .min_w_0()
-                        .text_center()
-                        .line_height(px(trans_box))
-                        .opacity(opacity)
-                        .text_size(px(trans_size))
-                        .text_color(theme::text_muted())
-                        .child(part.to_owned()),
-                );
-            }
-
-            // 行首竖条。当前句常亮，其余行悬停时出现，表明这一句可以点击。
-            // 颜色用 trace 而非强调色；浅色主题中黄色与纸色对比度仅 1.1:1，细条无法辨认。
-            let marker = div()
-                .absolute()
-                .left_0()
-                .top_0()
-                .bottom_0()
-                .w(px(if is_active { 3. } else { 2. }))
-                .bg(theme::trace())
-                .when(!is_active, |bar| {
-                    bar.opacity(0.0)
-                        .group_hover(group.clone(), |style| style.opacity(0.45))
-                });
-
+    for part in translation_rows(line) {
+        let trans_size = translation_size(size);
+        let trans_box = line_box(trans_size);
+        pill = pill.child(
             div()
-                .id(SharedString::from(format!("lyric-{index}")))
-                .group(group)
                 .flex_none()
-                .w_full()
-                .h(px(heights[index]))
+                .max_w(px(text_w))
+                .min_w_0()
+                .text_center()
+                .line_height(px(trans_box))
+                .opacity(opacity)
+                .text_size(px(trans_size))
+                .text_color(theme::text_muted())
+                .child(part.to_owned()),
+        );
+    }
+
+    // 行首竖条。当前句常亮，其余行悬停时出现，表明这一句可以点击。
+    // 颜色用 trace 而非强调色；浅色主题中黄色与纸色对比度仅 1.1:1，细条无法辨认。
+    let marker = div()
+        .absolute()
+        .left_0()
+        .top_0()
+        .bottom_0()
+        .w(px(if is_active { 3. } else { 2. }))
+        .bg(theme::trace())
+        .when(!is_active, |bar| {
+            bar.opacity(0.0)
+                .group_hover(group.clone(), |style| style.opacity(0.45))
+        });
+
+    div()
+        .id(SharedString::from(format!("lyric-{index}")))
+        .group(group)
+        .flex_none()
+        .w_full()
+        .h(px(height))
+        .relative()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .text_center()
+        .cursor_pointer()
+        .on_click(seek_handler(playback, line.start))
+        .child(
+            div()
                 .relative()
                 .flex()
                 .flex_col()
                 .items_center()
-                .justify_center()
-                .text_center()
-                .cursor_pointer()
-                .on_click(seek_handler(playback, line.start))
-                .child(
-                    div()
-                        .relative()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .max_w(px(text_w))
-                        .min_w_0()
-                        .child(pill)
-                        // 竖条排在药丸之后，才不会被悬停底色盖住。
-                        .child(marker),
-                )
-        });
-
-    let offset = active_center_from_top(&heights, anchor);
-    scroll.animate_to(offset);
-    let offset = scroll.value();
-
-    div()
-        .flex_1()
-        .min_w_0()
-        .min_h_0()
-        .relative()
-        .overflow_hidden()
-        // 容器正中的 0 高锚点。列从它往上挪，绕开「居中溢出盒子」的语义。
-        .child(
-            div()
-                .absolute()
-                .left_0()
-                .right_0()
-                .top(relative(0.5))
-                .h(px(0.0))
-                .child(
-                    div()
-                        .relative()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .w_full()
-                        .min_w_0()
-                        // 位置由 `Scroll` 按时间计算，不交给动画系统：
-                        // 后者会在动画期间随刷新率补帧并重绘整个窗口。
-                        .top(px(-offset))
-                        .child(div().flex_none().h(px(above)))
-                        .children(rows)
-                        .child(div().flex_none().h(px(below))),
-                ),
+                .max_w(px(text_w))
+                .min_w_0()
+                .child(pill)
+                // 竖条排在药丸之后，才不会被悬停底色盖住。
+                .child(marker),
         )
+}
+
+/// 当前句。逐字节拍唯一重绘的视图，一帧的工作量是一行字加一格逐像素亮字。
+/// 它位于歌词屏的**兄弟**位置，见根视图的遮罩层。gpui 标脏会向上传播到祖先，而重绘
+/// 一个视图时整棵子树参与重排，故它若留在 `LyricsView` 内，每拍都会重排整列 17 行。
+pub struct ActiveRow {
+    view: WeakEntity<LyricsView>,
+    /// 音频快照的值与读取时刻。快照每 60 ms 才写一次，直接据此计算进度会使填充逐格跳变。
+    /// 平滑必须留在这个视图内，因为歌词屏不按帧重绘，其位置只停在上次换行那一刻。
+    pos_anchor: Option<(Duration, Instant)>,
+}
+
+impl ActiveRow {
+    fn new(view: WeakEntity<LyricsView>) -> Self {
+        Self {
+            view,
+            pos_anchor: None,
+        }
+    }
+
+    /// 把 60 ms 一跳的音频快照补成连续时间。两次快照之间按单调时钟外推，
+    /// 新快照一到就以它为锚重新对齐，误差不超过一次快照间隔。
+    fn smooth_position(&mut self, raw: Duration, playing: bool, duration: Duration) -> Duration {
+        let now = Instant::now();
+        let anchored_at = match self.pos_anchor {
+            Some((value, at)) if playing && value == raw => at,
+            _ => {
+                self.pos_anchor = Some((raw, now));
+                now
+            }
+        };
+        let elapsed = now.saturating_duration_since(anchored_at);
+        (raw + elapsed).min(duration)
+    }
+}
+
+impl Render for ActiveRow {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(view) = self.view.upgrade() else {
+            return div().into_any_element();
+        };
+        let view = view.read(cx);
+        let (Some(lyrics), Some(index)) = (view.lyrics(), view.active) else {
+            return div().into_any_element();
+        };
+        let (Some(line), Some(&height)) = (lyrics.lines.get(index), view.heights.get(index)) else {
+            return div().into_any_element();
+        };
+        // 正文列的矩形由歌词屏在 prepaint 时写入。首帧尚未写入，不绘制。
+        let (Some(origin), Some(body)) = (view.overlay_origin.get(), view.body_rect.get()) else {
+            return div().into_any_element();
+        };
+        // 进度必须在这里按帧计算。`LyricsView` 只在换行换字时重绘，其所持位置已经过期。
+        let (raw, playing, duration) = {
+            let playback = view.playback.read(cx);
+            (
+                playback.position(),
+                playback.is_playing(),
+                playback.duration(),
+            )
+        };
+        let position = self.smooth_position(raw, playing, duration);
+        let width = f32::from(body.size.width);
+        let body_h = f32::from(body.size.height);
+        if width <= 0.0 || body_h <= 0.0 {
+            return div().into_any_element();
+        }
+
+        // 与静态行同一条锚线，即容器正中减去滚动偏移，再加上前面各行的高度。
+        // 两边的几何都只由高度表决定，逐像素一致。
+        let top_in_body = body_h / 2.0 + row_top(&view.heights, view.shown_offset, index);
+
+        div()
+            .absolute()
+            .left(px(f32::from(body.origin.x - origin.x)))
+            .top(px(f32::from(body.origin.y - origin.y)))
+            .w(px(width))
+            .h(px(body_h))
+            .overflow_hidden()
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(px(top_in_body))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .child(lyric_row(
+                        index,
+                        line,
+                        true,
+                        // 当前格也按平滑位置计算，因为 `view.word` 以 10 Hz 更新，据它上色
+                        // 会使换字滞后，格子交界处表现为卡顿。
+                        line.word_index(position),
+                        position,
+                        height,
+                        view.budget,
+                        index,
+                        &view.playback,
+                    )),
+            )
+            .into_any_element()
+    }
 }
 
 /// 正在唱的那一格的亮字。已唱段实心，交界处按像素逐条绘制，

@@ -31,6 +31,18 @@ pub(crate) const WM_GPUI_DISPLAYS_CHANGED: u32 = WM_USER + 10;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
+/// 窗口移动的最后一次上报定时器。见 `handle_move_msg`。
+const MOVE_SETTLE_TIMER_ID: usize = 2;
+/// 停止移动后多久上报。拖动时 `WM_MOVE` 每 8~9 ms 一条，该间隔须大于鼠标停顿，
+/// 又须小到释放后位置立即生效。
+const MOVE_SETTLE_MS: u32 = 120;
+
+/// 拖动边框缩放时的最小帧间隔。每条 `WM_SIZE` 与每次 vsync 各引来一次 `WM_PAINT`，
+/// 约 180 次/秒，比显示器快两倍；跳过的帧不会丢内容，见 `draw_window`。
+const RESIZE_FRAME_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
+/// 最后一次 `WM_SIZE` 之后多久仍算拖动中。鼠标停住后须尽快把终值画上去。
+const RESIZE_BURST: std::time::Duration = std::time::Duration::from_millis(200);
+
 /// Coordinates window draws on the UI thread. Owned by the platform and
 /// shared with every window (like `WindowsPlatformState::cursor_visible`),
 /// because the coordination is inherently cross-window: while window A is
@@ -106,7 +118,7 @@ impl WindowsWindowInner {
             WM_DISPLAYCHANGE => self.handle_display_change_msg(handle),
             WM_NCHITTEST => self.handle_hit_test_msg(handle, lparam),
             WM_PAINT => self.handle_paint_msg(handle),
-            WM_CLOSE => self.handle_close_msg(),
+            WM_CLOSE => self.handle_close_msg(handle),
             WM_DESTROY => self.handle_destroy_msg(handle),
             WM_MOUSEMOVE => self.handle_mouse_move_msg(handle, lparam, wparam),
             WM_MOUSELEAVE | WM_NCMOUSELEAVE => self.handle_mouse_leave_msg(),
@@ -196,9 +208,24 @@ impl WindowsWindowInner {
                 )?);
             }
         }
-        if let Some(mut callback) = self.state.callbacks.moved.take() {
-            callback();
-            self.state.callbacks.moved.set(Some(callback));
+        // 不在此处上报。拖动窗口时 `WM_MOVE` 随鼠标逐像素到达，约 110 次/秒，而 `moved`
+        // 回调经 `Window::bounds_changed` → `refresh()` 把整个窗口标脏，下一帧整棵树重排
+        // 重画。窗口位置与布局无关，这些帧与上一帧逐像素相同。故改为停止后再报，每条
+        // `WM_MOVE` 只重置一个 120 ms 的单次定时器，`WM_EXITSIZEMOVE` 立即补发终值。
+        self.state.move_settle_pending.set(true);
+        let timer = unsafe {
+            SetTimer(
+                Some(handle),
+                MOVE_SETTLE_TIMER_ID,
+                MOVE_SETTLE_MS,
+                None,
+            )
+        };
+        if timer == 0 {
+            log::error!(
+                "unable to create move settle timer: {}",
+                std::io::Error::last_os_error()
+            );
         }
         Some(0)
     }
@@ -260,14 +287,15 @@ impl WindowsWindowInner {
         let new_logical_size = device_size.to_pixels(scale_factor);
 
         self.state.logical_size.set(new_logical_size);
-        if should_resize_renderer
-            && let Err(e) = self.state.renderer.borrow_mut().resize(device_size)
-        {
-            log::error!("Failed to resize renderer, invalidating devices: {}", e);
-            self.state
-                .invalidate_devices
-                .store(true, std::sync::atomic::Ordering::Release);
-        }
+        // 渲染器尺寸推迟到绘制之前再提交。拖动边框时每条 `WM_SIZE` 都经过这里，
+        // 约 90 次/秒，而画面每秒仅四十余帧，中间那几十次 `ResizeBuffers` 重建后
+        // 立即作废。见 `draw_window` 里的 `apply_pending_size`。
+        self.state
+            .pending_renderer_size
+            .set(Some((device_size, should_resize_renderer)));
+        self.state
+            .last_size_change
+            .set(Some(std::time::Instant::now()));
         if let Some(mut callback) = self.state.callbacks.resize.take() {
             callback(new_logical_size, scale_factor);
             self.state.callbacks.resize.set(Some(callback));
@@ -296,10 +324,45 @@ impl WindowsWindowInner {
         unsafe {
             KillTimer(Some(handle), SIZE_MOVE_LOOP_TIMER_ID).log_err();
         }
+        // 释放鼠标即上报终值，使窗口位置立即传递到应用层。
+        self.report_move_settled(handle);
         None
     }
 
+    /// 把挂起的窗口尺寸交给渲染器。只在绘制之前调用，一次绘制最多重建一次 swap chain。
+    fn apply_pending_size(&self) {
+        let Some((device_size, should_resize_renderer)) = self.state.pending_renderer_size.take()
+        else {
+            return;
+        };
+        if !should_resize_renderer {
+            return;
+        }
+        if let Err(e) = self.state.renderer.borrow_mut().resize(device_size) {
+            log::error!("Failed to resize renderer, invalidating devices: {}", e);
+            self.state
+                .invalidate_devices
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    /// 把挂起的移动上报给 GPUI，并停止定时器。定时器到点与拖动结束都经由此处。
+    fn report_move_settled(&self, handle: HWND) {
+        unsafe { KillTimer(Some(handle), MOVE_SETTLE_TIMER_ID).log_err() };
+        if !self.state.move_settle_pending.replace(false) {
+            return;
+        }
+        if let Some(mut callback) = self.state.callbacks.moved.take() {
+            callback();
+            self.state.callbacks.moved.set(Some(callback));
+        }
+    }
+
     fn handle_timer_msg(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
+        if wparam.0 == MOVE_SETTLE_TIMER_ID {
+            self.report_move_settled(handle);
+            return None;
+        }
         if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
             let mut runnables = self.main_receiver.clone().try_iter();
             while let Some(Ok(runnable)) = runnables.next() {
@@ -315,7 +378,9 @@ impl WindowsWindowInner {
         self.draw_window(handle, false)
     }
 
-    fn handle_close_msg(&self) -> Option<isize> {
+    fn handle_close_msg(&self, handle: HWND) -> Option<isize> {
+        // 先补发挂起的移动，否则拖动后立即关窗会丢失最后一次位置。
+        self.report_move_settled(handle);
         let mut callback = self.state.callbacks.should_close.take()?;
         let should_close = callback();
         self.state.callbacks.should_close.set(Some(callback));
@@ -1000,17 +1065,17 @@ impl WindowsWindowInner {
             return drag_area;
         }
 
-        // [PATCH by Capstan] 上游只识别顶边与上面两个角，左 / 右 / 下三边因此无法缩放
-        // （应用侧用 `Window::resize` 兜底的话，`SWP_NOMOVE` 会把拖左边变成反向拉伸）。
-        // 这里补齐四边四角，只返回 `HT*` 码，缩放本身交给 Windows 做。见 `PATCH.md`。
+// [PATCH by Capstan] 上游只识别顶边与上面两个角，左、右、下三边因此无法缩放。
+// 应用侧若用 `Window::resize` 兜底，`SWP_NOMOVE` 会使拖左边变成反向拉伸。
+// 这里补齐四边四角，只返回 `HT*` 码，缩放本身交给 Windows 处理。见 `PATCH.md`。
         let mut rect = Default::default();
         unsafe { GetWindowRect(handle, &mut rect) }.log_err();
         // right and bottom bounds of RECT are exclusive, thus `-1`
         let right = rect.right - rect.left - 1;
         let bottom = rect.bottom - rect.top - 1;
 
-        // `cursor_point` 相对客户区：左边框内为负，右边框内大于客户区宽度。
-        // 角比边放宽 `CORNER_GRAB_SCALE` 倍，否则对角热区只剩 8×8，鼠标稍偏就退化成单向边缩放。
+        // `cursor_point` 相对客户区，左边框内为负，右边框内大于客户区宽度。
+        // 角比边放宽 `CORNER_GRAB_SCALE` 倍，否则对角热区仅 8×8，偏移数像素即退化为单向边缩放。
         const CORNER_GRAB_SCALE: i32 = 2;
         let corner_x = frame_x * CORNER_GRAB_SCALE;
         let corner_y = frame_y * CORNER_GRAB_SCALE;
@@ -1025,7 +1090,7 @@ impl WindowsWindowInner {
         let on_top = cursor_point.y <= frame_y;
         let on_bottom = bottom - frame_y <= cursor_point.y;
 
-        // 先判角（放宽的热区），再判边（原边框厚度）。
+        // 角优先于边，因为角的热区已放宽，而边仍按原边框厚度判定。
         let frame_hit = match (near_left, near_right, near_top, near_bottom) {
             (true, _, true, _) => Some(HTTOPLEFT),
             (_, true, true, _) => Some(HTTOPRIGHT),
@@ -1401,6 +1466,28 @@ impl WindowsWindowInner {
             // will rebuild the scene with fresh atlas textures.
             self.state.renderer.borrow_mut().mark_drawable();
         }
+        // 拖动边框缩放时一帧只画一次。每条 `WM_SIZE` 与每次 vsync 都会使窗口失效并发来
+        // `WM_PAINT`，约 180 次/秒，而显示器并未换帧，多画的帧会被下一帧整幅覆盖。
+        // 跳过时照旧校验客户区，vsync 线程每拍 `RDW_INVALIDATE`，下一拍必然再收到
+        // `WM_PAINT`，不会漏画。
+        let resizing = self
+            .state
+            .last_size_change
+            .get()
+            .is_some_and(|at| at.elapsed() < RESIZE_BURST);
+        if !force_render
+            && resizing
+            && self
+                .state
+                .last_draw
+                .get()
+                .is_some_and(|at| at.elapsed() < RESIZE_FRAME_INTERVAL)
+        {
+            unsafe { ValidateRect(Some(handle), None).ok().log_err() };
+            self.state.callbacks.request_frame.set(Some(request_frame));
+            return Some(0);
+        }
+
         let (signal_at, signal_source) = self.state.frame_signal.take().map_or(
             (None, FrameRequestSource::NativeCallback),
             |(at, source)| (Some(at), source),
@@ -1412,6 +1499,8 @@ impl WindowsWindowInner {
             signal_source,
         });
 
+        self.apply_pending_size();
+        self.state.last_draw.set(Some(std::time::Instant::now()));
         self.state.callbacks.request_frame.set(Some(request_frame));
         self.update_ime_enabled(handle);
         unsafe { ValidateRect(Some(handle), None).ok().log_err() };

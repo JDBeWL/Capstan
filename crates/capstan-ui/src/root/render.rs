@@ -329,27 +329,38 @@ impl RootView {
             )
             // 遮罩排在卡片内容最后，后画的在上面。
             .when(frame.lyrics_open || self.lyrics_closing, |card| {
-                card.child(self.lyrics_overlay(frame))
+                card.child(self.lyrics_overlay(frame, cx))
             })
     }
 
-    fn lyrics_overlay(&self, frame: &Frame) -> AnyElement {
-        let root = div()
+    fn lyrics_overlay(&self, frame: &Frame, cx: &App) -> AnyElement {
+        // 歌词屏与当前句是两棵互不包含的子树。逐字节拍只通知当前句，它不在歌词屏的
+        // 祖先链上，故歌词屏的缓存不受影响；若把当前句并入歌词屏，gpui 重绘一个视图
+        // 会连带整棵子树重排，拆分的收益即消失。行悬停由 `group_hover` 驱动，不会漏高亮。
+        let layer = StyleRefinement::default()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full();
+        let active_row = self.lyrics.read(cx).active_row().clone();
+        let overlay = div()
             .absolute()
             .top_0()
             .left_0()
             .size_full()
-            .child(self.lyrics.clone());
+            .child(self.lyrics.clone().cached(layer.clone()))
+            .child(active_row.cached(layer));
         if self.lyrics_closing && !frame.lyrics_open {
-            root.with_animation(
-                "lyrics-out",
-                Animation::new(Duration::from_millis(theme::MOTION_OVERLAY_OUT_MS))
-                    .with_easing(theme::ease_std()),
-                |el, delta| el.opacity(1.0 - delta),
-            )
-            .into_any_element()
+            overlay
+                .with_animation(
+                    "lyrics-out",
+                    Animation::new(Duration::from_millis(theme::MOTION_OVERLAY_OUT_MS))
+                        .with_easing(theme::ease_std()),
+                    |el, delta| el.opacity(1.0 - delta),
+                )
+                .into_any_element()
         } else {
-            root.into_any_element()
+            overlay.into_any_element()
         }
     }
 

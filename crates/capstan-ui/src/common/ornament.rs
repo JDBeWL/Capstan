@@ -164,7 +164,7 @@ const CONTOUR_INK: f32 = 0.085;
 const CONTOUR_W: f32 = 1.2;
 /// 淡出用的指数。压过线性，片缘那几档掉得更快，线不会被片的矩形边掐断。
 const CONTOUR_FALLOFF: f32 = 1.5;
-/// 两片各用一个种子；换了就是另一片地形。
+/// 两片各用一个种子，更换种子即换一片地形。
 const CONTOUR_SEED_TOP: u32 = 20_261_013;
 const CONTOUR_SEED_BOTTOM: u32 = 7_741;
 
@@ -198,8 +198,13 @@ thread_local! {
         const { RefCell::new(Vec::new()) };
 }
 
-/// 保留最近几份。拖窗口时会连续产生好几个尺寸，留一份会一直重烘。
+/// 保留最近几份。拖窗口时会连续跨过几个量化档，留一份会一直重烘。
 const PATCH_CACHE_LEN: usize = 8;
+
+/// 尺寸量化步长。拖动窗口边框时每一帧的尺寸都不同，按真实尺寸做键即每帧重烘一次，
+/// 单片 7 ms，两片占去一帧绘制时间的三分之二。量化到 16px 后一段拖动只烘几次，
+/// 贴图最多被拉伸 16px，淡墨等高线在这个尺度上无法察觉。
+const PATCH_STEP: f32 = 16.0;
 
 fn patch_image(
     window: &mut Window,
@@ -208,9 +213,10 @@ fn patch_image(
     scale: f32,
     ink: Rgba,
 ) -> Option<std::sync::Arc<RenderImage>> {
+    // 向上取整，烘出的图不小于要贴的矩形，缩放只发生在档内，不会发糊。
     let key: PatchKey = (
-        extent.0.round() as i32,
-        extent.1.round() as i32,
+        (extent.0 / PATCH_STEP).ceil() as i32,
+        (extent.1 / PATCH_STEP).ceil() as i32,
         seed,
         u32::from(ink),
         (scale * 100.0).round() as u16,
@@ -226,8 +232,9 @@ fn patch_image(
         return hit;
     }
 
-    let patched = crate::common::contour::patch(extent.0, extent.1, seed);
-    let image = std::sync::Arc::new(RenderImage::new([bake(&patched, extent, scale, ink)?]));
+    let bake_extent = (key.0 as f32 * PATCH_STEP, key.1 as f32 * PATCH_STEP);
+    let patched = crate::common::contour::patch(bake_extent.0, bake_extent.1, seed);
+    let image = std::sync::Arc::new(RenderImage::new([bake(&patched, bake_extent, scale, ink)?]));
     let evicted = PATCH_IMAGES.with(|cache| {
         let mut cache = cache.borrow_mut();
         cache.push((key, std::sync::Arc::clone(&image)));

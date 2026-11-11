@@ -84,6 +84,15 @@ pub struct WindowsWindowState {
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
     /// as resizing them has failed, causing us to have lost at least the render target.
     pub invalidate_devices: Arc<AtomicBool>,
+    /// 有一次窗口移动尚未上报给 GPUI。见 `events.rs::handle_move_msg`。
+    pub move_settle_pending: Cell<bool>,
+    /// 最后一次收到 `WM_SIZE` 的时刻。见 `events.rs::draw_window` 的限帧。
+    pub last_size_change: Cell<Option<Instant>>,
+    /// 尚未交给渲染器的尺寸，以及是否重建 swap chain。
+    /// 拖动边框时每条 `WM_SIZE` 都会到达，而绘制仅每秒四十余次，见 `draw_window`。
+    pub pending_renderer_size: Cell<Option<(Size<DevicePixels>, bool)>>,
+    /// 上一次真正开始绘制 gpui 帧的时刻，限帧用。
+    pub last_draw: Cell<Option<Instant>>,
     /// Shared with [`WindowsPlatformState::draw_coordinator`] and every other window.
     pub(crate) draw_coordinator: Rc<DrawCoordinator>,
     fullscreen: Cell<Option<StyleAndBounds>>,
@@ -183,6 +192,10 @@ impl WindowsWindowState {
             current_cursor: Cell::new(current_cursor),
             cursor_visible,
             nc_button_pressed: Cell::new(nc_button_pressed),
+            move_settle_pending: Cell::new(false),
+            last_size_change: Cell::new(None),
+            pending_renderer_size: Cell::new(None),
+            last_draw: Cell::new(None),
             display: Cell::new(display),
             fullscreen: Cell::new(fullscreen),
             initial_placement: Cell::new(initial_placement),
