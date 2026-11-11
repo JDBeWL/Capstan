@@ -280,7 +280,7 @@ fn seek_handler(
     start: Duration,
 ) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     let playback = playback.clone();
-    move |_, _, cx| playback.update(cx, |playback, _| playback.seek(start))
+    move |_, _, cx| playback.update(cx, |playback, cx| playback.seek(start, cx))
 }
 
 /// 单个字符的估计宽度。CJK、假名与全角标点 ≈ 1 em，其余 ASCII ≈ 0.52 em，

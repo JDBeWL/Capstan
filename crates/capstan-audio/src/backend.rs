@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::error::{AudioError, Result};
@@ -10,12 +10,21 @@ pub enum BackendNotice {
     Lost(AudioError),
     /// 链路已自行重建并继续播放；音频线程应当把状态改回「播放中」。
     Resumed,
+    /// 已无缝接入预载的下一首。音频未中断，元信息随之更换。
+    Advanced { path: PathBuf, duration: Duration },
 }
 
 /// 音频后端的抽象边界。实现者可以是 `!Send` 的，只在音频线程内部构造和使用。
 pub trait AudioBackend: 'static {
     /// 装载曲目。返回解码出的时长，未知时返回 `Duration::ZERO`。
     fn load(&mut self, path: &Path, autoplay: bool) -> Result<Duration>;
+
+    /// 预载下一段，供自然播完时无缝接上。`after` 是调用方记录的当前曲目，
+    /// 不匹配即视为过期命令。不支持无缝的后端按空操作处理。
+    fn set_next(&mut self, after: &Path, next: Option<&Path>) -> Result<()> {
+        let _ = (after, next);
+        Ok(())
+    }
 
     /// 开始（或继续）播放当前曲目。重播是按当前曲目重建音源链路，可能失败，
     /// 返回 `Err` 时上层必须把状态退回「未在播放」并显示错误。

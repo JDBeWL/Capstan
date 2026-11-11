@@ -122,7 +122,16 @@ impl Render for TopBar {
                     .justify_center()
                     .px(px(theme::GAP_MD))
                     .child(drag_area())
-                    .child(self.search.clone())
+                    // 样式镜像 SearchBox 根节点。顶栏随进度泵每帧重绘，搜索框内的 Input
+                    // 不应随之重排文本；聚焦、输入与悬停都会 notify 自身使缓存失效。
+                    .child(
+                        self.search.clone().cached(
+                            StyleRefinement::default()
+                                .w_full()
+                                .max_w(px(theme::SEARCH_W))
+                                .h(px(theme::SEARCH_H)),
+                        ),
+                    )
                     .child(drag_area()),
             )
             .child(

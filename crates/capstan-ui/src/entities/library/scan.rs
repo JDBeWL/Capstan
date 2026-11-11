@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use capstan_core::{
     FileStamp, ScanContext, Track, TrackId, artist_key, collect_audio_paths_with,
-    scan_into_tracks_with,
+    scan_into_tracks_with, sibling_index,
 };
 
 use crate::platform::*;
@@ -20,6 +20,9 @@ use super::{LibraryEntity, LibraryEvent};
 
 /// 扫描过程中每批之间回主线程的间隔。
 const SCAN_FLUSH_INTERVAL: Duration = Duration::from_millis(80);
+/// 扫描期间分组与检索缓存的最短失效间隔。每批失效意味着整库重分组与小写化，
+/// 48k 曲单批的派生开销可达 50 ms；节流后派生视图最多滞后一个间隔，结束强制失效兜底。
+pub(super) const IMPORT_INVALIDATE_INTERVAL: Duration = Duration::from_millis(500);
 /// 每读多少首回传一批。
 const SCAN_CHUNK: usize = 64;
 
@@ -314,18 +317,25 @@ impl LibraryEntity {
                             refreshed += read;
                             let batch_added = this.playlist.push(batch);
                             added += batch_added;
-                            // 重导只刷新标签时也要失效分组与检索字段缓存，否则搜索还按旧标题匹配。
-                            this.invalidate();
                             if let Some(progress) = this.scanning.as_mut() {
                                 progress.found += read;
                             }
-                            // 带过滤条件时新曲目也要按条件进投影，否则导入时列表看起来没有变化；
-                            // 刷新标签改了标题同理。命中集合会变。
-                            if this.is_filtering() {
-                                this.recompute_visible(cx);
+                            // 重导只刷新标签时也要失效分组与检索字段缓存，否则搜索还按旧标题匹配。
+                            // 带过滤条件时新曲目也要按条件进投影，否则导入时列表看起来没有变化。
+                            // 两者都按 IMPORT_INVALIDATE_INTERVAL 节流，因为每批都做即整库二次成本。
+                            if this.import_invalidate_at.elapsed() >= IMPORT_INVALIDATE_INTERVAL {
+                                this.invalidate();
+                                this.import_invalidate_at = std::time::Instant::now();
+                                if this.is_filtering() {
+                                    this.recompute_visible(cx);
+                                }
                             }
                         }
                         if done {
+                            // 节流的兜底。结束时必须让分组、检索与派生视图看到最终集合。
+                            if added > 0 || refreshed > 0 {
+                                this.invalidate();
+                            }
                             this.scanning = None;
                             // 有新增才写盘。整库重写一遍不便宜，启动补扫天天跑。
                             if added > 0 || !quiet {
@@ -376,6 +386,9 @@ fn run_scan(
         return;
     }
 
+    // 重复段统计对全部发现的文件算一次，含已知曲目，因此预切片与补扫只传新增文件
+    // 都不会割裂同目录信号。纯字符串统计，不碰磁盘。
+    let siblings = sibling_index(&files);
     let fresh = fresh_paths(files, &known);
     // 进度分母。用真正要读的份数，磁盘上找到多少首由 `Found` 报给结果汇总，两者不是一回事。
     if tx.send(ScanTick::ToRead(fresh.len())).is_err() {
@@ -384,6 +397,7 @@ fn run_scan(
     let context = ScanContext {
         known_artists: Some(&artists),
         cached: cached.as_ref(),
+        siblings: Some(&siblings),
     };
 
     // 分片读，每片之间检查停止标志；换扫描目标时，剩余的标签不必再读完。

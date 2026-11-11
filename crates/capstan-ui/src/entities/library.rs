@@ -85,6 +85,9 @@ pub struct LibraryEntity {
     data_revision: u64,
     scope: Scope,
     scanning: Option<ScanProgress>,
+    /// 扫描期间上次失效分组与检索缓存的时刻。每批都失效会让侧栏与首页按批整库重分组，
+    /// 导入成本随曲数二次增长；节流到 [`scan::IMPORT_INVALIDATE_INTERVAL`]，结束强制失效。
+    import_invalidate_at: std::time::Instant,
     /// 分组缓存，`None` 表示需要重算。
     album_groups: Option<std::rc::Rc<Vec<AlbumGroup>>>,
     artist_groups: Option<std::rc::Rc<Vec<ArtistGroup>>>,
@@ -144,6 +147,7 @@ impl LibraryEntity {
             data_revision: 0,
             scope: Scope::All,
             scanning: None,
+            import_invalidate_at: std::time::Instant::now(),
             album_groups: None,
             artist_groups: None,
             groups_generation: 0,

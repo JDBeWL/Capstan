@@ -72,6 +72,7 @@ mod tests {
         assert_eq!(parsed[0].id, TrackId(7));
         assert_eq!(parsed[0].audio, AudioInfo::default());
         assert_eq!(parsed[0].sources, FieldSources::default());
+        assert_eq!(parsed[0].track_no, None, "老条目没有音轨号");
         // 没有指纹就永远无法匹配，重扫时会重新读取一次。
         assert_eq!(parsed[0].stamp, FileStamp::default());
     }
@@ -155,6 +156,7 @@ mod tests {
             title: "曲名".to_owned(),
             artist: Some("歌手".to_owned()),
             album: None,
+            track_no: None,
             duration: Some(Duration::from_secs(200)),
             has_cover: false,
             audio: AudioInfo::default(),

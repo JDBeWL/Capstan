@@ -53,8 +53,9 @@ impl SeekBar {
     fn commit_drag(&mut self, cx: &mut Context<Self>) {
         if let Some(preview) = self.drag.take() {
             let duration = self.playback.read(cx).duration();
-            self.playback
-                .update(cx, |playback, _| playback.seek(duration.mul_f32(preview)));
+            self.playback.update(cx, |playback, cx| {
+                playback.seek(duration.mul_f32(preview), cx);
+            });
             cx.notify();
         }
     }

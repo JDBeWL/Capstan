@@ -1,5 +1,6 @@
 //! 播放实体。向音频线程下发 [`PlayerCommand`]，把 [`PlayerEvent`] 翻成 [`PlaybackEvent`]。
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, TryRecvError};
 use std::time::Duration;
@@ -31,6 +32,13 @@ pub enum PlaybackEvent {
     OutputModeChanged,
     /// 一首歌自然播完了，由上层决定下一曲还是循环。
     Finished,
+    /// 音频已无缝接入预载的下一首。上层据此将 `path` 解析为完整曲目，再调用 [`PlaybackEntity::adopt`]。
+    TrackStarted {
+        path: PathBuf,
+        duration: Duration,
+    },
+    /// 用户执行了跳转。后端重建链路会清除预载，上层必须重新下发。
+    Sought,
     /// 出声失败。同一句话连续失败只发一次，以免反复重置提示条计时。
     Failed(String),
     /// 出声未中断、但偏离用户所选设备的降级（设备被拔掉、独占退回共享）。
@@ -300,8 +308,31 @@ impl PlaybackEntity {
 
     /// 跳到指定位置。只在「用户松开进度条」时调用：
     /// rodio 的 seek 会重建解码器，拖动中连续调用会卡顿爆音。
-    pub fn seek(&mut self, position: Duration) {
+    pub fn seek(&mut self, position: Duration, cx: &mut Context<Self>) {
         self.send(PlayerCommand::Seek(position));
+        // 后端重建链路会一并丢弃预载，上层收到此事件后重新计算下一首。
+        cx.emit(PlaybackEvent::Sought);
+        cx.notify();
+    }
+
+    /// 预载下一首。`after` 是当前曲目，音频线程据此丢弃过期命令。
+    pub fn preload_next(&self, after: &std::path::Path, next: Option<PathBuf>) {
+        self.send(PlayerCommand::SetNext {
+            after: after.to_path_buf(),
+            next,
+        });
+    }
+
+    /// 无缝换段后接管新曲目。音频已在播放，不再下发 `Load`。
+    /// `TrackChanged` 让续播、最近播放与界面高亮复用既有路径。
+    pub fn adopt(&mut self, track: Track, duration: Duration, cx: &mut Context<Self>) {
+        if duration > Duration::ZERO {
+            self.duration = duration;
+        }
+        self.current = Some(track);
+        // 播放与暂停状态沿用音频线程上报的值，用户恰在边界按下暂停时不得显示为播放中。
+        cx.emit(PlaybackEvent::TrackChanged);
+        cx.notify();
     }
 
     pub fn set_volume(&mut self, volume: f32, cx: &mut Context<Self>) {
@@ -359,6 +390,13 @@ impl PlaybackEntity {
             PlayerEvent::Ended => {
                 self.state = PlaybackState::Paused;
                 emitted.push(PlaybackEvent::Finished);
+            }
+
+            PlayerEvent::TrackStarted { path, duration } => {
+                if duration > Duration::ZERO {
+                    self.duration = duration;
+                }
+                emitted.push(PlaybackEvent::TrackStarted { path, duration });
             }
 
             PlayerEvent::Volume(volume) => {

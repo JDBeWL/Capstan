@@ -8,6 +8,11 @@ pub enum PlayerCommand {
         path: PathBuf,
         autoplay: bool,
     },
+    /// 预载下一首。`after` 是调用方记录的当前曲目，不匹配即丢弃。
+    SetNext {
+        after: PathBuf,
+        next: Option<PathBuf>,
+    },
     Play,
     Pause,
     TogglePlay,
@@ -23,7 +28,7 @@ pub enum PlayerCommand {
     },
     /// 换设备时是否交叉淡化。设置项活在 UI 线程、后端活在音频线程，只能这样送过来。
     SetSmoothSwitch(bool),
-    /// 切换输出模式（共享 / WASAPI 独占）。独占与共享在同一台设备上互斥，切换会重开输出流。
+    /// 切换输出模式，取共享或 WASAPI 独占。独占与共享在同一台设备上互斥，切换会重开输出流。
     SetOutputMode {
         exclusive: bool,
     },

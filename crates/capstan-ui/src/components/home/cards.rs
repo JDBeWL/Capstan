@@ -130,6 +130,7 @@ mod tests {
             title: title.to_string(),
             artist: artist.map(ToOwned::to_owned),
             album: album.map(ToOwned::to_owned),
+            track_no: None,
             duration: None,
             has_cover: false,
             audio: capstan_core::AudioInfo::default(),

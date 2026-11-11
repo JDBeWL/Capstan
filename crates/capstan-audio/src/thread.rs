@@ -452,6 +452,15 @@ impl AudioThread {
                 }
             }
 
+            PlayerCommand::SetNext { after, next } => {
+                // 不为预载而打开设备。后端为空说明尚未装载，Load 之后界面会再次下发。
+                if let Some(backend) = self.backend.as_deref_mut()
+                    && let Err(err) = backend.set_next(&after, next.as_deref())
+                {
+                    log::warn!("预载下一首失败：{err}");
+                }
+            }
+
             PlayerCommand::Play => {
                 // 显式播放是用户对「设备现在能用了」的重试机会。
                 self.open_failed = false;
@@ -562,6 +571,17 @@ impl AudioThread {
                     self.emit_state();
                     self.announce_output();
                 }
+                BackendNotice::Advanced { path, duration } => {
+                    // 音频已经连续过渡，此处只更换元信息。播放或暂停状态保持不变，
+                    // 因为用户恰在边界按下暂停时，下一段并未真正开始出声。
+                    self.current = Some(path.clone());
+                    self.ended_reported = false;
+                    self.snapshot.set_duration(duration);
+                    self.snapshot.set_position(Duration::ZERO);
+                    let _ = self
+                        .events
+                        .send(PlayerEvent::TrackStarted { path, duration });
+                }
             }
         }
 
@@ -636,9 +656,10 @@ mod tests {
         }
     }
 
-    /// 由用例直接注入通知的后端；`is_finished` 恒真，用来验证断流不会被误判成播完。
+    /// 由用例注入通知的后端；`finished` 由用例设定，用于验证断流不会被误判为播完。
     struct NoticeBackend {
         notices: Arc<Mutex<VecDeque<BackendNotice>>>,
+        finished: bool,
     }
 
     impl AudioBackend for NoticeBackend {
@@ -665,7 +686,7 @@ mod tests {
         }
 
         fn is_finished(&self) -> bool {
-            true
+            self.finished
         }
 
         fn take_notice(&mut self) -> Option<BackendNotice> {
@@ -758,6 +779,7 @@ mod tests {
         }));
         thread.backend = Some(Box::new(NoticeBackend {
             notices: Arc::clone(&notices),
+            finished: true,
         }));
         snapshot.set_state(PlaybackState::Playing);
 
@@ -793,6 +815,50 @@ mod tests {
             snapshot.state(),
             PlaybackState::Playing,
             "后端自行重建并续播之后，状态要跟回来"
+        );
+    }
+
+    #[test]
+    fn an_advanced_notice_moves_metadata_without_ending_playback() {
+        let notices = Arc::new(Mutex::new(VecDeque::new()));
+        let (mut thread, events, snapshot) = thread(Box::new(|_| {
+            Err(AudioError::DeviceOpen("这条用例不靠工厂开口".to_owned()))
+        }));
+        thread.backend = Some(Box::new(NoticeBackend {
+            notices: Arc::clone(&notices),
+            finished: false,
+        }));
+        thread.current = Some(std::path::PathBuf::from("/music/a.flac"));
+        thread.seen_content = true;
+        snapshot.set_state(PlaybackState::Playing);
+
+        notices
+            .lock()
+            .expect("notices lock")
+            .push_back(BackendNotice::Advanced {
+                path: std::path::PathBuf::from("/music/b.flac"),
+                duration: Duration::from_secs(42),
+            });
+        thread.tick();
+
+        assert_eq!(
+            thread.current.as_deref(),
+            Some(Path::new("/music/b.flac")),
+            "音频线程要跟着换当前曲目"
+        );
+        assert_eq!(snapshot.duration(), Duration::from_secs(42));
+        assert_eq!(
+            snapshot.state(),
+            PlaybackState::Playing,
+            "无缝换段不是播放结束"
+        );
+        assert!(
+            matches!(events.try_recv(), Ok(PlayerEvent::TrackStarted { .. })),
+            "界面需要收到换段事件"
+        );
+        assert!(
+            matches!(events.try_recv(), Err(mpsc::TryRecvError::Empty)),
+            "无缝换段不能再补一条 Ended"
         );
     }
 

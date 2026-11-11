@@ -120,6 +120,9 @@ pub struct Track {
     pub title: String,
     pub artist: Option<String>,
     pub album: Option<String>,
+    /// 专辑内的音轨序号。标签优先，缺失时取文件名前缀；用于专辑内排序。
+    #[serde(default)]
+    pub track_no: Option<u32>,
     pub duration: Option<Duration>,
     pub has_cover: bool,
     #[serde(default)]
@@ -147,6 +150,7 @@ impl Track {
             title,
             artist: None,
             album: None,
+            track_no: None,
             duration: None,
             has_cover: false,
             audio: AudioInfo::default(),

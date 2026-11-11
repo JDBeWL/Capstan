@@ -630,6 +630,7 @@ mod tests {
             title: title.to_string(),
             artist: Some(artist.to_string()),
             album: Some(album.to_string()),
+            track_no: None,
             duration: secs.map(Duration::from_secs),
             has_cover: false,
             audio: capstan_core::AudioInfo::default(),

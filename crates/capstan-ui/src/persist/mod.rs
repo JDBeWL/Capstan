@@ -110,7 +110,7 @@ fn path_of(file: &str) -> Option<PathBuf> {
     data_dir().map(|dir| dir.join(file))
 }
 
-/// 读 JSON。`Ok(None)` 专指「文件不存在」；其余 IO / 解析失败以 `Err` 返回。
+/// 读 JSON。`Ok(None)` 专指「文件不存在」；其余 IO 与解析失败以 `Err` 返回。
 fn load<T: DeserializeOwned>(file: &str) -> Result<Option<T>, PersistError> {
     let Some(path) = path_of(file) else {
         return Err(PersistError::NoDataDir);

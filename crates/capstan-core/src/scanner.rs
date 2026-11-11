@@ -143,13 +143,16 @@ where
     scan_into_tracks_with(paths, chunk, ScanContext::default(), on_chunk)
 }
 
-/// 扫描时用得上的两份外部信息。
+/// 扫描时用得上的三份外部信息。
 #[derive(Clone, Copy, Default)]
 pub struct ScanContext<'a> {
     /// 库内已有的艺术家名单，名字对得上时文件名推断的方向会稳得多。
     pub known_artists: Option<&'a HashSet<String>>,
     /// 已在库的曲目及其文件指纹。指纹没变的整段跳过，不再解析标签。
     pub cached: Option<&'a HashMap<TrackId, FileStamp>>,
+    /// 全目录重复段统计，见 [`sibling_index`]。调用方预切路径分批调用时注入，
+    /// 不注入则按本次调用的 paths 自算，预切片或只传新增文件都会割裂同目录信号。
+    pub siblings: Option<&'a HashMap<PathBuf, Siblings>>,
 }
 
 /// 见 [`scan_into_tracks`]。返回实际读取的曲目数，与扫描到的文件数不是一回事。
@@ -164,9 +167,15 @@ where
     F: FnMut(Vec<Track>),
 {
     let chunk = chunk.max(1);
-    // 分组统计只碰字符串不碰磁盘，先全算完再开始读，省得为了「同目录一致性」
-    // 把每批文件的目录再扫一遍。`chunk` 切开的批次因此也不会割裂同一个目录的统计。
-    let siblings = sibling_index(&paths);
+    // 分组统计只碰字符串不碰磁盘，先全算完再读，避免为「同目录一致性」重扫每批目录。
+    // 调用方预切 paths 时必须注入覆盖全目录的索引，否则各片自行统计会切散同目录信号。
+    let owned_siblings;
+    let siblings = if let Some(injected) = scan.siblings {
+        injected
+    } else {
+        owned_siblings = sibling_index(&paths);
+        &owned_siblings
+    };
     let mut buffer = Vec::with_capacity(chunk);
     let mut total = 0;
 
@@ -207,7 +216,9 @@ fn parent_of(path: &Path) -> &Path {
     path.parent().unwrap_or_else(|| Path::new(""))
 }
 
-fn sibling_index(paths: &[PathBuf]) -> HashMap<PathBuf, Siblings> {
+/// 按父目录预计算重复段统计。调用方预切路径分批扫描时先对**全部**路径算一次，
+/// 再经 [`ScanContext::siblings`] 注入每一片；补扫只传新增文件时也要用含已知文件的全量索引。
+pub fn sibling_index(paths: &[PathBuf]) -> HashMap<PathBuf, Siblings> {
     let mut groups: HashMap<&Path, Vec<&str>> = HashMap::new();
     for path in paths {
         let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
@@ -324,6 +335,131 @@ mod tests {
             SIGNATURE_PROBE_LEN >= OGG_FIRST_PACKET_OFFSET + b"OpusHead".len(),
             "读进来的文件头要装得下偏移 {OGG_FIRST_PACKET_OFFSET} 处的 OpusHead"
         );
+    }
+
+    /// 调用方按 chunk 预切路径再分批调用时，注入全目录索引后推断必须与整批一致。
+    /// 65 首「标题 - 艺术家」命名的无标签文件里，第 65 首单独成片时仍应依据全目录
+    /// 统计认出尾段是艺术家，而不是退回位置先验把标题当艺术家。
+    #[test]
+    fn pre_slicing_paths_must_not_change_filename_inference() {
+        let dir =
+            std::env::temp_dir().join(format!("capstan-sibling-repro-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("建复现目录");
+        let mut paths = Vec::new();
+        for i in 0..65 {
+            let name = if i == 64 {
+                "65 - NewA - SameArtist.wav".to_owned()
+            } else {
+                format!("{:02} - Song{:02} - SameArtist.wav", i + 1, i)
+            };
+            let path = dir.join(name);
+            std::fs::write(&path, wav_bytes()).expect("写复现 WAV");
+            paths.push(path);
+        }
+
+        let mut whole = Vec::new();
+        scan_into_tracks_with(paths.clone(), 64, ScanContext::default(), |chunk| {
+            whole.extend(chunk);
+        });
+        let index = sibling_index(&paths);
+        let mut sliced = Vec::new();
+        for slice in paths.chunks(64) {
+            let context = ScanContext {
+                siblings: Some(&index),
+                ..ScanContext::default()
+            };
+            scan_into_tracks_with(slice.to_vec(), 64, context, |chunk| {
+                sliced.extend(chunk);
+            });
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(whole.len(), 65);
+        assert_eq!(sliced.len(), 65);
+        let whole_last = whole.last().expect("整批末首");
+        let sliced_last = sliced.last().expect("切片末首");
+        assert_eq!(
+            whole_last.artist.as_deref(),
+            Some("SameArtist"),
+            "全目录统计应当认出尾段是艺术家"
+        );
+        assert_eq!(
+            (sliced_last.artist.as_deref(), sliced_last.title.as_str()),
+            (whole_last.artist.as_deref(), whole_last.title.as_str()),
+            "预切片不该改变同一目录的推断结果"
+        );
+    }
+
+    /// 补扫只传新增文件时，注入含已知文件的全量索引后，新增曲目的推断必须与
+    /// 「整目录都在 paths 里、已知曲目按指纹跳过」一致，因为重复信号来自已有文件。
+    #[test]
+    fn rescan_with_injected_index_matches_whole_directory_inference() {
+        let dir = std::env::temp_dir().join(format!("capstan-rescan-repro-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("建复现目录");
+        let names = [
+            "01 - Song00 - SameArtist.wav",
+            "02 - Song01 - SameArtist.wav",
+            "03 - NewA - SameArtist.wav",
+        ];
+        let paths: Vec<PathBuf> = names.iter().map(|name| dir.join(name)).collect();
+        for path in &paths {
+            std::fs::write(path, wav_bytes()).expect("写复现 WAV");
+        }
+        let cached: HashMap<TrackId, FileStamp> = paths[..2]
+            .iter()
+            .map(|path| (TrackId::from_path(path), FileStamp::of(path)))
+            .collect();
+
+        let mut whole = Vec::new();
+        let context = ScanContext {
+            cached: Some(&cached),
+            ..ScanContext::default()
+        };
+        scan_into_tracks_with(paths.clone(), 8, context, |chunk| whole.extend(chunk));
+
+        let index = sibling_index(&paths);
+        let mut fresh_only = Vec::new();
+        let context = ScanContext {
+            cached: Some(&cached),
+            siblings: Some(&index),
+            ..ScanContext::default()
+        };
+        scan_into_tracks_with(vec![paths[2].clone()], 8, context, |chunk| {
+            fresh_only.extend(chunk);
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(whole.len(), 1, "已知曲目靠指纹跳过，只应读新增那一首");
+        assert_eq!(fresh_only.len(), 1);
+        assert_eq!(
+            (
+                fresh_only[0].artist.as_deref(),
+                fresh_only[0].title.as_str()
+            ),
+            (whole[0].artist.as_deref(), whole[0].title.as_str()),
+            "补扫注入全量索引后推断应与整目录一致"
+        );
+        assert_eq!(whole[0].artist.as_deref(), Some("SameArtist"));
+    }
+
+    /// 极短静音 WAV，仅需 lofty 能解析容器；用例只关心文件名推断。
+    fn wav_bytes() -> Vec<u8> {
+        let data = 1600u32;
+        let mut buf = Vec::with_capacity(44 + data as usize);
+        buf.extend_from_slice(b"RIFF");
+        buf.extend_from_slice(&(36 + data).to_le_bytes());
+        buf.extend_from_slice(b"WAVEfmt ");
+        buf.extend_from_slice(&16u32.to_le_bytes());
+        buf.extend_from_slice(&1u16.to_le_bytes());
+        buf.extend_from_slice(&1u16.to_le_bytes());
+        buf.extend_from_slice(&8000u32.to_le_bytes());
+        buf.extend_from_slice(&16000u32.to_le_bytes());
+        buf.extend_from_slice(&2u16.to_le_bytes());
+        buf.extend_from_slice(&16u16.to_le_bytes());
+        buf.extend_from_slice(b"data");
+        buf.extend_from_slice(&data.to_le_bytes());
+        buf.resize(44 + data as usize, 0);
+        buf
     }
 
     #[test]
@@ -448,6 +584,7 @@ mod tests {
         let context = ScanContext {
             known_artists: None,
             cached: Some(&cached),
+            siblings: None,
         };
         let mut second = Vec::new();
         let total =
@@ -464,6 +601,7 @@ mod tests {
         let forced = ScanContext {
             known_artists: None,
             cached: None,
+            siblings: None,
         };
         let total = scan_into_tracks_with(vec![file], 8, forced, |_| {});
         assert_eq!(total, 1, "不看指纹时每一首都得重读");

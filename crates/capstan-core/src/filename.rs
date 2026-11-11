@@ -41,6 +41,8 @@ pub struct Guess {
     pub title: String,
     pub artist: Option<String>,
     pub album: Option<String>,
+    /// 文件名前缀里的音轨号，供专辑内排序。
+    pub track_no: Option<u32>,
 }
 
 /// 名字的比较形式。全角折半角、各种破折号统一、压掉多余空白，再做小写。
@@ -127,6 +129,7 @@ pub fn guess_folder(
 }
 
 /// 推断一首。`None` 表示未作任何改动，调用方应保留原样，即以整串作为标题。
+/// 只剥掉音轨号也算改动，此时标题已清洗，编号经 `track_no` 返回。
 pub fn guess(stem: &str, dirs: DirHints<'_>, folder: &FolderContext<'_>) -> Option<Guess> {
     let parsed = parse(stem);
     let Some(head) = parsed.parts.first() else {
@@ -135,6 +138,7 @@ pub fn guess(stem: &str, dirs: DirHints<'_>, folder: &FolderContext<'_>) -> Opti
     };
     debug_assert!(!head.is_empty());
 
+    let track_no = parsed.track_no;
     let mut artist_hint: Option<String> = None;
     let mut album_hint: Option<String> = None;
     let mut book_hint: Option<String> = None;
@@ -171,12 +175,18 @@ pub fn guess(stem: &str, dirs: DirHints<'_>, folder: &FolderContext<'_>) -> Opti
         // 只剩一段正文且无括号信息，也可能只是完成了清洗，即去掉音轨号或压制组前缀。
         // 洗干净了才值得回报，否则一个字都没变，回报 `None` 让上层保留原样。
         if clean == normalise(stem) {
-            return None;
+            return track_no.map(|track_no| Guess {
+                title: clean,
+                artist: None,
+                album: None,
+                track_no: Some(track_no),
+            });
         }
         return Some(Guess {
             title: clean,
             artist: None,
             album: None,
+            track_no,
         });
     }
 
@@ -191,7 +201,13 @@ pub fn guess(stem: &str, dirs: DirHints<'_>, folder: &FolderContext<'_>) -> Opti
     // 只有一个候选时没有第二名可比，领先量直接算作充足。
     let decisive = scored.get(1).is_none_or(|second| best - second.0 >= MARGIN);
     if best < ACCEPT || !decisive {
-        return None;
+        // 编号已剥离，原样不再等于输入，至少返回清洗后的正文。
+        return track_no.map(|track_no| Guess {
+            title: clean,
+            artist: None,
+            album: None,
+            track_no: Some(track_no),
+        });
     }
 
     let candidate = &candidates[winner];
@@ -199,6 +215,7 @@ pub fn guess(stem: &str, dirs: DirHints<'_>, folder: &FolderContext<'_>) -> Opti
         title: decorate(&candidate.title, &suffixes),
         artist: candidate.artist.clone(),
         album: candidate.album.clone(),
+        track_no,
     })
 }
 
@@ -381,6 +398,7 @@ enum Bracket {
 struct Parsed {
     parts: Vec<String>,
     brackets: Vec<(Bracket, String)>,
+    track_no: Option<u32>,
 }
 
 fn parse(raw: &str) -> Parsed {
@@ -417,10 +435,11 @@ fn parse(raw: &str) -> Parsed {
         brackets.push((kind, content.trim().to_owned()));
     }
 
-    let (_, rest) = strip_track_no(&body);
+    let (track_no, rest) = strip_track_no(&body);
     Parsed {
         parts: split_parts(rest),
         brackets,
+        track_no,
     }
 }
 
@@ -456,8 +475,9 @@ fn trimmed(part: &str) -> Option<String> {
     }
 }
 
-/// 剥掉前导音轨号，返回音轨号与余下正文；判不出时原样返回。
-/// 判据是数字最多三位、后面紧跟分隔符，空格分隔时数字带前导零；`2002年的第一场雪` 不会被削掉四位数字，`7 rings` 里的 7 也不当作音轨号。
+/// 剥掉前导音轨号，返回音轨号与余下正文；判不出时原样返回。判据是数字最多三位
+/// 且紧跟分隔符；空格之后还必须再有真正的分隔符，如 `7 - 标题`，带前导零则不受此限。
+/// 因此 `7 rings` 与 `2002年的第一场雪` 的数字都会保留。
 fn strip_track_no(body: &str) -> (Option<u32>, &str) {
     let text = body.trim_start();
     let text = strip_prefix(text);
@@ -472,7 +492,10 @@ fn strip_track_no(body: &str) -> (Option<u32>, &str) {
         return (None, body);
     };
     if separator == ' ' && !number.starts_with('0') {
-        return (None, body);
+        let after_space = rest.trim_start();
+        if !after_space.chars().next().is_some_and(is_separator) {
+            return (None, body);
+        }
     }
     let rest = rest.trim_start_matches(is_separator).trim_start();
     // 只剩一个数字时不能剥，`01.flac` 的标题就是「01」
@@ -826,6 +849,44 @@ mod tests {
         let found = guess_plain("０１．周杰伦 － 七里香").expect("全角也要能切");
         assert_eq!(found.artist.as_deref(), Some("周杰伦"));
         assert_eq!(found.title, "七里香", "音轨号不该留在标题里");
+    }
+
+    /// 不补零的编号也是编号。放过它会把编号留在标题里，后续各段的位置信号还会整体错一位。
+    #[test]
+    fn 不补零的音轨号同样剥掉() {
+        for (stem, no, title) in [
+            ("1 - 七里香", 1, "七里香"),
+            ("65 - 七里香", 65, "七里香"),
+            ("track 7 - 七里香", 7, "七里香"),
+        ] {
+            let found = guess_plain(stem).unwrap_or_else(|| panic!("《{stem}》没切开"));
+            assert_eq!(found.track_no, Some(no), "《{stem}》没记下编号");
+            assert_eq!(found.title, title, "《{stem}》的标题没洗干净");
+        }
+    }
+
+    /// 编号留在首段时，`歌名 - 歌手` 会变成三段，重复信号落到第三段就丢了。
+    /// 剥掉编号后，同目录统计照常认出尾段的歌手。
+    #[test]
+    fn 编号前缀不遮住同目录重复信号() {
+        let stems: Vec<String> = [
+            "1 - 七里香 - 周杰伦",
+            "2 - 十年 - 周杰伦",
+            "3 - 富士山下 - 周杰伦",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        let found = guess_folder(&stems, DirHints::default(), &FolderContext::default());
+        for (guess, (no, title)) in found
+            .iter()
+            .zip([(1, "七里香"), (2, "十年"), (3, "富士山下")])
+        {
+            let guess = guess.as_ref().expect("编号前缀不该让推断放弃");
+            assert_eq!(guess.artist.as_deref(), Some("周杰伦"));
+            assert_eq!(guess.title, title);
+            assert_eq!(guess.track_no, Some(no));
+        }
     }
 
     #[test]

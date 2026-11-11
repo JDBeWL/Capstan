@@ -61,6 +61,7 @@ pub fn read_track_in(path: &Path, folder: &FolderContext<'_>) -> Result<Track> {
         track.album = Some(album);
         track.sources.album = FieldSource::Tag;
     }
+    track.track_no = pick_track_no(tag.and_then(Accessor::track), track.track_no);
 
     track.duration = Some(duration).filter(|d| !d.is_zero());
     track.has_cover = tag.is_some_and(|tag| !tag.pictures().is_empty());
@@ -85,6 +86,7 @@ pub fn infer(path: &Path, folder: &FolderContext<'_>) -> Track {
         Some(artist) => (Some(artist), FieldSource::Filename),
         None => (dirs.artist.map(ToOwned::to_owned), FieldSource::Folder),
     };
+    let track_no = guess.as_ref().and_then(|guess| guess.track_no);
 
     let (mut album, album_source) = match guess.as_ref().and_then(|guess| guess.album.clone()) {
         Some(album) => (Some(album), FieldSource::Filename),
@@ -103,6 +105,7 @@ pub fn infer(path: &Path, folder: &FolderContext<'_>) -> Track {
         title,
         artist,
         album,
+        track_no,
         duration: None,
         has_cover: false,
         audio: AudioInfo::default(),
@@ -154,9 +157,50 @@ fn clean(value: Option<std::borrow::Cow<'_, str>>) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
+/// 标签里的音轨号优先；0 视为未填，退回文件名给的编号。
+fn pick_track_no(tagged: Option<u32>, filename: Option<u32>) -> Option<u32> {
+    tagged.filter(|no| *no > 0).or(filename)
+}
+
 fn stem_of(path: &Path) -> String {
     path.file_stem().map_or_else(
         || path.to_string_lossy().into_owned(),
         |stem| stem.to_string_lossy().into_owned(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{infer, pick_track_no};
+    use crate::filename::FolderContext;
+    use std::path::Path;
+
+    #[test]
+    fn 推断时把文件名前缀的音轨号留在字段里() {
+        let track = infer(
+            Path::new("/music/陈屿/城市漫游/3 - 夜航西飞.flac"),
+            &FolderContext::default(),
+        );
+        assert_eq!(track.title, "夜航西飞");
+        assert_eq!(track.track_no, Some(3));
+        assert_eq!(track.artist.as_deref(), Some("陈屿"));
+        assert_eq!(track.album.as_deref(), Some("城市漫游"));
+    }
+
+    #[test]
+    fn 没有编号时音轨号为空() {
+        let track = infer(
+            Path::new("/music/陈屿/城市漫游/夜航西飞.flac"),
+            &FolderContext::default(),
+        );
+        assert_eq!(track.track_no, None);
+    }
+
+    #[test]
+    fn 标签音轨号优先且零视为未填() {
+        assert_eq!(pick_track_no(Some(3), Some(9)), Some(3));
+        assert_eq!(pick_track_no(Some(0), Some(9)), Some(9));
+        assert_eq!(pick_track_no(None, Some(9)), Some(9));
+        assert_eq!(pick_track_no(None, None), None);
+    }
 }

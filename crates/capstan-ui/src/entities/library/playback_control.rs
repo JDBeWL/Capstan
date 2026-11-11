@@ -272,6 +272,26 @@ impl LibraryEntity {
         }
     }
 
+    /// 自然播完会接哪一首，但不推进光标。供无缝预载使用，口径必须与 [`Self::step_on_end`] 一致。
+    pub fn peek_on_end(&self) -> Option<Track> {
+        match self.playlist.peek_on_end() {
+            Advance::To(n) => self.playlist.track_at_order(n).cloned(),
+            Advance::Restart => self.playlist.current().cloned(),
+            Advance::Stop => None,
+        }
+    }
+
+    /// 音频已无缝接入下一首。只提交光标与高亮，不再发播放事件，否则会重新装载并打断音频。
+    pub fn adopt_playing(&mut self, id: TrackId, cx: &mut Context<Self>) -> Option<Track> {
+        let track = self.playlist.by_id(id)?.clone();
+        self.playlist.jump_to(id);
+        self.set_focus(id, cx);
+        self.cursor_visible = false;
+        self.now_playing = Some(id);
+        cx.notify();
+        Some(track)
+    }
+
     pub fn is_shuffle(&self) -> bool {
         self.shuffle
     }

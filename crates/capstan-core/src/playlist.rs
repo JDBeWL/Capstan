@@ -637,6 +637,40 @@ impl Playlist {
             self.next()
         }
     }
+
+    /// 自然播完会走到哪，但不推进光标。口径与 [`Playlist::on_track_ended`] 一致，
+    /// 界面据此提前预载下一首，边界到来后再按同一落点提交光标。
+    pub fn peek_on_end(&self) -> Advance {
+        if self.mode == PlayMode::RepeatOne && !self.order.is_empty() {
+            Advance::Restart
+        } else {
+            self.peek_next()
+        }
+    }
+
+    /// [`Playlist::next`] 的非破坏性版本。
+    fn peek_next(&self) -> Advance {
+        if self.order.is_empty() {
+            return Advance::Stop;
+        }
+        let wrap = self.mode == PlayMode::RepeatAll || self.wrap_at_end;
+        let mut n = self.pos;
+
+        for _ in 0..self.order.len() {
+            if n + 1 < self.order.len() {
+                n += 1;
+            } else if wrap {
+                n = 0;
+            } else {
+                return Advance::Stop;
+            }
+            if self.playable_at(n) {
+                return Advance::To(n);
+            }
+        }
+
+        Advance::Stop
+    }
 }
 
 fn shuffle(ids: &mut [TrackId], seed: u64) {
@@ -966,6 +1000,57 @@ mod tests {
             p.next();
         }
         assert_eq!(p.next(), Advance::To(0), "列表循环应当绕回开头");
+    }
+
+    /// 界面预载依赖「自然播完的去向」。预看不得移动光标，且必须与真正推进给出同一答案，
+    /// 否则预载的下一首与结束时提交的光标会错位。
+    #[test]
+    fn peek_on_end_matches_the_real_advance_without_moving_the_cursor() {
+        for mode in [
+            PlayMode::Sequential,
+            PlayMode::RepeatAll,
+            PlayMode::RepeatOne,
+        ] {
+            for len in 1..=3 {
+                for start in 0..len {
+                    let mut p = playlist(len);
+                    p.set_mode(mode, 7);
+                    p.play_order_index(start);
+                    let before = p.cursor();
+                    let peeked = p.peek_on_end();
+                    assert_eq!(p.cursor(), before, "预看不得移动光标");
+                    let advanced = p.on_track_ended();
+                    assert_eq!(peeked, advanced, "mode={mode:?} len={len} start={start}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn peek_on_end_skips_unplayable_tracks() {
+        let mut p = Playlist::new();
+        p.push([track(0), unplayable(1), track(2)]);
+        assert_eq!(p.peek_on_end(), Advance::To(2), "预看要跳过播不了的曲目");
+    }
+
+    #[test]
+    fn peek_on_end_follows_the_wrap_axis() {
+        let mut p = playlist(2);
+        p.play_order_index(1);
+        assert_eq!(p.peek_on_end(), Advance::Stop);
+        p.set_wrap_at_end(true);
+        assert_eq!(p.peek_on_end(), Advance::To(0), "回绕轴打开时要看到第一首");
+    }
+
+    #[test]
+    fn peek_on_end_matches_shuffle_advance() {
+        let mut p = playlist(5);
+        p.set_mode(PlayMode::Shuffle, 0x5EED);
+        for _ in 0..5 {
+            let peeked = p.peek_on_end();
+            let advanced = p.on_track_ended();
+            assert_eq!(peeked, advanced, "随机序的预看与实际推进不一致");
+        }
     }
 
     #[test]

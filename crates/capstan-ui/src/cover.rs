@@ -20,10 +20,11 @@ const BUCKETS: [u32; 7] = [64, 96, 128, 192, 256, 384, 512];
 const MAX_BUCKET: u32 = 512;
 const _: () = assert!(MAX_BUCKET == BUCKETS[BUCKETS.len() - 1]);
 
-/// 界面槽位尺寸（逻辑像素）→ 该取哪一档。
-/// 乘 1.5 是给 Windows 常见的 1.0–1.25 倍 DPI 留余量，窗口缩放因子在 `&mut App` 上拿不到。
-pub fn bucket_for(size: f32) -> u32 {
-    let need = (size * 1.5).ceil().max(1.0) as u32;
+/// 界面槽位尺寸（逻辑像素）→ 该取哪一档。`scale` 是窗口缩放因子，由根视图每帧写入缓存。
+/// 档位按真实缩放折算，相邻档本身相差 1.5 倍，故取到的档最多再大 1.5 倍。
+/// 固定按 1.5 倍取档会在 100% 缩放下为每张封面多占四倍像素。
+pub fn bucket_for(size: f32, scale: f32) -> u32 {
+    let need = (size * scale.max(0.0)).ceil().max(1.0) as u32;
     *BUCKETS
         .iter()
         .find(|bucket| **bucket >= need)
@@ -102,6 +103,9 @@ pub struct CoverCache {
     bytes: usize,
     /// 字节预算，默认 [`MAX_BYTES`]。
     limit: usize,
+    /// 窗口缩放因子。根视图每帧写入，取档时乘在逻辑尺寸上。
+    /// 默认 1.0，首帧尚未写入时按 100% 取档，宁可小一档也不多占四倍像素。
+    scale: Cell<f32>,
 }
 
 impl Default for CoverCache {
@@ -114,14 +118,27 @@ impl Default for CoverCache {
             clock: Cell::new(0),
             bytes: 0,
             limit: MAX_BYTES,
+            scale: Cell::new(1.0),
         }
     }
 }
 
 impl CoverCache {
+    /// 窗口缩放因子。根视图每帧调用；只写一个 `Cell`，不触发重绘。
+    pub fn set_scale(&self, scale: f32) {
+        if scale > 0.0 {
+            self.scale.set(scale);
+        }
+    }
+
+    /// 逻辑尺寸到档位的换算。缓存内所有查询与请求都经它计算，键与档位因此始终一致。
+    fn bucket(&self, size: f32) -> u32 {
+        bucket_for(size, self.scale.get())
+    }
+
     /// 歌单等独立图片文件是否已就绪。`size` 是界面槽位的逻辑像素边长。
     pub fn ready_file(&self, path: &Path, size: f32) -> Option<Arc<RenderImage>> {
-        self.slot(CoverKey::File(TrackId::from_path(path), bucket_for(size)))
+        self.slot(CoverKey::File(TrackId::from_path(path), self.bucket(size)))
     }
 
     fn slot(&self, key: CoverKey) -> Option<Arc<RenderImage>> {
@@ -137,7 +154,7 @@ impl CoverCache {
 
     /// 按需加载一个图片文件。
     pub fn request_file(&mut self, path: PathBuf, size: f32, cx: &mut Context<Self>) {
-        let key = CoverKey::File(TrackId::from_path(&path), bucket_for(size));
+        let key = CoverKey::File(TrackId::from_path(&path), self.bucket(size));
         if self.slots.contains_key(&key) {
             return;
         }
@@ -157,20 +174,20 @@ impl CoverCache {
     /// 已解码好的封面；取不到时返回 `None` 由调用方退化成占位图。
     /// 命中会刷新使用时刻，但不触发重绘。
     pub fn ready(&self, id: TrackId, size: f32) -> Option<Arc<RenderImage>> {
-        self.slot(CoverKey::Track(id, bucket_for(size)))
+        self.slot(CoverKey::Track(id, self.bucket(size)))
     }
 
     /// 这张封面是否已经被确认「没有」，用来区分「还在加载」和「确实没有封面」。
     pub fn is_missing(&self, id: TrackId, size: f32) -> bool {
         matches!(
-            self.slots.get(&CoverKey::Track(id, bucket_for(size))),
+            self.slots.get(&CoverKey::Track(id, self.bucket(size))),
             Some(Slot::Missing)
         )
     }
 
     /// 按需加载。已缓存或已在加载中时直接返回，可反复调用。
     pub fn request(&mut self, id: TrackId, path: PathBuf, size: f32, cx: &mut Context<Self>) {
-        let key = CoverKey::Track(id, bucket_for(size));
+        let key = CoverKey::Track(id, self.bucket(size));
         if self.slots.contains_key(&key) {
             return;
         }
@@ -518,9 +535,9 @@ mod tests {
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .expect("编码测试 PNG 不应失败");
 
-        for (size, bucket) in [(44.0, 96), (32.0, 64), (200.0, 384)] {
+        for (size, bucket) in [(44.0, 64), (32.0, 64), (200.0, 256)] {
             assert_eq!(
-                super::bucket_for(size),
+                super::bucket_for(size, 1.0),
                 bucket,
                 "{size}px 槽位应当取 {bucket} 档"
             );
@@ -539,14 +556,15 @@ mod tests {
         for pair in super::BUCKETS.windows(2) {
             let (small, large) = (pair[0] as f32, pair[1] as f32);
             assert!(large > small, "档位必须递增");
-            worst = worst.max(large / (small / 1.5));
+            worst = worst.max(large / small);
         }
         assert!(
             worst <= 2.3,
             "最坏情况要把 {worst:.2} 倍缩小交给没有 mip 链的双线性，会重新出现色块"
         );
-        assert_eq!(super::bucket_for(9999.0), 512);
-        assert_eq!(super::bucket_for(1.0), 64);
+        assert_eq!(super::bucket_for(9999.0, 1.0), 512);
+        assert_eq!(super::bucket_for(1.0, 1.0), 64);
+        assert_eq!(super::bucket_for(9999.0, 1.5), 512);
     }
 
     #[test]
@@ -554,20 +572,28 @@ mod tests {
         for (label, size, tier) in [
             ("侧栏行", 32.0, 64),
             ("列表行", 40.0, 64),
-            ("下一首", 44.0, 96),
-            ("迷你条", 56.0, 96),
-            ("详情页头图", 180.0, 384),
-            ("正在播放", 200.0, 384),
+            ("下一首", 44.0, 64),
+            ("迷你条", 56.0, 64),
+            ("详情页头图", 180.0, 192),
+            ("正在播放", 200.0, 256),
         ] {
-            assert_eq!(super::bucket_for(size), tier, "{label}（{size}px）");
+            assert_eq!(super::bucket_for(size, 1.0), tier, "{label}（{size}px）");
         }
+
+        // 高 DPI 必须按真实缩放取档，沿用 100% 的档会让文字与细节发糊。
+        assert_eq!(super::bucket_for(200.0, 1.25), 256);
+        assert_eq!(super::bucket_for(200.0, 1.5), 384);
+        assert!(
+            super::bucket_for(150.0, 1.0) < super::bucket_for(150.0, 1.5),
+            "按真实缩放取档必须比固定 1.5 倍小，否则省不下显存"
+        );
     }
 
     #[test]
     fn the_same_cover_is_cached_per_tier() {
         let id = capstan_core::TrackId::from_path(std::path::Path::new("x.flac"));
-        let small = super::bucket_for(44.0);
-        let large = super::bucket_for(200.0);
+        let small = super::bucket_for(44.0, 1.0);
+        let large = super::bucket_for(200.0, 1.0);
         assert_ne!(small, large, "44 与 200 应当落在不同档");
         let a = super::CoverKey::Track(id, small);
         let b = super::CoverKey::Track(id, large);
@@ -624,13 +650,13 @@ mod tests {
         );
         assert!(
             cache
-                .ready_file(std::path::Path::new("0.png"), 341.0)
+                .ready_file(std::path::Path::new("0.png"), 512.0)
                 .is_none(),
             "最旧那张应当已被淘汰，且指向它的槽位一起清掉（否则取图会拿到悬空引用）"
         );
         assert!(
             cache
-                .ready_file(std::path::Path::new("4.png"), 341.0)
+                .ready_file(std::path::Path::new("4.png"), 512.0)
                 .is_some(),
             "刚存进去的那张不该被连累"
         );
@@ -665,7 +691,7 @@ mod tests {
 
         assert!(
             cache
-                .ready_file(std::path::Path::new("0.png"), 341.0)
+                .ready_file(std::path::Path::new("0.png"), 512.0)
                 .is_some(),
             "先确认 0 号确实在缓存里"
         );
@@ -673,13 +699,13 @@ mod tests {
 
         assert!(
             cache
-                .ready_file(std::path::Path::new("0.png"), 341.0)
+                .ready_file(std::path::Path::new("0.png"), 512.0)
                 .is_some(),
             "刚读过的那张应当被算作最近使用，不能先淘汰它"
         );
         assert!(
             cache
-                .ready_file(std::path::Path::new("1.png"), 341.0)
+                .ready_file(std::path::Path::new("1.png"), 512.0)
                 .is_none(),
             "最久没用的应当是 1 号"
         );

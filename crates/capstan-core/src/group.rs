@@ -18,7 +18,7 @@ pub struct AlbumGroup {
     pub title: String,
     /// 组内出现过的艺术家，去重后按首次出现顺序排列。
     pub artists: Vec<String>,
-    /// 组内曲目 id，顺序与输入一致，因 `Track` 没有唱片序号字段。
+    /// 组内曲目 id。音轨号完整且互不重复时按序号升序，否则与输入一致。
     pub tracks: Vec<TrackId>,
     /// 用来取封面的那首曲目，曲目不为空时必有值。
     pub representative: TrackId,
@@ -196,8 +196,38 @@ pub fn group_by_album(tracks: &[Track]) -> Vec<AlbumGroup> {
         .into_iter()
         .filter_map(|title| groups.remove(&title))
         .collect();
+    sort_albums_by_track_no(&mut result, tracks);
     sort_unknown_last(&mut result, |g| g.title.as_str(), UNKNOWN_ALBUM);
     result
+}
+
+/// 专辑内按音轨号排序。只有全组都有编号且互不重复时才重排，因为多碟专辑
+/// 每碟都从 1 开始，没有碟号字段时重排会把两张碟交错，保持输入顺序更安全。
+fn sort_albums_by_track_no(groups: &mut [AlbumGroup], tracks: &[Track]) {
+    if !tracks.iter().any(|track| track.track_no.is_some()) {
+        return;
+    }
+    let numbers: HashMap<TrackId, u32> = tracks
+        .iter()
+        .filter_map(|track| track.track_no.map(|no| (track.id, no)))
+        .collect();
+
+    for group in groups {
+        let Some(mut ordered) = group
+            .tracks
+            .iter()
+            .map(|id| numbers.get(id).map(|no| (*no, *id)))
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        let mut seen = HashSet::with_capacity(ordered.len());
+        if !ordered.iter().all(|(no, _)| seen.insert(*no)) {
+            continue;
+        }
+        ordered.sort_unstable_by_key(|(no, _)| *no);
+        group.tracks = ordered.into_iter().map(|(_, id)| id).collect();
+    }
 }
 
 /// 按艺术家聚合，结果升序，[`UNKNOWN_ARTIST`] 永远在最后。
@@ -427,6 +457,46 @@ mod tests {
             [tracks[0].id, tracks[1].id, tracks[2].id],
             "顺序应当与输入一致，而不是被重排"
         );
+    }
+
+    fn numbered(path: &str, album: &str, no: u32) -> Track {
+        let mut track = with(path, Some("陈屿"), Some(album));
+        track.track_no = Some(no);
+        track
+    }
+
+    #[test]
+    fn 专辑内按音轨号排序() {
+        let tracks = vec![
+            numbered("a", "城市漫游", 3),
+            numbered("b", "城市漫游", 1),
+            numbered("c", "城市漫游", 2),
+        ];
+        let groups = group_by_album(&tracks);
+        assert_eq!(groups[0].tracks, [tracks[1].id, tracks[2].id, tracks[0].id]);
+    }
+
+    /// 多碟专辑每碟都从 1 开始，没有碟号字段时重排会把两张碟交错，宁可保持输入顺序。
+    #[test]
+    fn 编号重复时保持输入顺序() {
+        let tracks = vec![
+            numbered("a", "合辑", 1),
+            numbered("b", "合辑", 1),
+            numbered("c", "合辑", 2),
+        ];
+        let groups = group_by_album(&tracks);
+        assert_eq!(groups[0].tracks, [tracks[0].id, tracks[1].id, tracks[2].id]);
+    }
+
+    #[test]
+    fn 缺编号时保持输入顺序() {
+        let tracks = vec![
+            numbered("a", "合辑", 2),
+            with("b", Some("陈屿"), Some("合辑")),
+            numbered("c", "合辑", 1),
+        ];
+        let groups = group_by_album(&tracks);
+        assert_eq!(groups[0].tracks, [tracks[0].id, tracks[1].id, tracks[2].id]);
     }
 
     #[test]

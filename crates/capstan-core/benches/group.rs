@@ -22,6 +22,7 @@ fn synthetic_library(albums: usize, per_album: usize) -> Vec<Track> {
                 title: format!("曲目 {n}"),
                 artist: Some(format!("艺术家 {}", album % 97)),
                 album: Some(format!("专辑 {album:04}")),
+                track_no: None,
                 duration: Some(Duration::from_secs(180 + n as u64 % 120)),
                 // 每三首带一张封面，让「选封面代表」那条分支真的被走到。
                 has_cover: n % 3 == 0,
@@ -59,6 +60,7 @@ fn wide_album(tracks: usize) -> Vec<Track> {
             title: format!("曲目 {n}"),
             artist: Some(format!("客串 {n:04}")),
             album: Some("群星合辑".to_owned()),
+            track_no: None,
             duration: Some(Duration::from_secs(200)),
             has_cover: n % 3 == 0,
             audio: AudioInfo::default(),
@@ -77,6 +79,7 @@ fn many_albums_by_one_artist(albums: usize) -> Vec<Track> {
             title: format!("曲目 {n}"),
             artist: Some("陈屿".to_owned()),
             album: Some(format!("专辑 {n:04}")),
+            track_no: None,
             duration: Some(Duration::from_secs(200)),
             has_cover: n % 3 == 0,
             audio: AudioInfo::default(),

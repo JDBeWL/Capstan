@@ -68,6 +68,11 @@ pub enum PlayerEvent {
     State(PlaybackState),
     /// 一首歌自然播放结束。由 UI 决定下一曲还是循环。
     Ended,
+    /// 已无缝接入预载的下一首。音频未中断，界面据此更换曲目与时长。
+    TrackStarted {
+        path: PathBuf,
+        duration: Duration,
+    },
     Volume(f32),
     /// 全部可用输出设备。切换设备、插拔设备后都会重新发一份。
     Devices(Vec<AudioDeviceInfo>),

@@ -42,6 +42,8 @@ impl Transport {
                 }
                 // `Finished` 由上层推进队列、设备列表只有底栏的设备菜单关心，失败与降级由 `RootView` 弹提示，这里都不处理。
                 PlaybackEvent::Finished
+                | PlaybackEvent::TrackStarted { .. }
+                | PlaybackEvent::Sought
                 | PlaybackEvent::VolumeChanged
                 | PlaybackEvent::DevicesChanged
                 | PlaybackEvent::OutputModeChanged

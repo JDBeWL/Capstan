@@ -20,7 +20,7 @@ pub struct ToastEntity {
     pending: Option<Pending>,
     /// 退出动画期间暂存的内容，等 160ms 播完才真正消失。
     closing: Option<Pending>,
-    /// 每次 show / 开始退场递增；定时器只在本代仍是当前代时才生效。
+    /// 每次 show 与开始退场时递增；定时器只在本代仍是当前代时才生效。
     generation: u64,
     _expiry: Option<Task<()>>,
     _close: Option<Task<()>>,

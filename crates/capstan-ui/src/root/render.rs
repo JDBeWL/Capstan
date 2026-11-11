@@ -97,6 +97,10 @@ impl Frame {
 
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 封面按真实缩放因子取档，100% 缩放下不再按 1.5 倍预留，位图与显存都小一档。
+        // 只写缓存里的一个 Cell，不触发重绘，子视图随后读到的是本帧的值。
+        let scale = window.scale_factor();
+        self.covers.read(cx).set_scale(scale);
         let frame = Frame::read(self, cx);
 
         div()
@@ -240,6 +244,14 @@ impl Render for RootView {
     }
 }
 
+/// 主区低频视图的缓存嵌入。缓存只在视图自身 notify 或 bounds 与文本样式变化时失效，
+/// 进度泵的通知沿 `SeekBar` → `BottomBar` → `RootView` 祖先链标脏，不会波及兄弟子树。
+/// 尺寸以百分比交给父级 flex 解析，写死像素会与 1px 分区线错开，且窗口缩放即失效。
+fn cached_fill<T: Render>(view: Entity<T>) -> AnyElement {
+    view.cached(StyleRefinement::default().w_full().h_full())
+        .into_any_element()
+}
+
 impl RootView {
     /// 顶栏之下、底栏之上的主区，侧栏 + 中间白板 +（可选）右面板。
     /// 三块之间只用 1px 细线分区，没有缝、没有圆角卡片。
@@ -254,7 +266,13 @@ impl RootView {
             .flex_1()
             .min_h_0()
             .when(frame.sidebar != SidebarState::Hidden, |row| {
-                row.child(self.sidebar.clone())
+                row.child(
+                    self.sidebar.clone().cached(
+                        StyleRefinement::default()
+                            .w(px(frame.sidebar.width()))
+                            .h_full(),
+                    ),
+                )
             })
             .child(self.center_card(frame, window, cx))
             .when_some(
@@ -341,7 +359,7 @@ impl RootView {
             NavSection::Home => div()
                 .flex_1()
                 .min_h_0()
-                .child(self.home.clone())
+                .child(cached_fill(self.home.clone()))
                 .into_any_element(),
             NavSection::Search => {
                 // 有歌曲命中时整页交给 TrackList。搜索摘要、工具条与列表共用一个滚动区；
@@ -353,7 +371,7 @@ impl RootView {
                     div()
                         .flex_1()
                         .min_h_0()
-                        .child(self.track_list.clone())
+                        .child(cached_fill(self.track_list.clone()))
                         .into_any_element()
                 } else {
                     div()
@@ -361,24 +379,24 @@ impl RootView {
                         .flex_1()
                         .min_h_0()
                         .overflow_y_scroll()
-                        .child(self.search_page.clone())
+                        .child(cached_fill(self.search_page.clone()))
                         .into_any_element()
                 }
             }
             NavSection::Tracks => div()
                 .flex_1()
                 .min_h_0()
-                .child(self.track_list.clone())
+                .child(cached_fill(self.track_list.clone()))
                 .into_any_element(),
             NavSection::Albums | NavSection::Artists => div()
                 .flex_1()
                 .min_h_0()
-                .child(self.album_grid.clone())
+                .child(cached_fill(self.album_grid.clone()))
                 .into_any_element(),
             NavSection::Settings => div()
                 .flex_1()
                 .min_h_0()
-                .child(self.settings_panel.clone())
+                .child(cached_fill(self.settings_panel.clone()))
                 .into_any_element(),
         };
 
@@ -403,8 +421,8 @@ impl RootView {
     /// 右侧面板那张卡片，按列停靠时用。
     fn right_panel(&self, tab: PanelTab) -> AnyElement {
         let panel = match tab {
-            PanelTab::NowPlaying => self.now_playing.clone().into_any_element(),
-            PanelTab::Queue => self.queue_panel.clone().into_any_element(),
+            PanelTab::NowPlaying => cached_fill(self.now_playing.clone()),
+            PanelTab::Queue => cached_fill(self.queue_panel.clone()),
         };
         // id 带页签名。切页签会重播，只改内容不重播。
         let id = SharedString::from(format!("panel-{}", panel_id(tab)));
@@ -429,8 +447,8 @@ impl RootView {
     /// 不能再让旧面板占着 flex 列，否则网格列数会先变宽、内容被挤一下。
     fn closing_docked_panel(&self, tab: PanelTab, frame: &Frame) -> AnyElement {
         let panel = match tab {
-            PanelTab::NowPlaying => self.now_playing.clone().into_any_element(),
-            PanelTab::Queue => self.queue_panel.clone().into_any_element(),
+            PanelTab::NowPlaying => cached_fill(self.now_playing.clone()),
+            PanelTab::Queue => cached_fill(self.queue_panel.clone()),
         };
         div()
             .absolute()
@@ -456,8 +474,8 @@ impl RootView {
     /// 窄档的右面板。遮罩 + 贴右边的一列卡片，只盖顶栏与底栏之间的主区。
     fn right_panel_overlay(&self, tab: PanelTab, frame: &Frame, closing: bool) -> AnyElement {
         let panel = match tab {
-            PanelTab::NowPlaying => self.now_playing.clone().into_any_element(),
-            PanelTab::Queue => self.queue_panel.clone().into_any_element(),
+            PanelTab::NowPlaying => cached_fill(self.now_playing.clone()),
+            PanelTab::Queue => cached_fill(self.queue_panel.clone()),
         };
         let shell = self.shell.clone();
         let id = SharedString::from(format!("panel-overlay-{}", panel_id(tab)));

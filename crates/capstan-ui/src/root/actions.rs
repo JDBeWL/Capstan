@@ -60,12 +60,59 @@ impl RootView {
         }
     }
 
-    pub(super) fn nudge_seek(&mut self, delta: i64, cx: &mut Context<Self>) {
+    /// 让音频线程预载下一首。下一首的口径必须与自然播完一致，故取 `peek_on_end`。
+    /// 仅在 `(当前曲, 下一曲)` 变化时下发；槽位替换不影响正在播放的段。
+    pub(super) fn sync_preload(&mut self, cx: &mut Context<Self>) {
+        self.sync_preload_inner(false, cx);
+    }
+
+    /// 链路重建后重新下发预载，即使下一首的 id 未变。seek、换设备与换输出模式
+    /// 都会重建，新链路上没有预载。
+    pub(super) fn refresh_preload(&mut self, cx: &mut Context<Self>) {
+        self.sync_preload_inner(true, cx);
+    }
+
+    fn sync_preload_inner(&mut self, force: bool, cx: &mut Context<Self>) {
+        if force {
+            self.preload = None;
+        }
+
+        let (state, current) = {
+            let playback = self.playback.read(cx);
+            (playback.state(), playback.current().cloned())
+        };
+
+        let next = if current.is_some()
+            && matches!(state, PlaybackState::Playing | PlaybackState::Paused)
+        {
+            self.library.read(cx).peek_on_end()
+        } else {
+            None
+        };
+
+        let key = current
+            .as_ref()
+            .map(|track| (track.id, next.as_ref().map(|next| next.id)));
+        if self.preload == key {
+            return;
+        }
+        self.preload = key;
+
+        let Some(after) = current else {
+            return;
+        };
+        let next_path = next.map(|track| track.path);
         self.playback.update(cx, |playback, _| {
+            playback.preload_next(&after.path, next_path);
+        });
+    }
+
+    pub(super) fn nudge_seek(&mut self, delta: i64, cx: &mut Context<Self>) {
+        self.playback.update(cx, |playback, cx| {
             let current = playback.position().as_millis() as i64;
             let total = playback.duration().as_millis() as i64;
             let target = (current + delta).clamp(0, total.max(0)) as u64;
-            playback.seek(Duration::from_millis(target));
+            playback.seek(Duration::from_millis(target), cx);
         });
     }
 

@@ -54,6 +54,8 @@ impl NowPlaying {
                 // 设备列表只有底栏的设备菜单关心。失败提示由 `RootView` 统一弹 toast，
                 // 这一栏的错误卡片跟着 `StateChanged` 重绘就够了。
                 PlaybackEvent::Finished
+                | PlaybackEvent::TrackStarted { .. }
+                | PlaybackEvent::Sought
                 | PlaybackEvent::VolumeChanged
                 | PlaybackEvent::DevicesChanged
                 | PlaybackEvent::OutputModeChanged

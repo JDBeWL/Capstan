@@ -18,6 +18,7 @@ use crate::entities::{LibraryEntity, LibraryEvent, PlaybackEntity, PlaybackEvent
 use crate::platform::*;
 use crate::settings::Settings;
 use crate::shell::{NavSection, PanelTab, ShellEntity};
+use capstan_core::TrackId;
 
 mod actions;
 mod nav;
@@ -51,6 +52,8 @@ pub struct RootView {
     /// 只在落盘前读「恢复播放位置」开关，不 observe。
     settings: Entity<SettingsEntity>,
     toast: Entity<ToastEntity>,
+    /// 仅用于每帧写入窗口缩放因子，供封面按真实 DPI 取档。
+    covers: Entity<CoverCache>,
     focus: FocusHandle,
     /// 由 `render` 的拖拽回调读写。gpui 会把外部拖拽的 `Entered/Pending` 翻译成一次 `MouseMove`。
     drop_active: bool,
@@ -72,6 +75,8 @@ pub struct RootView {
     _bounds_watch: Subscription,
     /// 播放中兜底写 `resume.json` 的节拍任务，持有它才不会被提前回收。
     _resume_watcher: Task<()>,
+    /// 最近一次下发的预载，即 `(当前曲, 下一曲)`。相同则不必再命令音频线程重建。
+    preload: Option<(TrackId, Option<TrackId>)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -200,10 +205,30 @@ impl RootView {
                         library.update(cx, |library, cx| library.record_played(id, cx));
                     }
                     resume::save_resume(&this.playback, &this.settings, cx);
+                    this.sync_preload(cx);
                 }
                 PlaybackEvent::StateChanged => {
                     resume::save_resume(&this.playback, &this.settings, cx);
+                    this.sync_preload(cx);
                 }
+                // 音频已无缝接入下一首。先提交曲库光标与高亮，再由播放实体接管元信息；
+                // 这条路径不得走 `load`，否则会重新装载并破坏无缝接缝。
+                PlaybackEvent::TrackStarted { path, duration } => {
+                    let id = TrackId::from_path(path);
+                    let adopted = this
+                        .library
+                        .update(cx, |library, cx| library.adopt_playing(id, cx));
+                    if let Some(track) = adopted {
+                        let duration = *duration;
+                        this.playback
+                            .update(cx, |playback, cx| playback.adopt(track, duration, cx));
+                    }
+                    this.sync_preload(cx);
+                }
+                // 跳转或换设备会重建链路并清除预载，即使下一首未变也必须重新下发。
+                PlaybackEvent::Sought
+                | PlaybackEvent::DevicesChanged
+                | PlaybackEvent::OutputModeChanged => this.refresh_preload(cx),
                 // 出声失败与降级都得让用户看见。右面板在中等与窄窗口下默认收起，
                 // 只把错误挂在那儿等于没声音也没提示。
                 PlaybackEvent::Failed(message) | PlaybackEvent::Notice(message) => {
@@ -212,11 +237,9 @@ impl RootView {
                         .update(cx, |toast, cx| toast.show_plain(message, cx));
                 }
                 // `Restored` 只是把上次那首装回来，不算一次播放，也不能把还没生效的 0 秒写回存档；
-                // 输出模式与设备列表由设置面板、底栏各自订阅刷新。
-                PlaybackEvent::Restored
-                | PlaybackEvent::VolumeChanged
-                | PlaybackEvent::DevicesChanged
-                | PlaybackEvent::OutputModeChanged => {}
+                // 恢复后同样需要预载下一首，用户按下播放即可无缝接上。
+                PlaybackEvent::Restored => this.sync_preload(cx),
+                PlaybackEvent::VolumeChanged => {}
             }
         });
 
@@ -450,6 +473,10 @@ impl RootView {
             this.sync_overlay_closing(panel, panel_overlay, lyrics, cx);
         });
 
+        // 队列增删、排序与随机、循环模式切换都会 notify 曲库。下一首变化即重下预载，
+        // 槽位可替换，不会打断正在播放的段。
+        let on_library_changed = cx.observe(&library, |this, _, cx| this.sync_preload(cx));
+
         Self {
             playback,
             library,
@@ -469,6 +496,7 @@ impl RootView {
             top_bar,
             settings_panel,
             settings,
+            covers,
             focus,
             drop_active: false,
             panel_closing: None,
@@ -483,6 +511,7 @@ impl RootView {
             window_rect: windowed_rect(window),
             _resume_watcher: resume_watcher,
             _bounds_watch: bounds_watch,
+            preload: None,
             _subscriptions: vec![
                 on_playback,
                 on_play,
@@ -492,6 +521,7 @@ impl RootView {
                 on_grid,
                 on_search,
                 on_shell,
+                on_library_changed,
                 on_quit,
                 on_window_closed,
             ],

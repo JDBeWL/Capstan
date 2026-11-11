@@ -3,7 +3,7 @@
 
 use std::rc::Rc;
 
-use capstan_core::{Track, TrackId, album_key, artist_keys};
+use capstan_core::{Track, TrackId, artist_keys};
 
 use crate::entities::filter;
 use crate::platform::*;
@@ -194,25 +194,33 @@ impl LibraryEntity {
         }
     }
 
-    /// 作用域圈定的曲目下标，`All` 返回 `None`。判定必须与分组共用 `capstan_core` 的 `album_key` / `artist_keys`。
-    fn scope_rows(&self) -> Option<Vec<usize>> {
-        match &self.scope {
+    /// 作用域圈定的曲目下标，`All` 返回 `None`。专辑按分组缓存里排好的音轨号顺序出下标；
+    /// 艺术家判定仍与分组共用 `artist_keys`。
+    fn scope_rows(&mut self) -> Option<Vec<usize>> {
+        let scope = self.scope.clone();
+        match scope {
             Scope::All => None,
-            Scope::Album(title) => Some(
-                self.playlist
-                    .tracks()
+            Scope::Album(title) => {
+                let groups = self.albums();
+                let rows = groups
                     .iter()
-                    .enumerate()
-                    .filter(|(_, track)| album_key(track) == title)
-                    .map(|(index, _)| index)
-                    .collect(),
-            ),
+                    .find(|group| group.title == title)
+                    .map(|group| {
+                        group
+                            .tracks
+                            .iter()
+                            .filter_map(|id| self.playlist.index_of(*id))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Some(rows)
+            }
             Scope::Artist(name) => Some(
                 self.playlist
                     .tracks()
                     .iter()
                     .enumerate()
-                    .filter(|(_, track)| artist_keys(track).iter().any(|key| key == name))
+                    .filter(|(_, track)| artist_keys(track).iter().any(|key| *key == name))
                     .map(|(index, _)| index)
                     .collect(),
             ),
@@ -220,7 +228,7 @@ impl LibraryEntity {
             // 解析不出的成员跳过。
             Scope::Collection(id) => Some(
                 self.collections
-                    .get(*id)?
+                    .get(id)?
                     .tracks
                     .iter()
                     .filter_map(|track| self.playlist.index_of(*track))

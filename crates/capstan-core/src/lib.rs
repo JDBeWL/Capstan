@@ -31,7 +31,7 @@ pub use roots::Roots;
 pub use scanner::{
     AUDIO_EXTENSIONS, SIGNATURE_PROBE_LEN, ScanContext, Signature, UNSUPPORTED_EXTENSIONS,
     collect_audio_paths, collect_audio_paths_with, is_audio_extension, is_audio_file,
-    is_decodable_extension, scan_into_tracks, scan_into_tracks_with, signature_of,
+    is_decodable_extension, scan_into_tracks, scan_into_tracks_with, sibling_index, signature_of,
 };
 pub use track::{
     AudioInfo, FieldSource, FieldSources, FileStamp, Quality, Track, TrackId, format_duration,
