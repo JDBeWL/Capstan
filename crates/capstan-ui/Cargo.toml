@@ -1,6 +1,6 @@
 [package]
 name = "capstan-ui"
-version = "0.5.1"
+version = "0.5.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -9,8 +9,11 @@ description = "GPUI view layer for Capstan: entities, components and theming."
 [dependencies]
 capstan-core = { workspace = true }
 capstan-audio = { workspace = true }
+capstan-taskbar = { workspace = true }
 # 独占后端依赖 capstan-audio（复用解码链），所以装配它只能在这一层：由这里把工厂注入音频线程。
 capstan-audio-exclusive = { path = "../capstan-audio-exclusive" }
+# 任务栏集成只认 Win32 句柄，HasWindowHandle 的实现在渲染层。
+raw-window-handle = "0.6"
 gpui = { workspace = true }
 gpui-platform = { workspace = true }
 gpui-component = { workspace = true }

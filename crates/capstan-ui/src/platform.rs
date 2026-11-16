@@ -125,3 +125,24 @@ pub fn rooted<T: Render + 'static>(
 ) -> Entity<Root> {
     cx.new(|cx| Root::new(view, window, cx))
 }
+
+/// 主窗口的 Win32 句柄。任务栏集成只接受这一种；其余平台与测试窗口返回 `None`。
+pub fn window_hwnd(window: &Window) -> Option<isize> {
+    #[cfg(windows)]
+    {
+        use raw_window_handle::RawWindowHandle;
+        // 固有方法 `Window::window_handle` 返回的是实体句柄，这里要的是 trait 的原始句柄。
+        let handle = raw_window_handle::HasWindowHandle::window_handle(window)
+            .ok()?
+            .as_raw();
+        match handle {
+            RawWindowHandle::Win32(handle) => Some(handle.hwnd.get()),
+            _ => None,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+        None
+    }
+}

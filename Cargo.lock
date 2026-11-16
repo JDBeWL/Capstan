@@ -777,12 +777,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "capstan-taskbar"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "log",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "capstan-ui"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "capstan-audio",
  "capstan-audio-exclusive",
  "capstan-core",
+ "capstan-taskbar",
  "chrono",
  "gpui-base",
  "gpui-component",
@@ -790,6 +800,7 @@ dependencies = [
  "gpui-pre-platform",
  "image",
  "log",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

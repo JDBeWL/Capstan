@@ -12,7 +12,7 @@ use crate::components::{
     SettingsPanel, Sidebar, TopBar, TrackList, TrackListEvent, Transport, TransportEvent,
     VolumeControl,
 };
-use crate::cover::CoverCache;
+use crate::cover::{CoverCache, CoverCacheEvent};
 // `Scope` 必须显式导入。`platform::*` 里带着 `gpui::Scope<'_>`，靠 glob 引进来会撞名。
 use crate::entities::{LibraryEntity, LibraryEvent, PlaybackEntity, PlaybackEvent, Scope};
 use crate::platform::*;
@@ -24,6 +24,7 @@ mod actions;
 mod nav;
 mod render;
 mod resume;
+mod taskbar;
 
 pub use nav::{
     BACK_BTN, BACK_INSET_TOP, HEADER_BACK_INSET, NavDirection, nav_click, toggle_settings,
@@ -73,6 +74,12 @@ pub struct RootView {
     window_rect: Option<crate::settings::WindowRect>,
     /// 窗口几何变化订阅。拖边与拖标题栏都经由它，见 [`Self::remember_window`]。
     _bounds_watch: Subscription,
+    /// 任务栏缩略图与按钮。Windows 之外或挂载失败时为 `None`。
+    taskbar: Option<capstan_taskbar::Taskbar>,
+    /// 任务栏按钮点击泵。持有它任务才不会被提前中断。
+    _taskbar_pump: Option<Task<()>>,
+    /// 上次写进窗口标题的文本，避免每帧 `SetWindowText`。
+    window_title: String,
     /// 播放中兜底写 `resume.json` 的节拍任务，持有它才不会被提前回收。
     _resume_watcher: Task<()>,
     /// 最近一次下发的预载，即 `(当前曲, 下一曲)`。相同则不必再命令音频线程重建。
@@ -196,6 +203,7 @@ impl RootView {
                 PlaybackEvent::Finished => {
                     let step = this.library.update(cx, |library, _| library.step_on_end());
                     this.apply_step(step, cx);
+                    this.sync_taskbar_state(cx);
                 }
                 // `load` 是唯一的装载口，续播、点歌、队列跳转都会走到这里。
                 PlaybackEvent::TrackChanged => {
@@ -206,10 +214,13 @@ impl RootView {
                     }
                     resume::save_resume(&this.playback, &this.settings, cx);
                     this.sync_preload(cx);
+                    this.sync_taskbar_track(cx);
+                    this.sync_taskbar_state(cx);
                 }
                 PlaybackEvent::StateChanged => {
                     resume::save_resume(&this.playback, &this.settings, cx);
                     this.sync_preload(cx);
+                    this.sync_taskbar_state(cx);
                 }
                 // 音频已无缝接入下一首。先提交曲库光标与高亮，再由播放实体接管元信息；
                 // 这条路径不得走 `load`，否则会重新装载并破坏无缝接缝。
@@ -238,7 +249,11 @@ impl RootView {
                 }
                 // `Restored` 只是把上次那首装回来，不算一次播放，也不能把还没生效的 0 秒写回存档；
                 // 恢复后同样需要预载下一首，用户按下播放即可无缝接上。
-                PlaybackEvent::Restored => this.sync_preload(cx),
+                PlaybackEvent::Restored => {
+                    this.sync_preload(cx);
+                    this.sync_taskbar_track(cx);
+                    this.sync_taskbar_state(cx);
+                }
                 PlaybackEvent::VolumeChanged => {}
             }
         });
@@ -474,10 +489,20 @@ impl RootView {
         });
 
         // 队列增删、排序与随机、循环模式切换都会 notify 曲库。下一首变化即重下预载，
-        // 槽位可替换，不会打断正在播放的段。
-        let on_library_changed = cx.observe(&library, |this, _, cx| this.sync_preload(cx));
+        // 槽位可替换，不会打断正在播放的段。收藏状态也在同一次通知里同步给任务栏。
+        let on_library_changed = cx.observe(&library, |this, _, cx| {
+            this.sync_preload(cx);
+            this.sync_taskbar_like(cx);
+        });
 
-        Self {
+        // 任务栏缩略图借用封面缓存的最高档；解码完成后拷贝一份 BGRA 过去。
+        let on_cover = cx.subscribe(&covers, |this, _, event: &CoverCacheEvent, cx| {
+            if let CoverCacheEvent::Ready(key) = event {
+                this.on_cover_ready(*key, cx);
+            }
+        });
+
+        let mut view = Self {
             playback,
             library,
             shell,
@@ -511,6 +536,9 @@ impl RootView {
             window_rect: windowed_rect(window),
             _resume_watcher: resume_watcher,
             _bounds_watch: bounds_watch,
+            taskbar: None,
+            _taskbar_pump: None,
+            window_title: String::new(),
             preload: None,
             _subscriptions: vec![
                 on_playback,
@@ -522,10 +550,14 @@ impl RootView {
                 on_search,
                 on_shell,
                 on_library_changed,
+                on_cover,
                 on_quit,
                 on_window_closed,
             ],
-        }
+        };
+
+        view.attach_taskbar(window, cx);
+        view
     }
 
     /// 关面板与关歌词时外壳会立刻把状态置空，退出动画需由根视图把旧内容多保留一段时间。

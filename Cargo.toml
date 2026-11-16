@@ -6,6 +6,7 @@ members = [
     "crates/capstan-audio-simd",
     "crates/capstan-audio-exclusive",
     "crates/capstan-ui",
+    "crates/capstan-taskbar",
     "crates/capstan-app",
 ]
 
@@ -15,12 +16,13 @@ rust-version = "1.99.1"
 license = "MIT OR Apache-2.0"
 
 [workspace.metadata.product]
-version = "0.5.1"
+version = "0.5.2"
 
 [workspace.dependencies]
 capstan-core = { path = "crates/capstan-core" }
 capstan-audio = { path = "crates/capstan-audio" }
 capstan-ui = { path = "crates/capstan-ui" }
+capstan-taskbar = { path = "crates/capstan-taskbar" }
 
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }

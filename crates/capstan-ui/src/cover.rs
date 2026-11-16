@@ -16,8 +16,8 @@ use crate::platform::*;
 /// 缩放档位，即位图长边的像素数。相邻两档差 1.33 倍，任一档落到槽位后 GPU 最多再缩 2.3 倍。
 const BUCKETS: [u32; 7] = [64, 96, 128, 192, 256, 384, 512];
 
-/// 最高档位，也是「没匹配到任何档」时的兜底。
-const MAX_BUCKET: u32 = 512;
+/// 最高档位，也是「没匹配到任何档」时的兜底。任务栏缩略图也取这一档。
+pub const MAX_BUCKET: u32 = 512;
 const _: () = assert!(MAX_BUCKET == BUCKETS[BUCKETS.len() - 1]);
 
 /// 界面槽位尺寸（逻辑像素）→ 该取哪一档。`scale` 是窗口缩放因子，由根视图每帧写入缓存。
@@ -76,6 +76,13 @@ impl CoverKey {
     pub fn track_id(self) -> TrackId {
         match self {
             Self::Track(id, _) | Self::File(id, _) => id,
+        }
+    }
+
+    /// 位图档位。任务栏只关心最高档，拿事件时可先按它过滤。
+    pub const fn bucket(self) -> u32 {
+        match self {
+            Self::Track(_, bucket) | Self::File(_, bucket) => bucket,
         }
     }
 }
@@ -169,6 +176,11 @@ impl CoverCache {
             move |registry| load_file(&path, bucket, registry),
             cx,
         );
+    }
+
+    /// 一条已解码位图，按槽位键取。任务栏缩略图借用缓存里的同一份图，不重新解码。
+    pub fn ready_key(&self, key: CoverKey) -> Option<Arc<RenderImage>> {
+        self.slot(key)
     }
 
     /// 已解码好的封面；取不到时返回 `None` 由调用方退化成占位图。

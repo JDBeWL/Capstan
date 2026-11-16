@@ -101,6 +101,12 @@ impl Render for RootView {
         // 只写缓存里的一个 Cell，不触发重绘，子视图随后读到的是本帧的值。
         let scale = window.scale_factor();
         self.covers.read(cx).set_scale(scale);
+        // 任务栏头部与 tooltip 的名字由窗口标题决定；这里顺带把无障碍标题跟上。
+        let title = self.taskbar_title(cx);
+        if title != self.window_title {
+            window.set_window_title(&title);
+            self.window_title = title;
+        }
         let frame = Frame::read(self, cx);
 
         div()
