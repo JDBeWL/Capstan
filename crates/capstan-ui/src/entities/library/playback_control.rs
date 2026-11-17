@@ -282,11 +282,11 @@ impl LibraryEntity {
     }
 
     /// 音频已无缝接入下一首。只提交光标与高亮，不再发播放事件，否则会重新装载并打断音频。
+    /// 滚动与否由「跟随播放」开关决定。
     pub fn adopt_playing(&mut self, id: TrackId, cx: &mut Context<Self>) -> Option<Track> {
         let track = self.playlist.by_id(id)?.clone();
         self.playlist.jump_to(id);
-        self.set_focus(id, cx);
-        self.cursor_visible = false;
+        self.follow_playback(id, cx);
         self.now_playing = Some(id);
         cx.notify();
         Some(track)

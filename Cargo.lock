@@ -787,7 +787,7 @@ dependencies = [
 
 [[package]]
 name = "capstan-ui"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "capstan-audio",
  "capstan-audio-exclusive",
