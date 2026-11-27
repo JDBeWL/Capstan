@@ -4,6 +4,7 @@ use std::time::Duration;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::prelude::Accessor;
 use lofty::probe::Probe;
+use lofty::tag::ItemKey;
 
 use crate::error::{CoreError, Result};
 use crate::filename::{self, FolderContext};
@@ -22,8 +23,8 @@ pub fn read_track(path: &Path) -> Result<Track> {
     read_track_in(path, &FolderContext::default())
 }
 
-/// 读一首曲目，带同目录上下文。字段按「标签 → 文件名 → 目录名」三级兜底：
-/// 标签优先，标签缺失的字段才从文件名推断。三级都取不到时留空，不使用占位值。
+/// 读取一首曲目及同目录上下文。字段按「标签 → 文件名 → 目录名」三级依次后备，
+/// 标签优先，标签缺失的字段才从文件名推断；三级均无结果时留空，不使用占位值。
 pub fn read_track_in(path: &Path, folder: &FolderContext<'_>) -> Result<Track> {
     let tagged = Probe::open(path)
         .map_err(|source| CoreError::Tag {
@@ -46,7 +47,7 @@ pub fn read_track_in(path: &Path, folder: &FolderContext<'_>) -> Result<Track> {
     };
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
 
-    // 路径与文件名能给的先全填上，再用标签覆盖。标签缺哪一项，兜底值就留在哪一项上。
+    // 先以路径与文件名填充，再用标签覆盖；标签缺失的字段保留推断值。
     let mut track = infer(path, folder);
 
     if let Some(title) = clean(tag.and_then(Accessor::title)) {
@@ -66,6 +67,7 @@ pub fn read_track_in(path: &Path, folder: &FolderContext<'_>) -> Result<Track> {
     track.duration = Some(duration).filter(|d| !d.is_zero());
     track.has_cover = tag.is_some_and(|tag| !tag.pictures().is_empty());
     track.audio = audio;
+    track.bpm_tag = tag.and_then(read_bpm_tag);
 
     Ok(track)
 }
@@ -116,6 +118,7 @@ pub fn infer(path: &Path, folder: &FolderContext<'_>) -> Track {
         },
         // 读这一首时的指纹。唯一一次 stat 在这里做，扫描器只负责拿它和现值比。
         stamp: FileStamp::of(path),
+        bpm_tag: None,
     }
 }
 
@@ -160,6 +163,23 @@ fn clean(value: Option<std::borrow::Cow<'_, str>>) -> Option<String> {
 /// 标签里的音轨号优先；0 视为未填，退回文件名给的编号。
 fn pick_track_no(tagged: Option<u32>, filename: Option<u32>) -> Option<u32> {
     tagged.filter(|no| *no > 0).or(filename)
+}
+
+/// 解析标签里的 BPM。优先读浮点标签，缺失时退回整数标签；超出合理区间视为无效。
+fn read_bpm_tag(tag: &lofty::tag::Tag) -> Option<f32> {
+    tag.get_string(ItemKey::Bpm)
+        .and_then(parse_bpm)
+        .or_else(|| tag.get_string(ItemKey::IntegerBpm).and_then(parse_bpm))
+}
+
+fn parse_bpm(raw: &str) -> Option<f32> {
+    let trimmed = raw
+        .trim()
+        .trim_end_matches("BPM")
+        .trim_end_matches("bpm")
+        .trim();
+    let value: f32 = trimmed.parse().ok()?;
+    (value.is_finite() && (30.0..=300.0).contains(&value)).then_some(value)
 }
 
 fn stem_of(path: &Path) -> String {

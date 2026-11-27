@@ -10,7 +10,7 @@ mod render;
 mod resample;
 mod ring;
 
-pub use backend::ExclusiveBackend;
+pub use backend::{ExclusiveBackend, MIN_LEAD_EXCLUSIVE};
 pub use device::ExclusiveFormat;
 pub use error::{ExclusiveError, Result};
 pub use resample::RubatoResampleSource;

@@ -7,6 +7,7 @@
 ## 功能
 
 - **播放**：播放 / 暂停、上下曲、拖动跳转与悬停预览落点、音量与静音。随机与循环为两条独立轴，组合出四种行为。播放失败与输出降级均有提示，不会只出现在收起的面板中
+- **自动混音（可选）**：离线分析 BPM、节拍网格、小节线、乐句边界、能量包络、BS.1770 响度与调性；支持共享与 WASAPI 独占双轨混音、低频交换、响度匹配与尾奏裁剪，并提供可视化过渡编辑器按歌曲对微调切点与曲线
 - **队列**：来源于当前浏览的列表 —— 在歌单 / 专辑 / 艺术家中点歌，队列即该列表。面板显示实际播放顺序，点击任意曲目可直接跳播，也可将曲目拖拽到队列任意位置。执行下一首播放 / 加入队列 / 从队列移除 / 拖拽等手动编辑后，队列固化为显式列表，直到重新点歌
 - **曲库**：原生文件对话框、拖放、命令行路径三种导入方式。导入过的文件夹记为曲库根，其中新增曲目在每次启动时自动补入，也可在设置中手动重扫。同一路径重复导入只刷新标签，不重复入库。收藏、关注与自建歌单支持拖拽排序、指定封面，按加入时间倒序排列，曲目可直接拖入
 - **浏览**：虚拟化曲目列表与专辑 / 艺术家网格，网格支持点击下钻和面包屑返回。多艺术家按 `/` `,` 拆分为独立条目；搜索多词以 AND 收窄，支持中文输入法。列表可启用「跟随播放」，自动切歌时将当前曲目滚动到可视区域
@@ -45,6 +46,7 @@
 | `capstan-audio` | 解码链、播放线程、后端抽象、命令 / 事件通道、进度快照 | ~7.1k 行 |
 | `capstan-audio-simd` | 采样转 PCM 的 AVX2 / SSE2 内核，标量兜底 | ~550 行 |
 | `capstan-audio-exclusive` | WASAPI 独占输出、格式协商、采样环与重采样 | ~3.8k 行 |
+| `capstan-analysis` | 离线 BPM / 节拍 / 乐句 / 能量 / 响度 / 调性分析与自动混音规划 | ~1.5k 行 |
 | `capstan-taskbar` | Windows 任务栏缩略图与缩略图工具栏，FFI 与窗口子类化隔离在此 | ~0.7k 行 |
 | `capstan-ui` | GPUI 视图与组件、播放 / 曲库实体、主题令牌、持久化 | ~28k 行 |
 | `capstan-app` | 二进制入口、全局快捷键绑定 | ~150 行 |
@@ -81,8 +83,8 @@ CAPSTAN_DEBUG_IMPORT="<path-to-file>" cargo run -p capstan-app   # 指定另一�
 ```
 
 用户数据位于 `%APPDATA%\Capstan\`，macOS 为 `~/Library/Application Support/Capstan`，Linux 为 `$XDG_DATA_HOME/Capstan`：
-`library.json` `settings.json` `likes.json` `follows.json` `collections.json` `recents.json` `resume.json` `queue.json`，
-外加 `covers/` 与 `logs/app.log`。如需重建数据目录，删除该目录即可。
+`library.json` `settings.json` `likes.json` `follows.json` `collections.json` `recents.json` `resume.json` `queue.json` `mix_overrides.json`，
+外加 `covers/`、`analysis/` 与 `logs/app.log`。如需重建数据目录，删除该目录即可。
 
 ## 许可
 

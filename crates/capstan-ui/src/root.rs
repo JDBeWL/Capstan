@@ -8,13 +8,17 @@ use std::time::Duration;
 use crate::common::toast::ToastEntity;
 use crate::components::{
     AlbumGrid, BottomBar, GridEvent, HomeView, LyricsView, MiniNowPlaying, MiniPlayerEvent,
-    NowPlaying, QueuePanel, SearchBox, SearchBoxEvent, SearchPage, SeekBar, SettingsEntity,
-    SettingsPanel, Sidebar, TopBar, TrackList, TrackListEvent, Transport, TransportEvent,
-    VolumeControl,
+    MixEditor, MixEditorEvent, NowPlaying, NowPlayingEvent, QueuePanel, QueuePanelEvent, SearchBox,
+    SearchBoxEvent, SearchPage, SeekBar, SettingsEntity, SettingsPanel, Sidebar, TopBar, TrackList,
+    TrackListEvent, Transport, TransportEvent, VolumeControl,
 };
 use crate::cover::{CoverCache, CoverCacheEvent};
 // `Scope` 必须显式导入。`platform::*` 里带着 `gpui::Scope<'_>`，靠 glob 引进来会撞名。
-use crate::entities::{LibraryEntity, LibraryEvent, PlaybackEntity, PlaybackEvent, Scope};
+use crate::entities::{
+    AnalysisEntity, AnalysisEvent, LibraryEntity, LibraryEvent, PlaybackEntity, PlaybackEvent,
+    Scope,
+};
+use crate::mix_overrides::{MixOverrides, MixOverridesEntity};
 use crate::platform::*;
 use crate::settings::Settings;
 use crate::shell::{NavSection, PanelTab, ShellEntity};
@@ -52,6 +56,9 @@ pub struct RootView {
     settings_panel: Entity<SettingsPanel>,
     /// 只在落盘前读「恢复播放位置」开关，不 observe。
     settings: Entity<SettingsEntity>,
+    analysis: Entity<AnalysisEntity>,
+    overrides: Entity<MixOverridesEntity>,
+    mix_editor: Entity<MixEditor>,
     toast: Entity<ToastEntity>,
     /// 仅用于每帧写入窗口缩放因子，供封面按真实 DPI 取档。
     covers: Entity<CoverCache>,
@@ -82,8 +89,12 @@ pub struct RootView {
     window_title: String,
     /// 播放中兜底写 `resume.json` 的节拍任务，持有它才不会被提前回收。
     _resume_watcher: Task<()>,
-    /// 最近一次下发的预载，即 `(当前曲, 下一曲)`。相同则不必再命令音频线程重建。
-    preload: Option<(TrackId, Option<TrackId>)>,
+    /// BPM 排序下批量分析完成时的防抖重排任务，避免列表频繁跳动。
+    _bpm_sort_task: Option<Task<()>>,
+    /// 智能混排下待播曲目分析完成时的防抖重排任务。
+    _smart_mix_task: Option<Task<()>>,
+    /// 最近一次下发的预载，即 `(当前曲, 下一曲, 混音计划指纹)`。相同则不必再命令音频线程重建。
+    preload: Option<(TrackId, Option<TrackId>, Option<u64>)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -99,6 +110,11 @@ impl RootView {
         let shell = cx.new(|cx| ShellEntity::new(window, cx));
         let covers = cx.new(|_| CoverCache::default());
         let settings = cx.new(|cx| SettingsEntity::new(stored.clone(), cx));
+        let analysis = cx.new(AnalysisEntity::new);
+        analysis
+            .read(cx)
+            .set_background_enabled(stored.auto_mix.background_analyze);
+        let overrides = cx.new(|_| MixOverridesEntity::new(MixOverrides::load()));
 
         // 偏好要在启动时显式应用进 shell / library，只存着不会生效。
         shell.update(cx, |shell, cx| shell.apply_settings(&stored, cx));
@@ -109,6 +125,7 @@ impl RootView {
             playback.set_exclusive_output(stored.exclusive_output);
             playback.set_volume(if stored.muted { 0.0 } else { stored.volume }, cx);
             playback.set_smooth_switch(stored.smooth_device_switch);
+            playback.set_auto_mix(stored.auto_mix.enabled);
         });
 
         // 系统文件对话框属另一个进程，自动化脚本无法操作；设置该环境变量时直接从该目录导入。
@@ -135,11 +152,19 @@ impl RootView {
                 covers.clone(),
                 library.clone(),
                 shell.clone(),
+                analysis.clone(),
                 cx,
             )
         });
-        let mini =
-            cx.new(|cx| MiniNowPlaying::new(playback.clone(), covers.clone(), library.clone(), cx));
+        let mini = cx.new(|cx| {
+            MiniNowPlaying::new(
+                playback.clone(),
+                covers.clone(),
+                library.clone(),
+                analysis.clone(),
+                cx,
+            )
+        });
         let search_page =
             cx.new(|cx| SearchPage::new(library.clone(), shell.clone(), covers.clone(), cx));
         let track_list = cx.new(|cx| {
@@ -149,6 +174,7 @@ impl RootView {
                 covers.clone(),
                 search_page.clone(),
                 settings.clone(),
+                analysis.clone(),
                 cx,
             )
         });
@@ -166,8 +192,24 @@ impl RootView {
         });
         let home = cx.new(|cx| HomeView::new(shell.clone(), library.clone(), covers.clone(), cx));
         let lyrics = cx.new(|cx| LyricsView::new(playback.clone(), shell.clone(), cx));
-        let queue_panel =
-            cx.new(|cx| QueuePanel::new(library.clone(), shell.clone(), covers.clone(), cx));
+        let queue_panel = cx.new(|cx| {
+            QueuePanel::new(
+                library.clone(),
+                shell.clone(),
+                covers.clone(),
+                analysis.clone(),
+                cx,
+            )
+        });
+        let mix_editor = cx.new(|cx| {
+            MixEditor::new(
+                analysis.clone(),
+                settings.clone(),
+                overrides.clone(),
+                playback.clone(),
+                cx,
+            )
+        });
         let settings_panel = cx.new(|cx| {
             SettingsPanel::new(
                 settings.clone(),
@@ -219,12 +261,17 @@ impl RootView {
                 }
                 PlaybackEvent::StateChanged => {
                     resume::save_resume(&this.playback, &this.settings, cx);
-                    this.sync_preload(cx);
+                    // 从暂停或停止切入播放时强制重下预载，防止启动续播或链路重建丢失首曲混音计划。
+                    if this.playback.read(cx).is_playing() {
+                        this.refresh_preload(cx);
+                    } else {
+                        this.sync_preload(cx);
+                    }
                     this.sync_taskbar_state(cx);
                 }
-                // 音频已无缝接入下一首。先提交曲库光标与高亮，再由播放实体接管元信息；
-                // 这条路径不得走 `load`，否则会重新装载并破坏无缝接缝。
-                PlaybackEvent::TrackStarted { path, duration } => {
+                // 音频已无缝或混音接入下一首。先提交曲库光标与高亮，再由播放实体接管元信息；
+                // 这条路径不得走 `load`，否则会重新装载并破坏接缝。
+                PlaybackEvent::TrackStarted { path, duration, .. } => {
                     let id = TrackId::from_path(path);
                     let adopted = this
                         .library
@@ -250,11 +297,11 @@ impl RootView {
                 // `Restored` 只是把上次那首装回来，不算一次播放，也不能把还没生效的 0 秒写回存档；
                 // 恢复后同样需要预载下一首，用户按下播放即可无缝接上。
                 PlaybackEvent::Restored => {
-                    this.sync_preload(cx);
+                    this.refresh_preload(cx);
                     this.sync_taskbar_track(cx);
                     this.sync_taskbar_state(cx);
                 }
-                PlaybackEvent::VolumeChanged => {}
+                PlaybackEvent::VolumeChanged | PlaybackEvent::MixingChanged => {}
             }
         });
 
@@ -309,13 +356,33 @@ impl RootView {
                     this.toast
                         .update(cx, |toast, cx| toast.show_plain(message, cx));
                 }
-                // 曲库侧的偏好（随机、循环、排序、跟随播放）由曲库实体决定何时改，
+                // 曲库侧的偏好（随机、智能混排、循环、排序、跟随播放）由曲库实体决定何时改，
                 // 落盘只在根视图做，设置实体是 `settings.json` 的唯一写者。
-                LibraryEvent::PrefsChanged => this.remember_library_prefs(cx),
-                // 曲库是后台读完的，拿到曲目后再装回上次播放位置。
+                LibraryEvent::PrefsChanged => {
+                    this.remember_library_prefs(cx);
+                    this.sync_analysis_demand(cx);
+                }
+                LibraryEvent::SmartMixRequested => {
+                    this.arrange_smart_mix(false, cx);
+                    this.sync_analysis_demand(cx);
+                }
+                LibraryEvent::SmartReorderCollection(id) => {
+                    this.smart_reorder_collection(*id, cx);
+                }
+                // 曲库是后台读完的，先零解码恢复已有分析缓存，再装回上次播放位置。
                 // 排至本次通知之后，使曲库自身的后续通知先行落地。
                 LibraryEvent::Loaded => {
-                    if this.settings.read(cx).settings().resume_position {
+                    let tracks: Vec<_> = this
+                        .library
+                        .read(cx)
+                        .tracks()
+                        .iter()
+                        .map(|t| (t.id, t.stamp))
+                        .collect();
+                    this.analysis
+                        .update(cx, |analysis, cx| analysis.hydrate_cached(tracks, cx));
+                    let stored = this.settings.read(cx).settings();
+                    if stored.resume_position {
                         let playback = this.playback.clone();
                         let library = this.library.clone();
                         cx.defer(move |cx| {
@@ -502,6 +569,55 @@ impl RootView {
             }
         });
 
+        let on_analysis = cx.subscribe(
+            &analysis,
+            |this, _, event: &AnalysisEvent, cx| match event {
+                AnalysisEvent::Ready(id) => this.on_analysis_ready(*id, cx),
+                AnalysisEvent::Hydrated(bpms) => this.on_analysis_hydrated(bpms, cx),
+                AnalysisEvent::Failed(_) => {}
+            },
+        );
+
+        // 自动混音设置变更后立即同步后台分析需求并重算预载。
+        let on_settings = cx.observe(&settings, |this, _, cx| {
+            this.sync_analysis_demand(cx);
+            this.refresh_preload(cx);
+        });
+
+        let on_overrides = cx.observe(&overrides, |this, _, cx| {
+            this.refresh_preload(cx);
+        });
+
+        let on_now_playing = cx.subscribe(&now_playing, |this, _, event: &NowPlayingEvent, cx| {
+            let NowPlayingEvent::EditTransition(a, b) = *event;
+            this.open_mix_editor(a, b, cx);
+        });
+
+        let on_queue = cx.subscribe(&queue_panel, |this, _, event: &QueuePanelEvent, cx| {
+            let QueuePanelEvent::EditTransition(a, b) = *event;
+            this.open_mix_editor(a, b, cx);
+        });
+
+        let on_mix_editor =
+            cx.subscribe(
+                &mix_editor,
+                |this, _, event: &MixEditorEvent, cx| match event {
+                    MixEditorEvent::Closed => cx.notify(),
+                    MixEditorEvent::Saved => {
+                        this.toast.update(cx, |toast, cx| {
+                            toast.show_plain("已保存此对曲目的混音设置".to_owned(), cx);
+                        });
+                        cx.notify();
+                    }
+                    MixEditorEvent::Reset => {
+                        this.toast.update(cx, |toast, cx| {
+                            toast.show_plain("已恢复自动混音规划".to_owned(), cx);
+                        });
+                        cx.notify();
+                    }
+                },
+            );
+
         let mut view = Self {
             playback,
             library,
@@ -521,6 +637,9 @@ impl RootView {
             top_bar,
             settings_panel,
             settings,
+            analysis,
+            overrides,
+            mix_editor,
             covers,
             focus,
             drop_active: false,
@@ -535,6 +654,8 @@ impl RootView {
             _window_save: None,
             window_rect: windowed_rect(window),
             _resume_watcher: resume_watcher,
+            _bpm_sort_task: None,
+            _smart_mix_task: None,
             _bounds_watch: bounds_watch,
             taskbar: None,
             _taskbar_pump: None,
@@ -551,6 +672,12 @@ impl RootView {
                 on_shell,
                 on_library_changed,
                 on_cover,
+                on_analysis,
+                on_settings,
+                on_overrides,
+                on_now_playing,
+                on_queue,
+                on_mix_editor,
                 on_quit,
                 on_window_closed,
             ],
@@ -657,19 +784,20 @@ impl RootView {
         }));
     }
 
-    /// 曲库侧的偏好落盘。一次性读齐四项，设置实体只写一遍。
+    /// 曲库侧的偏好落盘。一次性读齐五项，设置实体只写一遍。
     fn remember_library_prefs(&mut self, cx: &mut Context<Self>) {
-        let (shuffle, repeat, sort_key, follow) = {
+        let (shuffle, smart_mix, repeat, sort_key, follow) = {
             let library = self.library.read(cx);
             (
                 library.is_shuffle(),
+                library.is_smart_mix(),
                 library.repeat_state(),
                 library.sort_key(),
                 library.list_follows_playback(),
             )
         };
         self.settings.update(cx, |settings, cx| {
-            settings.set_library_prefs(shuffle, repeat, sort_key, follow, cx);
+            settings.set_library_prefs(shuffle, smart_mix, repeat, sort_key, follow, cx);
         });
     }
 

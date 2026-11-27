@@ -246,7 +246,7 @@ impl Render for RootView {
                 ),
             )
             // 浮层排在最后，后画的在上面。
-            .children(self.overlays(&frame))
+            .children(self.overlays(&frame, cx))
     }
 }
 
@@ -571,9 +571,9 @@ impl RootView {
             .into_any_element()
     }
 
-    /// 浮在整棵树之上的三层，即窄屏右面板浮层、拖拽导入遮罩与底部提示条。
+    /// 浮在整棵树之上的四层，即窄屏右面板浮层、过渡编辑器、拖拽导入遮罩与底部提示条。
     /// 返回 `Vec` 而不是包一层 `div()`，多一个 flex 子项会把根布局挤歪。
-    fn overlays(&self, frame: &Frame) -> Vec<AnyElement> {
+    fn overlays(&self, frame: &Frame, cx: &App) -> Vec<AnyElement> {
         let mut layers = Vec::new();
         let overlay_panel = frame
             .right_panel
@@ -589,6 +589,9 @@ impl RootView {
         }
         if let Some((tab, closing)) = overlay_panel {
             layers.push(self.right_panel_overlay(tab, frame, closing));
+        }
+        if self.mix_editor.read(cx).is_open() {
+            layers.push(self.mix_editor.clone().into_any_element());
         }
         // 拖拽导入提示要盖在浮层之上。
         if self.drop_active {

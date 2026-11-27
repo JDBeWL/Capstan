@@ -19,7 +19,7 @@ use capstan_core::{CollectionId, Track, TrackId};
 
 use crate::common::anim;
 use crate::cover::CoverCache;
-use crate::entities::{LibraryEntity, LibraryEvent, Scope, ScopeKind};
+use crate::entities::{AnalysisEntity, LibraryEntity, LibraryEvent, Scope, ScopeKind};
 use crate::platform::*;
 use crate::settings::TrackColumns;
 use crate::shell::{Breakpoint, NavSection, ShellEntity};
@@ -42,6 +42,8 @@ const THUMB_COMPACT: f32 = 32.0;
 const TWO_LINE_MIN: f32 = 48.0;
 /// 收藏列宽。容得下表头「LIKE / 喜欢」和居中的心形，并和右侧时长留出间隔。
 const LIKE_W: f32 = 88.0;
+/// BPM 与调性列宽，容得下 `128 · 8B`，在启用自动混音、智能混排或按 BPM 排序时展示。
+const BPM_W: f32 = 82.0;
 /// 标题列的最小宽度。再窄就只剩封面，表头文字会竖着排。
 const TITLE_MIN_W: f32 = 140.0;
 /// 专辑列的硬下限。拖到最窄只剩几个截断字；主区连它都放不下就收起整列。
@@ -76,6 +78,8 @@ pub struct TrackList {
     search_page: Entity<SearchPage>,
     /// 列宽的落盘点。拖动只改内存，停手后经它写 settings.json。
     settings: Entity<SettingsEntity>,
+    /// 曲目分析缓存，用于在「BPM / 调性」列展示 Camelot 调性短码。
+    analysis: Entity<AnalysisEntity>,
     /// NO. 与专辑的存储宽度及列尾空白；标题列占用剩余宽度，时长是常量。
     columns: TrackColumns,
     /// 窗口伸缩时标题与专辑分摊宽度的占比。拖动分隔线后置空，下一次布局重新取样。
@@ -130,12 +134,23 @@ impl TrackList {
         covers: Entity<CoverCache>,
         search_page: Entity<SearchPage>,
         settings: Entity<SettingsEntity>,
+        analysis: Entity<AnalysisEntity>,
         cx: &mut Context<Self>,
     ) -> Self {
         let observe = cx.observe(&library, |_, _, cx| cx.notify());
         let observe_shell = cx.observe(&shell, |_, _, cx| cx.notify());
         // 封面解码完成时要重绘，否则行首占位图一直挂着。
         let observe_covers = cx.observe(&covers, |_, _, cx| cx.notify());
+        let observe_settings = cx.observe(&settings, |_, _, cx| cx.notify());
+        // 仅在 BPM/调性列可见时响应分析落地，避免平时产生额外重绘。
+        let observe_analysis = cx.observe(&analysis, |this, _, cx| {
+            if this.settings.read(cx).settings().auto_mix.enabled
+                || this.library.read(cx).sort_key() == capstan_core::SortKey::Bpm
+                || this.library.read(cx).is_smart_mix()
+            {
+                cx.notify();
+            }
+        });
 
         // 键盘光标移动时滚动跟随。用 `Nearest`，`Center` 每次按方向键都大幅跳动。
         let scroll = UniformListScrollHandle::default();
@@ -167,6 +182,7 @@ impl TrackList {
             covers,
             search_page,
             settings,
+            analysis,
             columns,
             album_ratio: None,
             scroll,
@@ -180,7 +196,14 @@ impl TrackList {
             selecting: false,
             selected: Rc::new(HashSet::new()),
             anchor: None,
-            _subs: vec![observe, observe_shell, observe_covers, follow],
+            _subs: vec![
+                observe,
+                observe_shell,
+                observe_covers,
+                observe_settings,
+                observe_analysis,
+                follow,
+            ],
         }
     }
 
@@ -373,7 +396,12 @@ impl Render for TrackList {
             + theme::GAP_MD
             + if selecting { CHECK_W } else { 0.0 }
             + if reorderable { HANDLE_W } else { 0.0 };
-        let content_width = (center_width - row_extras).max(0.0);
+        let show_bpm = breakpoint != Breakpoint::Narrow
+            && (self.settings.read(cx).settings().auto_mix.enabled
+                || sort_key == capstan_core::SortKey::Bpm
+                || self.library.read(cx).is_smart_mix());
+        let bpm_w = if show_bpm { BPM_W } else { 0.0 };
+        let content_width = (center_width - row_extras - bpm_w).max(0.0);
         let available =
             (content_width - self.columns.index - LIKE_W - theme::COLUMN_TIME_W - self.columns.gap)
                 .max(0.0);
@@ -388,6 +416,7 @@ impl Render for TrackList {
         let env = RowEnv {
             row_height: self.shell.read(cx).row_height(),
             show_album: fit.album.is_some(),
+            show_bpm,
             title_width: fit.title,
             album_width: fit.album.unwrap_or(0.0),
             gap: fit.gap,
@@ -491,6 +520,7 @@ impl Render for TrackList {
             let page = self.page.clone();
             let library = self.library.clone();
             let covers = self.covers.clone();
+            let analysis = self.analysis.clone();
             let shell = self.shell.clone();
             let search_page = self.search_page.clone();
             let list_weak = list_weak.clone();
@@ -569,8 +599,8 @@ impl Render for TrackList {
                 let motion = row_motion(index, removal, remove_progress, env.row_height);
                 let enter = stagger.and_then(|seq| stagger_enter(seq, index));
                 row::row(
-                    index, &track, state, picked, env, &library, &list_weak, &covers, motion,
-                    enter, window, cx,
+                    index, &track, state, picked, env, &library, &list_weak, &covers, &analysis,
+                    motion, enter, window, cx,
                 )
             })
             .size_full()
@@ -617,6 +647,7 @@ impl Render for TrackList {
         } else {
             let library = self.library.clone();
             let covers = self.covers.clone();
+            let analysis = self.analysis.clone();
             let list = Self::weak(cx);
             uniform_list("track-list", count, move |range, window, cx| {
                 // 走可见投影而不是曲库本体，只拷可视区那几首。
@@ -631,8 +662,8 @@ impl Render for TrackList {
                         let motion = row_motion(index, removal, remove_progress, env.row_height);
                         let enter = stagger.and_then(|seq| stagger_enter(seq, index));
                         row::row(
-                            index, &track, state, picked, env, &library, &list, &covers, motion,
-                            enter, window, cx,
+                            index, &track, state, picked, env, &library, &list, &covers, &analysis,
+                            motion, enter, window, cx,
                         )
                     })
                     .collect::<Vec<AnyElement>>()
@@ -797,10 +828,12 @@ fn column_fit(columns: TrackColumns, content_width: f32, album_allowed: bool) ->
 
 /// 行与列头共用的布局与作用域参数。
 #[derive(Clone, Copy)]
+#[allow(clippy::struct_excessive_bools)]
 struct RowEnv {
     /// 行高，来自密度设置；`uniform_list` 用它算每一项的位置。
     row_height: f32,
     show_album: bool,
+    show_bpm: bool,
     /// 标题列的实际宽度（剩余宽度）。
     title_width: f32,
     /// 专辑列的实际宽度。主区窄时小于用户拖出来的值，见 [`column_fit`]。

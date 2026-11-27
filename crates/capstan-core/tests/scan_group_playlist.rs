@@ -11,7 +11,8 @@ use capstan_core::{
     scan_into_tracks,
 };
 
-/// 铺一棵曲库树。`a.mp3`、`B.FLAC`（扩展名大小写不敏感）、`notes.txt`、`sub/c.wav`，其中 `notes.txt` 应被忽略。
+/// 铺一棵曲库树，含 `a.mp3`、`B.FLAC`（扩展名大小写不敏感）、`notes.txt`、
+/// `sub/c.wav`，其中 `notes.txt` 应被忽略。
 /// `tag` 必须各用例不同；用例在同一进程里并行跑，共用目录会互相删数据。
 fn fixture(tag: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(

@@ -13,7 +13,8 @@ use crate::platform::*;
 use crate::settings::{Settings, TrackColumns, WindowRect};
 use crate::shell::{Density, NavSection, PanelTab, ShellEntity, SidebarState};
 use crate::theme;
-use capstan_audio::OutputMode;
+use capstan_analysis::{AutoMixPrefs, StylePreference, TransitionLength, TrimLevel};
+use capstan_audio::{CurvePreset, OutputMode};
 use capstan_core::SortKey;
 
 pub struct SettingsPanel {
@@ -97,6 +98,32 @@ impl Render for SettingsPanel {
         );
         let (for_smooth, for_output) = (self.settings.clone(), self.settings.clone());
         let (smooth_player, output_player) = (self.playback.clone(), self.playback.clone());
+        let (
+            for_mix_enable,
+            for_mix_style,
+            for_mix_trim,
+            for_mix_len,
+            for_mix_curve,
+            for_mix_beat,
+            for_mix_tempo,
+            for_mix_low,
+            for_mix_loud,
+            for_mix_album,
+            for_mix_bg,
+        ) = (
+            self.settings.clone(),
+            self.settings.clone(),
+            self.settings.clone(),
+            self.settings.clone(),
+            self.settings.clone(),
+            self.settings.clone(),
+            self.settings.clone(),
+            self.settings.clone(),
+            self.settings.clone(),
+            self.settings.clone(),
+            self.settings.clone(),
+        );
+        let mix_player = self.playback.clone();
         let shell = self.shell.clone();
         let library = self.library.clone();
 
@@ -170,8 +197,82 @@ impl Render for SettingsPanel {
             output_player.update(cx, |playback, _cx| playback.set_exclusive_output(exclusive));
         });
 
+        let mix_enable: Picker = Rc::new(move |index: usize, cx: &mut App| {
+            let enabled = index == 0;
+            for_mix_enable.update(cx, |this, cx| {
+                this.edit_auto_mix(cx, |m| m.enabled = enabled);
+            });
+            mix_player.update(cx, |playback, _cx| playback.set_auto_mix(enabled));
+        });
+        let mix_style: Picker = Rc::new(move |index: usize, cx: &mut App| {
+            let style = StylePreference::ALL
+                .get(index)
+                .copied()
+                .unwrap_or(StylePreference::Auto);
+            for_mix_style.update(cx, |this, cx| {
+                this.edit_auto_mix(cx, |m| m.style = style);
+            });
+        });
+        let mix_trim: Picker = Rc::new(move |index: usize, cx: &mut App| {
+            let level = TrimLevel::ALL
+                .get(index)
+                .copied()
+                .unwrap_or(TrimLevel::Light);
+            for_mix_trim.update(cx, |this, cx| {
+                this.edit_auto_mix(cx, |m| m.trim = level);
+            });
+        });
+        let mix_len: Picker = Rc::new(move |index: usize, cx: &mut App| {
+            let length = TransitionLength::ALL
+                .get(index)
+                .copied()
+                .unwrap_or(TransitionLength::Medium);
+            for_mix_len.update(cx, |this, cx| {
+                this.edit_auto_mix(cx, |m| m.length = length);
+            });
+        });
+        let mix_curve: Picker = Rc::new(move |index: usize, cx: &mut App| {
+            let preset = CurvePreset::BUILTINS
+                .get(index)
+                .copied()
+                .unwrap_or(CurvePreset::EqualPower);
+            for_mix_curve.update(cx, |this, cx| {
+                this.edit_auto_mix(cx, |m| m.curve = preset);
+            });
+        });
+        let mix_beat: Picker = Rc::new(move |index: usize, cx: &mut App| {
+            for_mix_beat.update(cx, |this, cx| {
+                this.edit_auto_mix(cx, |m| m.beat_match = index == 0);
+            });
+        });
+        let mix_tempo: Picker = Rc::new(move |index: usize, cx: &mut App| {
+            for_mix_tempo.update(cx, |this, cx| {
+                this.edit_auto_mix(cx, |m| m.tempo_sync = index == 0);
+            });
+        });
+        let mix_low: Picker = Rc::new(move |index: usize, cx: &mut App| {
+            for_mix_low.update(cx, |this, cx| {
+                this.edit_auto_mix(cx, |m| m.low_swap = index == 0);
+            });
+        });
+        let mix_loud: Picker = Rc::new(move |index: usize, cx: &mut App| {
+            for_mix_loud.update(cx, |this, cx| {
+                this.edit_auto_mix(cx, |m| m.loudness_match = index == 0);
+            });
+        });
+        let mix_album: Picker = Rc::new(move |index: usize, cx: &mut App| {
+            for_mix_album.update(cx, |this, cx| {
+                this.edit_auto_mix(cx, |m| m.respect_album_continuity = index == 0);
+            });
+        });
+        let mix_bg: Picker = Rc::new(move |index: usize, cx: &mut App| {
+            for_mix_bg.update(cx, |this, cx| {
+                this.edit_auto_mix(cx, |m| m.background_analyze = index == 0);
+            });
+        });
+
         // `center_width()` 已扣掉侧栏与右面板，一栏够不够宽排并排的快捷键表只看它。
-        // 页面铺满主区，返回按钮始终压在标题那一列上，有返回键就得给它让位。
+        // 页面铺满主区，返回按钮始终压在标题那一列上，存在返回键时必须为其留出位置。
         let (wide, back_inset) = {
             let shell = self.shell.read(cx);
             (shell.center_width() >= WIDE_MIN, shell.can_go_back())
@@ -277,6 +378,122 @@ impl Render for SettingsPanel {
                 &smooth,
             ))
             .children(self.output_detail(cx).map(block_row));
+        let mix = &settings.auto_mix;
+        let mut automix_section = section("Auto-Mix", "自动混音").child(choice_row(
+            window,
+            cx,
+            Glyph::Shuffle,
+            "启用自动混音",
+            &[("开启", mix.enabled), ("关闭", !mix.enabled)],
+            &mix_enable,
+        ));
+        if mix.enabled {
+            automix_section = automix_section
+                .child(choice_row(
+                    window,
+                    cx,
+                    Glyph::SmartMix,
+                    "混音风格",
+                    &StylePreference::ALL.map(|s| (s.label(), mix.style == s)),
+                    &mix_style,
+                ))
+                .child(choice_row(
+                    window,
+                    cx,
+                    Glyph::SkipForward,
+                    "裁剪尾奏程度",
+                    &TrimLevel::ALL.map(|lvl| (lvl.label(), mix.trim == lvl)),
+                    &mix_trim,
+                ))
+                .child(choice_row(
+                    window,
+                    cx,
+                    Glyph::Clock,
+                    "过渡长度",
+                    &[
+                        ("短", mix.length == TransitionLength::Short),
+                        ("中", mix.length == TransitionLength::Medium),
+                        ("长", mix.length == TransitionLength::Long),
+                    ],
+                    &mix_len,
+                ))
+                .child(choice_row(
+                    window,
+                    cx,
+                    Glyph::Music,
+                    "默认曲线",
+                    &CurvePreset::BUILTINS.map(|p| (p.label(), mix.curve == p)),
+                    &mix_curve,
+                ))
+                .child(block_row(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(theme::GAP_MD))
+                        .child(
+                            div()
+                                .text_size(px(theme::FONT_CAPTION))
+                                .text_color(theme::text_muted())
+                                .child("曲线预览（黑/白为前曲淡出，青色为后曲淡入）"),
+                        )
+                        .child(crate::components::mix_editor::curve_preview(mix.curve)),
+                ))
+                .child(choice_row(
+                    window,
+                    cx,
+                    Glyph::Play,
+                    "对拍混音",
+                    &[("开启", mix.beat_match), ("关闭", !mix.beat_match)],
+                    &mix_beat,
+                ))
+                .child(choice_row(
+                    window,
+                    cx,
+                    Glyph::SmartMix,
+                    "变速对拍",
+                    &[("开启", mix.tempo_sync), ("关闭", !mix.tempo_sync)],
+                    &mix_tempo,
+                ))
+                .child(choice_row(
+                    window,
+                    cx,
+                    Glyph::VolumeLow,
+                    "低频交换",
+                    &[("开启", mix.low_swap), ("关闭", !mix.low_swap)],
+                    &mix_low,
+                ))
+                .child(choice_row(
+                    window,
+                    cx,
+                    Glyph::VolumeHigh,
+                    "响度匹配",
+                    &[("开启", mix.loudness_match), ("关闭", !mix.loudness_match)],
+                    &mix_loud,
+                ))
+                .child(choice_row(
+                    window,
+                    cx,
+                    Glyph::Album,
+                    "尊重专辑连续性",
+                    &[
+                        ("开启", mix.respect_album_continuity),
+                        ("关闭", !mix.respect_album_continuity),
+                    ],
+                    &mix_album,
+                ))
+                .child(choice_row(
+                    window,
+                    cx,
+                    Glyph::Folder,
+                    "后台分析整库",
+                    &[
+                        ("开启", mix.background_analyze),
+                        ("关闭", !mix.background_analyze),
+                    ],
+                    &mix_bg,
+                ));
+        }
         let import_section = section("Import", "导入")
             .child(choice_row(
                 window,
@@ -302,6 +519,7 @@ impl Render for SettingsPanel {
             .child(list_section)
             .child(startup_section)
             .child(audio_section)
+            .child(automix_section)
             .child(import_section)
             .child(data_section(&self.library, cx))
             .child(shortcuts_section(wide, self.shortcuts_open, cx));
@@ -995,10 +1213,11 @@ impl SettingsEntity {
         self.update_and_save(cx, |settings| settings.library_listing = listing);
     }
 
-    /// 曲库侧的偏好。随机、循环、排序键、跟随播放。四项一次写入，一次操作只落一遍盘。
+    /// 曲库侧的偏好。随机、智能混排、循环、排序键、跟随播放。五项一次写入，一次操作只落一遍盘。
     pub fn set_library_prefs(
         &mut self,
         shuffle: bool,
+        smart_mix: bool,
         repeat: RepeatState,
         sort_key: SortKey,
         follow_playback: bool,
@@ -1006,6 +1225,7 @@ impl SettingsEntity {
     ) {
         self.update_and_save(cx, |settings| {
             settings.shuffle = shuffle;
+            settings.smart_mix = smart_mix;
             settings.repeat = repeat;
             settings.sort_key = sort_key;
             settings.follow_playback = follow_playback;
@@ -1052,6 +1272,10 @@ impl SettingsEntity {
 
     pub fn set_exclusive_output(&mut self, exclusive: bool, cx: &mut Context<Self>) {
         self.update_and_save(cx, |settings| settings.exclusive_output = exclusive);
+    }
+
+    pub fn edit_auto_mix(&mut self, cx: &mut Context<Self>, edit: impl FnOnce(&mut AutoMixPrefs)) {
+        self.update_and_save(cx, |settings| edit(&mut settings.auto_mix));
     }
 
     /// 列宽拖动时列表只在停手后调一次，这里落盘的也就是最终值。

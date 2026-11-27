@@ -60,7 +60,8 @@ impl LibraryEntity {
         // 排序键要在首屏合并之后才用得上曲目。此刻 `playlist` 还是空的，
         // `finish_initial_load` 会拿 `self.sort` 重排合并后的列表。
         self.sort = settings.sort_key;
-        self.shuffle = settings.shuffle;
+        self.shuffle = settings.shuffle && !settings.smart_mix;
+        self.smart_mix = settings.smart_mix;
         self.repeat = settings.repeat;
         self.apply_mode(false, cx);
     }
@@ -124,7 +125,11 @@ impl LibraryEntity {
             .map(|group| group.tracks.clone());
         self.playlist.set_queue(queue, self.seed);
         self.persist_queue();
-        self.activate(id, cx)
+        let played = self.activate(id, cx);
+        if played.is_some() && self.smart_mix {
+            cx.emit(LibraryEvent::SmartMixRequested);
+        }
+        played
     }
 
     /// 从一位艺术家卡开始播放。队列定为这位艺术家的曲目，查不到时不起队列。
@@ -144,7 +149,11 @@ impl LibraryEntity {
             .map(|group| group.tracks.clone());
         self.playlist.set_queue(queue, self.seed);
         self.persist_queue();
-        self.activate(id, cx)
+        let played = self.activate(id, cx);
+        if played.is_some() && self.smart_mix {
+            cx.emit(LibraryEvent::SmartMixRequested);
+        }
+        played
     }
 
     /// 从当前可见列表开始播放。先把队列定为可见行（按显示顺序），再跳到这一首。
@@ -165,7 +174,11 @@ impl LibraryEntity {
         };
         self.playlist.set_queue(queue, self.seed);
         self.persist_queue();
-        self.activate(id, cx)
+        let played = self.activate(id, cx);
+        if played.is_some() && self.smart_mix {
+            cx.emit(LibraryEvent::SmartMixRequested);
+        }
+        played
     }
 
     /// 把一批曲目插到「下一首」。队列会因此冻结成显式列表，见 [`capstan_core::Playlist::queue_insert`]。
@@ -206,7 +219,11 @@ impl LibraryEntity {
         }
         self.playlist.set_queue(Some(ids.to_vec()), self.seed);
         self.persist_queue();
-        self.activate(first, cx)
+        let played = self.activate(first, cx);
+        if played.is_some() && self.smart_mix {
+            cx.emit(LibraryEvent::SmartMixRequested);
+        }
+        played
     }
 
     /// 让播放队列的光标落在这一首上。续播时用。`set_now_playing` 只挪列表光标，
@@ -296,23 +313,28 @@ impl LibraryEntity {
         self.shuffle
     }
 
+    pub fn is_smart_mix(&self) -> bool {
+        self.smart_mix
+    }
+
     pub fn repeat_state(&self) -> RepeatState {
         self.repeat
     }
 
-    /// 两条轴折算成四态。随机 + 列表循环取随机序（循环靠 [`Playlist::set_wrap_at_end`] 另传），
-    /// 随机 + 单曲循环取单曲循环。
+    /// 两条轴折算成五态。随机与智能混排互斥；加上列表循环时靠 [`Playlist::set_wrap_at_end`] 另传，
+    /// 单曲循环优先级最高。
     fn effective_mode(&self) -> PlayMode {
-        match (self.shuffle, self.repeat) {
-            (_, RepeatState::One) => PlayMode::RepeatOne,
-            (false, RepeatState::Off) => PlayMode::Sequential,
-            (false, RepeatState::All) => PlayMode::RepeatAll,
-            (true, RepeatState::Off | RepeatState::All) => PlayMode::Shuffle,
+        match (self.shuffle, self.smart_mix, self.repeat) {
+            (_, _, RepeatState::One) => PlayMode::RepeatOne,
+            (true, _, RepeatState::Off | RepeatState::All) => PlayMode::Shuffle,
+            (false, true, RepeatState::Off | RepeatState::All) => PlayMode::SmartMix,
+            (false, false, RepeatState::Off) => PlayMode::Sequential,
+            (false, false, RepeatState::All) => PlayMode::RepeatAll,
         }
     }
 
-    /// 写入折算后的模式；`reshuffle` 为真时推进洗牌种子，生成新的随机序。
-    fn apply_mode(&mut self, reshuffle: bool, cx: &mut Context<Self>) {
+    /// 写入折算后的模式；`reshuffle` 为真时推进洗牌种子，生成新的随机或混排微调序。
+    pub(super) fn apply_mode(&mut self, reshuffle: bool, cx: &mut Context<Self>) {
         if reshuffle {
             self.seed = self
                 .seed
@@ -326,10 +348,13 @@ impl LibraryEntity {
     }
 
     pub fn set_shuffle(&mut self, on: bool, cx: &mut Context<Self>) {
-        if self.shuffle == on {
+        if self.shuffle == on && (!on || !self.smart_mix) {
             return;
         }
         self.shuffle = on;
+        if on {
+            self.smart_mix = false;
+        }
         self.apply_mode(on, cx);
         cx.emit(LibraryEvent::PrefsChanged);
     }
@@ -340,35 +365,85 @@ impl LibraryEntity {
         self.set_shuffle(on, cx);
     }
 
-    /// 循环按钮。关 → 列表 → 单曲 → 关，不影响随机轴。
+    /// 开关独立的「智能混排」模式，与随机模式互斥；开启时请求上层结合分析结果编排队列。
+    pub fn set_smart_mix(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.smart_mix == on && (!on || !self.shuffle) {
+            return;
+        }
+        self.smart_mix = on;
+        if on {
+            self.shuffle = false;
+        }
+        self.apply_mode(on, cx);
+        cx.emit(LibraryEvent::PrefsChanged);
+        if on {
+            cx.emit(LibraryEvent::SmartMixRequested);
+        }
+    }
+
+    pub fn toggle_smart_mix(&mut self, cx: &mut Context<Self>) {
+        let on = !self.smart_mix;
+        self.set_smart_mix(on, cx);
+    }
+
+    /// 在智能混排模式下推进种子并重新编排待播队列。
+    pub fn reroll_smart_mix(&mut self, cx: &mut Context<Self>) {
+        if !self.smart_mix {
+            self.set_smart_mix(true, cx);
+            return;
+        }
+        self.seed = self
+            .seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        cx.emit(LibraryEvent::SmartMixRequested);
+    }
+
+    /// 写入智能混排算出的新队列顺序。若队列已变化或模式已切走则静默忽略。
+    pub fn apply_smart_mix_order(&mut self, order: Vec<TrackId>, cx: &mut Context<Self>) {
+        if !self.smart_mix {
+            return;
+        }
+        self.playlist.apply_arranged_order(order);
+        cx.notify();
+    }
+
+    /// 循环按钮。关 → 列表 → 单曲 → 关，不影响随机与智能混排轴。
     pub fn cycle_repeat(&mut self, cx: &mut Context<Self>) {
         self.repeat = self.repeat.next_in_cycle();
         self.apply_mode(false, cx);
         cx.emit(LibraryEvent::PrefsChanged);
     }
 
-    /// `S` 键的四态整体循环，同时把结果写回两条轴。
+    /// `S` 键的五态整体循环，同时把结果写回各轴。
     pub fn cycle_mode(&mut self, cx: &mut Context<Self>) {
         let next = self.playlist.mode().next_in_cycle();
         self.set_axes_from_mode(next);
         self.apply_mode(true, cx);
         cx.emit(LibraryEvent::PrefsChanged);
+        if self.smart_mix {
+            cx.emit(LibraryEvent::SmartMixRequested);
+        }
     }
 
-    /// 直接设四态模式，拆成两条轴。
+    /// 直接设五态模式，拆成各轴。
     pub fn set_mode(&mut self, mode: PlayMode, cx: &mut Context<Self>) {
         self.set_axes_from_mode(mode);
         self.apply_mode(true, cx);
         cx.emit(LibraryEvent::PrefsChanged);
+        if self.smart_mix {
+            cx.emit(LibraryEvent::SmartMixRequested);
+        }
     }
 
-    /// 由四态模式反推两条轴，不是 [`Self::effective_mode`] 的逆，单曲循环那档排不出随机序。
+    /// 由五态模式反推各轴，不是 [`Self::effective_mode`] 的逆，单曲循环那档排不出随机或混排序。
     fn set_axes_from_mode(&mut self, mode: PlayMode) {
-        (self.shuffle, self.repeat) = match mode {
-            PlayMode::Sequential => (false, RepeatState::Off),
-            PlayMode::Shuffle => (true, RepeatState::Off),
-            PlayMode::RepeatAll => (false, RepeatState::All),
-            PlayMode::RepeatOne => (false, RepeatState::One),
+        (self.shuffle, self.smart_mix, self.repeat) = match mode {
+            PlayMode::Sequential => (false, false, RepeatState::Off),
+            PlayMode::Shuffle => (true, false, RepeatState::Off),
+            PlayMode::SmartMix => (false, true, RepeatState::Off),
+            PlayMode::RepeatAll => (false, false, RepeatState::All),
+            PlayMode::RepeatOne => (false, false, RepeatState::One),
         };
     }
 

@@ -44,6 +44,7 @@ pub(crate) fn run(
         seen_content: false,
         ended_reported: false,
         smooth_switch: false,
+        auto_mix: false,
     };
 
     loop {
@@ -88,6 +89,8 @@ struct AudioThread {
     ended_reported: bool,
     /// 换设备时是否交叉淡化。后端是懒创建的，所以标志得先在控制线程里存着。
     smooth_switch: bool,
+    /// 自动混音总开关。与 `smooth_switch` 同理，在控制线程留存供后端懒创建时补发。
+    auto_mix: bool,
 }
 
 impl AudioThread {
@@ -100,6 +103,7 @@ impl AudioThread {
             match self.open_backend() {
                 Ok((mut backend, mode, detail)) => {
                     backend.set_smooth_switch(self.smooth_switch);
+                    backend.set_auto_mix(self.auto_mix);
                     // 音量可能在设备打开之前就设过了，新后端得补上，否则会是默认的满音量。
                     backend.set_volume(self.snapshot.volume());
                     self.backend = Some(backend);
@@ -415,6 +419,50 @@ impl AudioThread {
                 }
             }
 
+            PlayerCommand::SetAutoMix(enabled) => {
+                self.auto_mix = enabled;
+                if let Some(backend) = self.backend.as_deref_mut() {
+                    backend.set_auto_mix(enabled);
+                }
+            }
+
+            PlayerCommand::PreviewMix {
+                from,
+                from_start,
+                to,
+                plan,
+            } => {
+                self.open_failed = false;
+                let outcome = self
+                    .backend()
+                    .map(|backend| backend.preview_mix(&from, from_start, &to, &plan));
+                let Some(outcome) = outcome else {
+                    self.emit_state();
+                    return;
+                };
+                match outcome {
+                    Ok(duration) => {
+                        self.current = Some(from.clone());
+                        self.seen_content = false;
+                        self.ended_reported = false;
+                        self.snapshot.set_position(from_start);
+                        self.snapshot.set_duration(duration);
+                        self.snapshot.set_state(PlaybackState::Playing);
+                        let _ = self.events.send(PlayerEvent::Loaded {
+                            path: from,
+                            duration,
+                        });
+                        self.emit_state();
+                        self.announce_output();
+                    }
+                    Err(err) => {
+                        self.snapshot.set_state(PlaybackState::Idle);
+                        let _ = self.events.send(PlayerEvent::Error(err.to_string()));
+                        self.emit_state();
+                    }
+                }
+            }
+
             PlayerCommand::Load { path, autoplay } => {
                 // 用户显式装载。上一次打不开不代表这次也不行，必须先给设备一次机会。
                 self.open_failed = false;
@@ -455,7 +503,7 @@ impl AudioThread {
             PlayerCommand::SetNext { after, next } => {
                 // 不为预载而打开设备。后端为空说明尚未装载，Load 之后界面会再次下发。
                 if let Some(backend) = self.backend.as_deref_mut()
-                    && let Err(err) = backend.set_next(&after, next.as_deref())
+                    && let Err(err) = backend.set_next(&after, next.as_ref())
                 {
                     log::warn!("预载下一首失败：{err}");
                 }
@@ -466,7 +514,7 @@ impl AudioThread {
                 self.open_failed = false;
                 match self.backend().map(AudioBackend::play) {
                     Some(Ok(())) => {
-                        // 刚 append 的音源在头几毫秒里 empty() 仍为 true，两个标记都得清掉，
+                        // 刚 append 的音源在头几毫秒里 `empty()` 仍为 true，两个标记都必须清掉，
                         // 否则 tick 会立刻误报 Ended。
                         self.ended_reported = false;
                         self.seen_content = false;
@@ -548,7 +596,12 @@ impl AudioThread {
         // 淡出、挂起的交接这类收尾要等时间，靠这一拍推着走；设备失联的恢复也在这里推进。
         backend.tick();
         let notices: Vec<BackendNotice> = std::iter::from_fn(|| backend.take_notice()).collect();
-        let (position, finished) = (backend.position(), backend.is_finished());
+        let (position, finished, mixing) = (
+            backend.position(),
+            backend.is_finished(),
+            backend.is_mixing(),
+        );
+        self.snapshot.set_mixing(mixing);
 
         for notice in notices {
             match notice {
@@ -571,16 +624,22 @@ impl AudioThread {
                     self.emit_state();
                     self.announce_output();
                 }
-                BackendNotice::Advanced { path, duration } => {
+                BackendNotice::Advanced {
+                    path,
+                    duration,
+                    start,
+                } => {
                     // 音频已经连续过渡，此处只更换元信息。播放或暂停状态保持不变，
                     // 因为用户恰在边界按下暂停时，下一段并未真正开始出声。
                     self.current = Some(path.clone());
                     self.ended_reported = false;
                     self.snapshot.set_duration(duration);
-                    self.snapshot.set_position(Duration::ZERO);
-                    let _ = self
-                        .events
-                        .send(PlayerEvent::TrackStarted { path, duration });
+                    self.snapshot.set_position(start);
+                    let _ = self.events.send(PlayerEvent::TrackStarted {
+                        path,
+                        duration,
+                        start,
+                    });
                 }
             }
         }
@@ -588,12 +647,12 @@ impl AudioThread {
         self.snapshot.set_position(position);
 
         if !finished {
-            // 已确实输出过音频数据，此后 empty() 才可信。
+            // 已确实输出过音频数据，此后 `empty()` 才可信。
             self.seen_content = true;
             return;
         }
 
-        // 刚 append 的头几十毫秒里 empty() 仍可能为 true，必须先真正出过声再判定结束。
+        // 刚 append 的头几十毫秒里 `empty()` 仍可能为 true，必须先真正出过声再判定结束。
         if self.seen_content
             && !self.ended_reported
             && self.snapshot.state() == PlaybackState::Playing
@@ -712,6 +771,7 @@ mod tests {
             seen_content: false,
             ended_reported: false,
             smooth_switch: false,
+            auto_mix: false,
         };
         (thread, events_rx, snapshot)
     }
@@ -838,6 +898,7 @@ mod tests {
             .push_back(BackendNotice::Advanced {
                 path: std::path::PathBuf::from("/music/b.flac"),
                 duration: Duration::from_secs(42),
+                start: Duration::from_secs(4),
             });
         thread.tick();
 
@@ -853,8 +914,11 @@ mod tests {
             "无缝换段不是播放结束"
         );
         assert!(
-            matches!(events.try_recv(), Ok(PlayerEvent::TrackStarted { .. })),
-            "界面需要收到换段事件"
+            matches!(
+                events.try_recv(),
+                Ok(PlayerEvent::TrackStarted { start, .. }) if start == Duration::from_secs(4)
+            ),
+            "界面需要收到换段事件并带入点"
         );
         assert!(
             matches!(events.try_recv(), Err(mpsc::TryRecvError::Empty)),

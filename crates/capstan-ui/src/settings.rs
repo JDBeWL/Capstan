@@ -1,6 +1,7 @@
 //! 可持久化的界面偏好，落盘在用户数据目录的 `settings.json`。
 //! 读不到退回默认值，写不进只记日志。不弹窗、不阻塞启动。
 
+use capstan_analysis::AutoMixPrefs;
 use capstan_core::SortKey;
 use serde::{Deserialize, Serialize};
 
@@ -116,12 +117,16 @@ pub struct Settings {
     pub smooth_device_switch: bool,
     /// 用 WASAPI 独占输出。默认关。独占会占住设备，其它程序一起听不到声音。
     pub exclusive_output: bool,
+    /// 自动混音偏好，默认关闭，保持原有无缝直连口径。
+    pub auto_mix: AutoMixPrefs,
     /// 曲库列表 NO. 与专辑两列的宽度及列尾空白。标题列占用剩余宽度，不单独存。
     pub track_columns: TrackColumns,
     /// 「你的音乐库」卡片上次手动点选的粒度（歌单、艺术家与专辑）。`None` 表示跟随主区区段。
     pub library_listing: Option<Listing>,
-    /// 随机播放轴。与 `repeat` 合起来才是用户看到的播放模式。
+    /// 随机播放轴。与 `smart_mix` 互斥，和 `repeat` 合起来才是用户看到的播放模式。
     pub shuffle: bool,
+    /// 智能混排轴。开启后按 BPM、调性与能量主动编排播放队列，与 `shuffle` 互斥。
+    pub smart_mix: bool,
     /// 循环轴，关、列表循环与单曲循环。
     pub repeat: RepeatState,
     /// 曲库列表的排序键。曲目顺序本身随 `library.json` 落盘，这里记住的是用户选的是哪一档。
@@ -148,9 +153,11 @@ impl Default for Settings {
             preferred_device: None,
             smooth_device_switch: false,
             exclusive_output: false,
+            auto_mix: AutoMixPrefs::default(),
             track_columns: TrackColumns::default(),
             library_listing: None,
             shuffle: false,
+            smart_mix: false,
             repeat: RepeatState::Off,
             sort_key: SortKey::ImportOrder,
             follow_playback: false,
@@ -207,6 +214,10 @@ mod tests {
             !settings.exclusive_output,
             "默认共享输出，因为独占会占住设备，不能默认打开"
         );
+        assert!(
+            !settings.auto_mix.enabled,
+            "自动混音默认关闭，保持原有无缝直连行为"
+        );
         assert_eq!(settings.track_columns, TrackColumns::default());
         assert_eq!(settings.track_columns.index, crate::theme::ROW_INDEX_W);
         assert_eq!(settings.track_columns.gap, 0.0, "默认不留空白，标题吃满");
@@ -216,6 +227,7 @@ mod tests {
             "默认跟随主区区段，与加这个字段之前的行为一致"
         );
         assert!(!settings.shuffle, "默认不随机");
+        assert!(!settings.smart_mix, "默认不开启智能混排");
         assert_eq!(settings.repeat, RepeatState::Off, "默认不循环");
         assert_eq!(settings.sort_key, SortKey::ImportOrder, "默认按导入顺序");
         assert!(!settings.follow_playback, "默认不跟随播放滚动");
@@ -272,8 +284,9 @@ mod tests {
             },
             library_listing: Some(crate::components::sidebar::Listing::Collections),
             shuffle: true,
+            smart_mix: true,
             repeat: RepeatState::One,
-            sort_key: SortKey::Title,
+            sort_key: SortKey::Bpm,
             follow_playback: true,
             window: Some(WindowRect {
                 x: -120.0,
@@ -281,6 +294,11 @@ mod tests {
                 width: 1280.0,
                 height: 860.0,
             }),
+            auto_mix: capstan_analysis::AutoMixPrefs {
+                enabled: true,
+                style: capstan_analysis::StylePreference::Rise,
+                ..capstan_analysis::AutoMixPrefs::default()
+            },
         };
         let text = serde_json::to_string(&settings).expect("序列化不该失败");
         let back: Settings = serde_json::from_str(&text).expect("反序列化不该失败");

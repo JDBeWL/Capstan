@@ -48,12 +48,11 @@ pub(super) fn restore_resume(
     };
     let id = track.id;
     let position = Duration::from_millis(resume.position_ms);
-    // 静默恢复。订阅此时已经建立，普通 `load` 会在播放实体被可变借用时触发根视图回调。
-    playback.update(cx, |playback, cx| playback.restore(track, position, cx));
-    // 列表里那一行要亮起来，否则「界面在放、列表一行都不亮」
+    // 先把曲库高亮与队列光标对准续播曲目，随后 `restore` 发出的 `Restored` 才能查到正确的下一首。
     library.update(cx, |library, cx| {
         library.set_now_playing(Some(id), cx);
-        // 队列光标也要跟上，否则重启后「下一曲」从队首重新开始。
         library.sync_playlist_cursor(id, cx);
     });
+    // 静默恢复。订阅此时已经建立，普通 `load` 会在播放实体被可变借用时触发根视图回调。
+    playback.update(cx, |playback, cx| playback.restore(track, position, cx));
 }

@@ -1,4 +1,4 @@
-//! 非 Windows 平台：任务栏集成整体不可用。
+//! 非 Windows 平台下任务栏集成整体不可用。
 
 use std::sync::{Arc, Mutex};
 

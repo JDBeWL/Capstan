@@ -8,6 +8,7 @@ pub mod device;
 mod device_monitor;
 pub mod error;
 pub mod event;
+pub mod mix;
 pub mod rodio_backend;
 pub mod snapshot;
 mod thread;
@@ -18,6 +19,9 @@ pub use decode::{LockFreeSource, SymphoniaDecoder, TrackDecoder, WhenEmpty};
 pub use device::AudioDeviceInfo;
 pub use error::{AudioError, Result};
 pub use event::{OutputMode, PlaybackState, PlayerEvent};
+pub use mix::{
+    Automation, ControlPoint, CurvePreset, MixKind, MixPlan, MixStyle, NextTrack, TempoMode,
+};
 pub use rodio_backend::RodioBackend;
 pub use snapshot::Snapshot;
 

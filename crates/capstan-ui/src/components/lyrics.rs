@@ -626,7 +626,7 @@ impl Render for LyricsView {
         };
 
         div()
-            // 遮罩须自行拦截鼠标事件。命中测试默认继续向下传递，主区里的卡片仍被判定为悬停，
+            // 遮罩必须自行拦截鼠标事件。命中测试默认继续向下传递，主区里的卡片仍被判定为悬停，
             // 它的浮层提示就会画在这一屏之上。
             .id("lyrics-overlay")
             .occlude()
@@ -811,7 +811,7 @@ fn header(
 
 /// 歌名下方的一行字段。艺术家与专辑可截断，数字与规格不折行。
 fn meta_row(track: Option<&Track>, duration: Duration, wide: bool) -> Div {
-    // 没有曲目时不写「未知艺术家」，那会把「没在播放」说成一首歌。
+    // 没有曲目时不写「未知艺术家」，那会把「没在播放」说成一首曲目。
     let Some(track) = track else {
         return div();
     };

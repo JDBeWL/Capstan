@@ -2,11 +2,14 @@
 
 use std::sync::Arc;
 
+use capstan_analysis::TrackAnalysis;
 use capstan_core::{AudioInfo, Quality};
 
 use crate::common::menu::MenuTrigger;
 use crate::cover::CoverCache;
-use crate::entities::{LibraryEntity, PlaybackEntity, PlaybackEvent};
+use crate::entities::{
+    AnalysisEntity, AnalysisEvent, LibraryEntity, PlaybackEntity, PlaybackEvent,
+};
 use crate::icon::{Glyph, icon_inherit};
 use crate::platform::*;
 use crate::theme;
@@ -23,6 +26,7 @@ pub struct MiniNowPlaying {
     playback: Entity<PlaybackEntity>,
     covers: Entity<CoverCache>,
     library: Entity<LibraryEntity>,
+    analysis: Entity<AnalysisEntity>,
     track_title: String,
     track_subtitle: String,
     /// 当前曲目的音质档位。决定标题旁点亮哪一枚徽章，或不予点亮。
@@ -45,6 +49,7 @@ impl MiniNowPlaying {
         playback: Entity<PlaybackEntity>,
         covers: Entity<CoverCache>,
         library: Entity<LibraryEntity>,
+        analysis: Entity<AnalysisEntity>,
         cx: &mut Context<Self>,
     ) -> Self {
         // 只订阅语义事件，不用 `observe`。播放期间进度通知是 10Hz，而 gpui 的一次 `notify` 让整棵树失效。
@@ -69,11 +74,19 @@ impl MiniNowPlaying {
                 cx.notify();
             }
         });
+        let analysis_sub = cx.subscribe(&analysis, |this, _, event: &AnalysisEvent, cx| {
+            if let AnalysisEvent::Ready(id) = event
+                && this.cover_id == Some(*id)
+            {
+                cx.notify();
+            }
+        });
 
         let mut this = Self {
             playback,
             covers,
             library,
+            analysis,
             track_title: String::new(),
             track_subtitle: String::new(),
             quality: Quality::Lossy,
@@ -82,7 +95,7 @@ impl MiniNowPlaying {
             liked: false,
             cover: None,
             cover_id: None,
-            _subs: vec![track_sub, cover_sub, like_sub],
+            _subs: vec![track_sub, cover_sub, like_sub, analysis_sub],
         };
         this.sync(cx);
         this
@@ -200,6 +213,7 @@ impl Render for MiniNowPlaying {
         let audio = self.audio;
         let format = self.format.clone();
         let like_id = self.cover_id;
+        let track_analysis = like_id.and_then(|id| self.analysis.read(cx).get(id));
 
         let mut title_row = div()
             .flex()
@@ -220,7 +234,12 @@ impl Render for MiniNowPlaying {
                     .child(title),
             );
         if has_track && quality != Quality::Lossy {
-            title_row = title_row.child(quality_badge(quality, audio, format.clone()));
+            title_row = title_row.child(quality_badge(
+                quality,
+                audio,
+                format.clone(),
+                track_analysis.as_deref(),
+            ));
         }
 
         // 换曲时仅标题行重新入场；封面按图自行淡入。
@@ -341,7 +360,12 @@ fn badge_tip(audio: AudioInfo, format: Option<&str>) -> String {
 }
 
 /// 什么规格都没读到时仍亮徽章。「无损」是编码事实，不依赖规格，但不挂浮层。
-fn quality_badge(quality: Quality, audio: AudioInfo, format: Option<String>) -> AnyElement {
+fn quality_badge(
+    quality: Quality,
+    audio: AudioInfo,
+    format: Option<String>,
+    analysis: Option<&TrackAnalysis>,
+) -> AnyElement {
     let codec = format.unwrap_or_default().to_uppercase();
     let tip = badge_tip(audio, Some(codec.as_str()));
 
@@ -362,13 +386,20 @@ fn quality_badge(quality: Quality, audio: AudioInfo, format: Option<String>) -> 
         .tooltip(crate::common::tooltip::builder(tip))
         .child(badge_label(quality));
 
-    if audio.is_empty() {
+    if audio.is_empty() && analysis.is_none() {
         return badge.into_any_element();
     }
 
     let mut rows = audio.details();
     if !codec.is_empty() {
         rows.push(("编码", codec));
+    }
+    if let Some(a) = analysis {
+        rows.push(("BPM", format!("{:.1}", a.bpm)));
+        if let Some(key) = a.key {
+            rows.push(("调性", key.label()));
+        }
+        rows.push(("响度", format!("{:.1} LUFS", a.loudness_lufs)));
     }
 
     Popover::new("mini-quality-detail")

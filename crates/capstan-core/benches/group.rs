@@ -29,6 +29,7 @@ fn synthetic_library(albums: usize, per_album: usize) -> Vec<Track> {
                 audio: AudioInfo::default(),
                 sources: FieldSources::default(),
                 stamp: FileStamp::default(),
+                bpm_tag: None,
             });
         }
     }
@@ -66,6 +67,7 @@ fn wide_album(tracks: usize) -> Vec<Track> {
             audio: AudioInfo::default(),
             sources: FieldSources::default(),
             stamp: FileStamp::default(),
+            bpm_tag: None,
         })
         .collect()
 }
@@ -85,6 +87,7 @@ fn many_albums_by_one_artist(albums: usize) -> Vec<Track> {
             audio: AudioInfo::default(),
             sources: FieldSources::default(),
             stamp: FileStamp::default(),
+            bpm_tag: None,
         })
         .collect()
 }

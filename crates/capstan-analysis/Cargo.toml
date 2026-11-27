@@ -1,0 +1,24 @@
+[package]
+name = "capstan-analysis"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Offline audio analysis (BPM, beats, phrases, energy, loudness, key) and auto-mix planning for Capstan."
+
+[dependencies]
+capstan-core = { workspace = true }
+capstan-audio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+rustfft = { workspace = true }
+rubato = { workspace = true }
+audioadapter-buffers = { workspace = true }
+log = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

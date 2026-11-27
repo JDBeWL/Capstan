@@ -79,6 +79,27 @@ impl Collection {
         true
     }
 
+    /// 按 `ordered` 重排歌单中命中的成员；不在 `ordered` 中的其余成员保留原相对顺序附在末尾。
+    /// 顺序未变化时返回 `false`。
+    pub fn reorder_matching(&mut self, ordered: &[TrackId]) -> bool {
+        let mut next = Vec::with_capacity(self.tracks.len());
+        for &id in ordered {
+            if self.tracks.contains(&id) && !next.contains(&id) {
+                next.push(id);
+            }
+        }
+        for &id in &self.tracks {
+            if !next.contains(&id) {
+                next.push(id);
+            }
+        }
+        if next == self.tracks {
+            return false;
+        }
+        self.tracks = next;
+        true
+    }
+
     /// 曲目已不在曲库时成员 id 留着无害。视图按 id 解析，解析不出就不画那一行，也不主动清理。
     pub fn len(&self) -> usize {
         self.tracks.len()
@@ -304,6 +325,23 @@ mod tests {
             lists.create("丙").expect("非空名字该建出来").id,
             CollectionId(2),
             "不能发出重复 id"
+        );
+    }
+
+    #[test]
+    fn reorder_matching_reorders_known_members_and_preserves_ghosts() {
+        let mut list = Collection::new(CollectionId(0), "夜跑");
+        list.tracks = vec![TrackId(1), TrackId(99), TrackId(2), TrackId(3)];
+
+        assert!(list.reorder_matching(&[TrackId(3), TrackId(1), TrackId(2)]));
+        assert_eq!(
+            list.tracks,
+            vec![TrackId(3), TrackId(1), TrackId(2), TrackId(99)],
+            "命中的成员按目标顺序排列，幽灵成员保留在末尾"
+        );
+        assert!(
+            !list.reorder_matching(&[TrackId(3), TrackId(1), TrackId(2)]),
+            "顺序未变时应返回 false"
         );
     }
 }

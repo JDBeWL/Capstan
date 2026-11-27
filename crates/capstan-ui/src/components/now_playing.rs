@@ -4,11 +4,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use capstan_core::{Track, UNKNOWN_ARTIST, artist_keys_str, format_duration};
+use capstan_analysis::TrackAnalysis;
+use capstan_core::{Track, TrackId, UNKNOWN_ARTIST, artist_keys_str, format_duration};
 
 use crate::common::thousands;
 use crate::cover::CoverCache;
-use crate::entities::{LibraryEntity, PlaybackEntity, PlaybackEvent};
+use crate::entities::{
+    AnalysisEntity, AnalysisEvent, LibraryEntity, PlaybackEntity, PlaybackEvent,
+};
 use crate::icon::Glyph;
 use crate::platform::*;
 use crate::shell::ShellEntity;
@@ -20,18 +23,27 @@ const COVER_SIZE: f32 = 200.0;
 /// 「下一首」卡片里的小封面边长。
 const UP_NEXT_COVER: f32 = 44.0;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NowPlayingEvent {
+    EditTransition(TrackId, TrackId),
+}
+
 pub struct NowPlaying {
     playback: Entity<PlaybackEntity>,
     covers: Entity<CoverCache>,
     library: Entity<LibraryEntity>,
     shell: Entity<ShellEntity>,
+    analysis: Entity<AnalysisEntity>,
     /// 这一栏正在画的两张封面（当前曲 + 下一首），用来判断缓存的 notify 到底有没有改变画面。
     shown: [Option<Arc<RenderImage>>; 2],
     _track_sub: Subscription,
     _cover_sub: Subscription,
     _library_sub: Subscription,
     _shell_sub: Subscription,
+    _analysis_sub: Subscription,
 }
+
+impl EventEmitter<NowPlayingEvent> for NowPlaying {}
 
 impl NowPlaying {
     pub fn new(
@@ -39,6 +51,7 @@ impl NowPlaying {
         covers: Entity<CoverCache>,
         library: Entity<LibraryEntity>,
         shell: Entity<ShellEntity>,
+        analysis: Entity<AnalysisEntity>,
         cx: &mut Context<Self>,
     ) -> Self {
         // 用 `subscribe` 而不是 `observe`。`PlaybackEntity` 播放期间每 100ms 因进度 notify 一次，
@@ -49,8 +62,8 @@ impl NowPlaying {
                     this.refresh_covers(cx);
                     cx.notify();
                 }
-                // 状态变化也要跟。加载失败走的是 `Error → StateChanged`，只听换曲会让错误提示拖到切下一首才出现。
-                PlaybackEvent::StateChanged => cx.notify(),
+                // 状态变化与混音态切换也要跟。
+                PlaybackEvent::StateChanged | PlaybackEvent::MixingChanged => cx.notify(),
                 // 设备列表只有底栏的设备菜单关心。失败提示由 `RootView` 统一弹 toast，
                 // 这一栏的错误卡片跟着 `StateChanged` 重绘就够了。
                 PlaybackEvent::Finished
@@ -74,17 +87,31 @@ impl NowPlaying {
         let library_sub = cx.observe(&library, |_, _, cx| cx.notify());
         // 浮层模式下右上角新增关闭键；面板实体不一定随根视图重绘，需自行订阅外壳。
         let shell_sub = cx.observe(&shell, |_, _, cx| cx.notify());
+        let analysis_sub = cx.subscribe(&analysis, |this, _, event: &AnalysisEvent, cx| {
+            if let AnalysisEvent::Ready(id) = event {
+                let current = this.playback.read(cx).current().map(|t| t.id);
+                let prev = this.playback.read(cx).previous_track().map(|t| t.id);
+                let next = App::update_entity(cx, &this.library, |library, _| {
+                    library.upcoming_ids(2).into_iter().nth(1)
+                });
+                if current == Some(*id) || prev == Some(*id) || next == Some(*id) {
+                    cx.notify();
+                }
+            }
+        });
 
         let mut this = Self {
             playback,
             covers,
             library,
             shell,
+            analysis,
             shown: [None, None],
             _track_sub: track_sub,
             _cover_sub: cover_sub,
             _library_sub: library_sub,
             _shell_sub: shell_sub,
+            _analysis_sub: analysis_sub,
         };
         this.refresh_covers(cx);
         this
@@ -142,7 +169,7 @@ impl NowPlaying {
     }
 }
 
-/// 「关于艺术家」卡里的一行。一首歌有几位艺术家就有几行。每行各自关注、各自计数。
+/// 「关于艺术家」卡里的一行。一首曲目有几位艺术家就有几行，每行各自关注、各自计数。
 struct ArtistLine {
     /// 拆分后的单个名字，见 `capstan_core::artist_keys`。
     name: String,
@@ -160,15 +187,25 @@ struct Derived {
 impl Render for NowPlaying {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let overlay = self.shell.read(cx).right_panel_overlays();
-        let (track, duration, error) = {
+        let (track, prev_track, duration, error, is_mixing) = {
             let playback = self.playback.read(cx);
             (
                 playback.current().cloned(),
+                playback.previous_track().cloned(),
                 playback.duration(),
                 playback.error().map(ToOwned::to_owned),
+                playback.is_mixing(),
             )
         };
         let Derived { artists, next } = self.derived(track.as_ref(), cx);
+        let (cur_analysis, prev_analysis, next_analysis) = {
+            let analysis = self.analysis.read(cx);
+            (
+                track.as_ref().and_then(|t| analysis.get(t.id)),
+                prev_track.as_ref().and_then(|t| analysis.get(t.id)),
+                next.as_ref().and_then(|t| analysis.get(t.id)),
+            )
+        };
 
         let canvas = div()
             .relative()
@@ -268,6 +305,25 @@ impl Render for NowPlaying {
             hero = hero.child(crate::common::section::field(format_duration(duration)));
         }
 
+        if is_mixing {
+            let label = match (prev_analysis.as_deref(), cur_analysis.as_deref()) {
+                (Some(prev), Some(cur)) => {
+                    format!("混音中 · {:.0} → {:.0} BPM", prev.bpm, cur.bpm)
+                }
+                _ => "混音中".to_owned(),
+            };
+            hero = hero.child(
+                div()
+                    .px(px(theme::GAP_SM))
+                    .py(px(2.))
+                    .bg(theme::accent())
+                    .text_color(theme::text_on_accent())
+                    .font(theme::field_font())
+                    .text_size(px(theme::FONT_CAPTION))
+                    .child(label),
+            );
+        }
+
         // 换曲。只让封面 + 标题这一块重新入场，下面的关于与制作信息直接换。
         let track_key = track.as_ref().map_or(0, |track| track.id.0);
 
@@ -330,11 +386,21 @@ impl Render for NowPlaying {
         }
 
         if let Some(track) = track.as_ref() {
-            body = body.child(credits(track));
+            body = body.child(credits(track, cur_analysis.as_deref()));
         }
 
         if let Some(next) = next {
-            body = body.child(up_next(&next, &self.covers, &self.library, cx));
+            let pair_a = track.as_ref().map(|t| t.id);
+            let self_weak = cx.entity().downgrade();
+            body = body.child(up_next(
+                &next,
+                pair_a,
+                next_analysis.as_deref(),
+                &self_weak,
+                &self.covers,
+                &self.library,
+                cx,
+            ));
         }
 
         div()
@@ -394,8 +460,8 @@ fn shown_artists(artist: Option<&str>) -> Vec<&str> {
 }
 
 /// 「关于艺术家」卡。纸色底 + 1px 细线，不引入第二套色相。
-/// 一首歌挂了几位艺术家就画几行。标签里的「甲/乙」是两个人，不是一个人名，
-/// 关注与曲目数都得各算各的，所以下面没有「合起来」的那一条。
+/// 一首曲目挂了几位艺术家就画几行。标签里的「甲/乙」是两个人，不是一个人名，
+/// 关注与曲目数都必须各算各的，因此没有合并条目。
 fn about_artist(
     artists: Vec<ArtistLine>,
     library: &Entity<LibraryEntity>,
@@ -529,7 +595,7 @@ fn artist_link(
 
 /// 「制作人员」。曲目标签里只有艺术家、专辑与格式，没有词曲、制作人，只列可得的字段。
 /// 艺术家逐行列（第二行起不重复标签）。一行只写一个人，不把「甲/乙」当成一个人名。
-fn credits(track: &Track) -> AnyElement {
+fn credits(track: &Track, analysis: Option<&TrackAnalysis>) -> AnyElement {
     let format = track.format().unwrap_or_else(|| "未知".to_owned());
     let artists = shown_artists(track.artist.as_deref());
 
@@ -545,9 +611,19 @@ fn credits(track: &Track) -> AnyElement {
         }
     }
 
-    card.child(credit_row("专辑", track.album.as_deref().unwrap_or("未知")))
-        .child(credit_row("格式", format.as_str()))
-        .into_any_element()
+    card = card
+        .child(credit_row("专辑", track.album.as_deref().unwrap_or("未知")))
+        .child(credit_row("格式", format.as_str()));
+
+    if let Some(a) = analysis {
+        card = card.child(credit_row("BPM", &format!("{:.1}", a.bpm)));
+        if let Some(key) = a.key {
+            card = card.child(credit_row("调性", &key.label()));
+        }
+        card = card.child(credit_row("响度", &format!("{:.1} LUFS", a.loudness_lufs)));
+    }
+
+    card.into_any_element()
 }
 
 fn credit_row(label: &'static str, value: &str) -> impl IntoElement {
@@ -577,6 +653,9 @@ fn credit_row(label: &'static str, value: &str) -> impl IntoElement {
 
 fn up_next(
     next: &Track,
+    current_id: Option<TrackId>,
+    next_analysis: Option<&TrackAnalysis>,
+    panel: &WeakEntity<NowPlaying>,
     covers: &Entity<CoverCache>,
     library: &Entity<LibraryEntity>,
     cx: &mut App,
@@ -621,11 +700,45 @@ fn up_next(
 
     let subtitle = next.subtitle();
     let activate = library.clone();
+    let bpm_text = next_analysis.map(|a| format!("{:.0} BPM", a.bpm));
+    let can_edit = current_id.is_some_and(|cur| cur != id);
+    let edit_panel = panel.clone();
+
+    let heading_row = div()
+        .w_full()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(theme::GAP_SM))
+        .child(crate::common::section::section_heading("下一首"))
+        .when(can_edit, |row| {
+            let from_id = current_id.unwrap_or(id);
+            row.child(
+                div()
+                    .id("np-edit-mix")
+                    .px(px(theme::GAP_SM))
+                    .py(px(2.))
+                    .bg(theme::elevated())
+                    .text_size(px(theme::FONT_MICRO))
+                    .text_color(theme::text_muted())
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::accent()).text_color(theme::text_on_accent()))
+                    .tooltip(crate::common::tooltip::builder(
+                        "编辑这两首曲目之间的过渡曲线",
+                    ))
+                    .on_click(move |_, _, cx| {
+                        let _ = edit_panel.update(cx, |_, cx| {
+                            cx.emit(NowPlayingEvent::EditTransition(from_id, id));
+                        });
+                    })
+                    .child("⇄ 过渡"),
+            )
+        });
 
     div()
         .w_full()
         .child(crate::common::section::eyebrow("Next"))
-        .child(crate::common::section::section_heading("下一首"))
+        .child(heading_row)
         .child(
             div()
                 .id("np-up-next")
@@ -662,6 +775,19 @@ fn up_next(
                             )
                         }),
                 )
+                .when_some(bpm_text, |row, label| {
+                    row.child(
+                        div()
+                            .flex_none()
+                            .px(px(4.))
+                            .py(px(1.))
+                            .bg(theme::tag_bg())
+                            .text_color(theme::tag_fg())
+                            .font(theme::field_font())
+                            .text_size(px(theme::FONT_MICRO))
+                            .child(label),
+                    )
+                })
                 .on_click(move |_, _, cx| {
                     activate.update(cx, |library, cx| {
                         library.activate(id, cx);

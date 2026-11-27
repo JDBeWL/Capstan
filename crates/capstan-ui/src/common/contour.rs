@@ -1,5 +1,6 @@
 //! 等高线。缓坡上的涟漪，等值线从片的一边穿到另一边，不闭合成圈。
-//! `assets/contours/draw-contours.mjs` 同源。先在网格上算「坡度 + 波浪」标量场，再用 marching squares 连成折线，只留横穿整片的开放线。
+//! `assets/contours/draw-contours.mjs` 同源。先在网格上算「坡度 + 波浪」标量场，
+//! 再用 marching squares 连成折线，只留横穿整片的开放线。
 //! 几何按像素尺寸缓存在线程里，换窗口大小时才重算。
 
 use std::cell::RefCell;

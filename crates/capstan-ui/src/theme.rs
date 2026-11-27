@@ -24,7 +24,8 @@ impl Appearance {
 }
 
 /// 一套完整的主题取值，字段是原始 sRGB，函数只负责按当前明暗取色。两套的层级关系一致，板比纸亮，切角露出的始终是更暗的纸。
-/// 带 alpha 的颜色也在这里定值，不在调用处叠 `text().opacity(..)`。墨色会随主题翻成浅色，派生遮罩与荧光笔会跟着翻，深色下变成一层白雾。
+/// 带 alpha 的颜色也在这里定值，不在调用处叠 `text().opacity(..)`。
+/// 墨色会随主题翻成浅色，派生遮罩与荧光笔会跟着翻，深色下变成一层白雾。
 /// `scrim` 与 `mark_alpha` 为此单列。
 #[derive(Clone, Copy)]
 pub(crate) struct Palette {
@@ -78,7 +79,8 @@ const LIGHT: Palette = Palette {
 };
 
 /// 深色主题为纸 #191919、板 #222222、墨 #EDEDED，黄不变。
-/// 三级文字留出一档台阶，ink → ink2 → faint 依次为 #EDEDED → #C0C0C0 → #A3A3A3；遮罩 #000000 @ 0.63、荧光笔黄 @ 0.22 也在这里定值，不从墨色派生。
+/// 三级文字留出一档台阶，ink → ink2 → faint 依次为 #EDEDED → #C0C0C0 → #A3A3A3；
+/// 遮罩 #000000 @ 0.63、荧光笔黄 @ 0.22 也在这里定值，不从墨色派生。
 const DARK: Palette = Palette {
     dark: true,
     paper: 0x191919,

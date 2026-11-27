@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-/// 「歌手在前」的位置先验。它只有这么点分量，随便一条外部证据都能压过去。
+/// 「歌手在前」的位置先验。权重较低，任意一条外部证据即可推翻。
 const PRIOR_ARTIST_FIRST: i32 = 2;
 /// 认定一个候选成立所需的最低分。
 const ACCEPT: i32 = 2;
@@ -457,7 +457,8 @@ fn bracket_pair(ch: char) -> Option<(char, Bracket)> {
 }
 
 /// 按分隔符切成正文段。「空格 - 空格」是最无歧义的分隔符，出现时只认它。
-/// 名字与标题自带连字符很常见，如 `塞壬唱片-MSR,z1on,ReStudio`、`Secret of my heart-Hi-Res-5.1`；按裸 `-` 切会将其切断。
+/// 名字与标题自带连字符很常见，如 `塞壬唱片-MSR,z1on,ReStudio`、
+/// `Secret of my heart-Hi-Res-5.1`；按裸 `-` 切会将其切断。
 fn split_parts(body: &str) -> Vec<String> {
     if body.contains(SPACED_DASH) {
         body.split(SPACED_DASH).filter_map(trimmed).collect()

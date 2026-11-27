@@ -172,7 +172,7 @@ fn nav_item_shell(item: NavItem, on_hover: Option<HoverEnter>) -> Stateful<Div> 
     };
 
     let mut item = item
-        // 选中行整行压在黄块上。两套主题都用深墨色，深色主题里不能跟着 text() 变浅。
+        // 选中行整行压在黄块上。两套主题都用深墨色，深色主题里不能跟着 `text()` 变浅。
         .when(selected, |item| item.text_color(theme::text_on_accent()))
         .when(!selected, |item| item.text_color(theme::text_muted()))
         .hover(|style| {

@@ -54,7 +54,7 @@ const ID_LIKE: u32 = 0x4A14;
 /// 缩略图留白，BGRA。深色在浅色任务栏上同样可读。
 const BACKGROUND: [u8; 4] = [0x0D, 0x0D, 0x0D, 0xFF];
 
-/// `PW_CLIENTONLY | PW_RENDERFULLCONTENT`：只画客户区，且带上 DirectComposition 内容。
+/// `PW_CLIENTONLY | PW_RENDERFULLCONTENT` 只画客户区，且带上 DirectComposition 内容。
 /// 少了 CLIENTONLY 会把非客户区也画进客户区尺寸的位图，预览左侧出现黑边。
 const PRINT_CLIENT_FULL_CONTENT: PRINT_WINDOW_FLAGS = PRINT_WINDOW_FLAGS(3);
 
@@ -259,7 +259,7 @@ struct Shared {
     actions: Arc<Mutex<Vec<TaskbarAction>>>,
     /// 最小化后 `GetClientRect` 为 0×0，速览要用最小化前的客户区尺寸。
     last_client: Mutex<(u32, u32)>,
-    /// 失焦 / 最小化前的最后一帧。最小化窗口无法 PrintWindow，速览只能回放这张图。
+    /// 失焦或最小化前的最后一帧。最小化窗口无法 `PrintWindow`，速览只能回放这张图。
     snapshot: Mutex<Option<Arc<Art>>>,
 }
 
@@ -347,7 +347,7 @@ unsafe extern "system" fn taskbar_proc(
             let snapshot = lock(&shared.snapshot).is_some();
             log::debug!("任务栏速览：iconic={iconic} snapshot={snapshot}");
             let bitmap = if iconic {
-                // 最小化后 PrintWindow 抓不到画面，回放失焦 / 最小化前的最后一帧。
+                // 最小化后 `PrintWindow` 抓不到画面，回放失焦或最小化前的最后一帧。
                 lock(&shared.snapshot)
                     .clone()
                     .and_then(|snapshot| {
@@ -656,7 +656,7 @@ impl Drop for Icons {
 fn icon_from_png(bytes: &[u8], px: u32) -> Option<HICON> {
     let source = image::load_from_memory(bytes).ok()?.to_rgba8();
     let source = image::imageops::resize(&source, px, px, image::imageops::FilterType::Lanczos3);
-    // 白色按 alpha 预乘；任务栏给按钮画自己的底，图标只需 alpha 形状。
+    // 白色按 alpha 预乘；任务栏会给按钮画底色，图标只需保留 alpha 形状。
     let mut pixels = vec![0u8; (px * px * 4) as usize];
     for (index, pixel) in source.pixels().enumerate() {
         let alpha = pixel[3];

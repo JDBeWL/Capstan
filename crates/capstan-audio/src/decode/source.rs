@@ -43,7 +43,7 @@ const TAIL_POLL: Duration = Duration::from_millis(20);
 const STOP_CHECK_INTERVAL: usize = 256;
 
 /// [`WhenEmpty::Wait`] 的单次等待上限，同时是换手时结束延迟的上限：
-/// 推送线程阻塞于等待中时收不到取消标志，只能等本轮超时；解码停滞亦由兜底静音放行，不可无限等待。
+/// 推送线程阻塞于等待中时收不到取消标志，只能等本轮超时；解码停滞亦由静音后备放行，不可无限等待。
 const WAIT_LIMIT: Duration = Duration::from_millis(200);
 
 /// 通道空置、解码尚未跟上时的策略，空时输出的 `0.0` 会被下游当作曲目内容。
@@ -52,7 +52,7 @@ pub enum WhenEmpty {
     /// 立即输出静音。rodio 的 mixer 在音频回调线程上拉取，该线程绝不能阻塞。
     /// 亏欠仅为一次回调的量，在几十毫秒以内，代价可以接受。
     PadWithSilence,
-    /// 先等待真实样本，最长 `WAIT_LIMIT`；等不到时才以静音兜底。
+    /// 先等待真实样本，最长 `WAIT_LIMIT`；超时后以静音填补。
     /// 供独占输出的推送线程使用。它不在实时线程上，快过解码线程属常态，补白进入环便成为曲目中的静音段。
     Wait,
 }

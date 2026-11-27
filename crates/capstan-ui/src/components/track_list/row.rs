@@ -5,12 +5,14 @@ use std::time::Duration;
 use capstan_core::{Track, TrackId, format_duration};
 
 use crate::cover::CoverCache;
-use crate::entities::{LibraryEntity, ScopeKind};
+use crate::entities::{AnalysisEntity, LibraryEntity, ScopeKind};
 use crate::icon::{Glyph, icon};
 use crate::platform::*;
 use crate::theme;
 
-use super::{CHECK_W, HANDLE_W, LIKE_W, RowEnv, TrackList, TrackListEvent, cells, columns, drag};
+use super::{
+    BPM_W, CHECK_W, HANDLE_W, LIKE_W, RowEnv, TrackList, TrackListEvent, cells, columns, drag,
+};
 
 /// 专辑列要不要画。断点允许，且专辑详情里永远不画（每行都是同一张专辑）。
 pub(super) fn show_album_column(breakpoint_allows: bool, kind: ScopeKind) -> bool {
@@ -110,6 +112,17 @@ pub(super) fn column_header(env: &RowEnv, list: WeakEntity<TrackList>) -> impl I
             .justify_center()
             .child("喜欢"),
     )
+    .when(env.show_bpm, |row| {
+        row.child(
+            div()
+                .flex_none()
+                .w(px(BPM_W))
+                .flex()
+                .items_center()
+                .justify_start()
+                .child("BPM / 调性"),
+        )
+    })
     .child(
         div()
             .flex_none()
@@ -206,6 +219,7 @@ pub(super) fn row(
     library: &Entity<LibraryEntity>,
     list: &WeakEntity<TrackList>,
     covers: &Entity<CoverCache>,
+    analysis: &Entity<AnalysisEntity>,
     motion: RowMotion,
     // `(世代, 延迟 ms)`，这一行属于本轮逐行入场。
     enter: Option<(u64, u64)>,
@@ -393,10 +407,43 @@ pub(super) fn row(
         });
     let menu = || crate::common::menu::track_context_menu(library.clone(), track_id, hooks.clone());
 
+    let (bpm, camelot) = if env.show_bpm {
+        (
+            library.read(cx).effective_bpm(track),
+            analysis.read(cx).camelot(track_id),
+        )
+    } else {
+        (None, None)
+    };
+    let has_bpm_info = bpm.is_some() || camelot.is_some();
+    let bpm_label = match (bpm, camelot) {
+        (Some(v), Some(code)) => format!("{v:.0} · {code}"),
+        (Some(v), None) => format!("{v:.0}"),
+        (None, Some(code)) => format!("-- · {code}"),
+        (None, None) => "--".to_owned(),
+    };
     element = element
         .child(cells::like_cell(
             index, state, group, track_id, liked, library,
         ))
+        .when(env.show_bpm, |row| {
+            row.child(
+                div()
+                    .flex_none()
+                    .w(px(BPM_W))
+                    .flex()
+                    .items_center()
+                    .justify_start()
+                    .font(theme::field_font())
+                    .text_size(px(theme::FONT_CAPTION))
+                    .text_color(if has_bpm_info {
+                        theme::text_muted()
+                    } else {
+                        theme::text_faint()
+                    })
+                    .child(bpm_label),
+            )
+        })
         .child(
             div()
                 .flex_none()

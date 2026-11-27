@@ -129,6 +129,8 @@ pub struct SymphoniaDecoder {
     format: Option<Box<dyn FormatReader>>,
     track_id: Option<u32>,
     current_sample: u64,
+    /// `SeekMode::Accurate` 落到目标帧所在包头后，需要丢弃的前导样本数（交错后）。
+    skip_samples: usize,
     source_channels: u16,
     /// 累计解出的样本数。用于区分「没有任何样本」（文件无法解码，必须报错）与「正常结束」。
     decoded_samples: u64,
@@ -138,7 +140,8 @@ impl SymphoniaDecoder {
     pub fn new(path: &Path) -> Result<Self> {
         let mut file = File::open(path).map_err(AudioError::FileOpen)?;
 
-        // 可识别魔数的文件在格式探测前拦截。改名后的 APE、WavPack 与 Ogg-Opus 会被 symphonia 当作可播放文件，实际输出满刻度噪声或全零。
+        // 可识别魔数的文件在格式探测前拦截。改名后的 APE、WavPack 与 Ogg-Opus
+        // 会被 symphonia 当作可播放文件，实际输出满刻度噪声或全零。
         // `initialize` 只由这里建出的实例调用。
         let mut head = Vec::with_capacity(capstan_core::SIGNATURE_PROBE_LEN);
         (&mut file)
@@ -207,6 +210,7 @@ impl SymphoniaDecoder {
             format: None,
             track_id: None,
             current_sample: 0,
+            skip_samples: 0,
             source_channels,
             decoded_samples: 0,
         })
@@ -289,9 +293,14 @@ impl SymphoniaDecoder {
                 track_id,
             };
             match format.seek(SeekMode::Accurate, seek_to) {
-                Ok(_) => {
+                Ok(seeked) => {
                     // 状态只在 symphonia 的 seek 成功后才改；失败时保持原样，调用方还能继续播。
                     self.current_sample = target_ts;
+                    let overshoot = seeked
+                        .required_ts
+                        .get()
+                        .saturating_sub(seeked.actual_ts.get());
+                    self.skip_samples = overshoot as usize * usize::from(self.buffer.channels);
                     self.buffer.clear();
                     decoder.reset();
                     self.state = DecoderState::Ready;
@@ -347,10 +356,16 @@ impl SymphoniaDecoder {
                 ts: Timestamp::new(timestamp_of(self.current_sample)),
                 track_id,
             };
-            if format.seek(SeekMode::Accurate, seek_to).is_ok() {
+            if let Ok(seeked) = format.seek(SeekMode::Accurate, seek_to) {
+                let overshoot = seeked
+                    .required_ts
+                    .get()
+                    .saturating_sub(seeked.actual_ts.get());
+                self.skip_samples = overshoot as usize * usize::from(self.buffer.channels);
                 decoder.reset();
             } else {
                 self.current_sample = 0;
+                self.skip_samples = 0;
             }
         }
 
@@ -415,7 +430,15 @@ impl SymphoniaDecoder {
                     let expected = self.buffer.channels;
                     Self::convert(&audio_buf, &mut self.scratch, expected);
                     self.decoded_samples += self.scratch.len() as u64;
-                    self.buffer.append(&self.scratch);
+                    if self.skip_samples > 0 {
+                        let drop = self.skip_samples.min(self.scratch.len());
+                        self.skip_samples -= drop;
+                        if drop < self.scratch.len() {
+                            self.buffer.append(&self.scratch[drop..]);
+                        }
+                    } else {
+                        self.buffer.append(&self.scratch);
+                    }
                     decoded_packets += 1;
                 }
                 Err(Error::IoError(ref err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {

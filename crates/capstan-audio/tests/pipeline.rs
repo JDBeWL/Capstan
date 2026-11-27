@@ -1,6 +1,7 @@
 //! 音频链路集成测试。`AudioHandle::spawn_with` 注入假后端，不需要声卡。
 //! 覆盖「命令 → 线程 → 事件与快照」全链路，包括真机上偶发的切歌瞬间误报结束。
-//! `clippy.toml` 的 `allow-*-in-tests` 覆盖不到 `tests/` 下的集成测试 crate，故在顶部显式允许 unwrap 与 expect。
+//! `clippy.toml` 的 `allow-*-in-tests` 覆盖不到 `tests/` 下的集成测试 crate，
+//! 故在顶部显式允许 `unwrap` 与 `expect`。
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::path::{Path, PathBuf};
@@ -267,7 +268,7 @@ fn natural_end_is_reported_exactly_once() {
     });
     wait_for(&rx, |e| matches!(e, PlayerEvent::Loaded { .. }));
 
-    // 先播放一段时间。线程需观察到一次「未播空」，之后 empty() 的结论才被采信（防切歌瞬间误报）。
+    // 先播放一段时间。线程需观察到一次「未播空」，之后 `empty()` 的结论才被采信，以防切歌瞬间误报。
     std::thread::sleep(Duration::from_millis(150));
 
     state.finished.store(true, Relaxed);
@@ -287,7 +288,7 @@ fn natural_end_is_reported_exactly_once() {
 #[test]
 fn freshly_loaded_track_does_not_falsely_report_end() {
     let (handle, rx, state) = harness();
-    // 模拟「刚 append、音频还没被消费」的窗口期，empty() 暂时为 true。
+    // 模拟「刚 append、音频还没被消费」的窗口期，`empty()` 暂时为 true。
     state.finished.store(true, Relaxed);
 
     handle.send(PlayerCommand::Load {
@@ -403,10 +404,10 @@ fn switching_device_mid_playback_does_not_report_the_track_as_ended() {
         autoplay: true,
     });
     wait_for(&rx, |e| matches!(e, PlayerEvent::Loaded { .. }));
-    // 先播放一段时间，`seen_content` 才会置真。之后 empty() 的结论才被采信。
+    // 先播放一段时间，`seen_content` 才会置真。之后 `empty()` 的结论才被采信。
     std::thread::sleep(Duration::from_millis(150));
 
-    // 换流的那一瞬间新音源还没出声，empty() 会短暂为 true。
+    // 换流的那一瞬间新音源还没出声，`empty()` 会短暂为 true。
     state.finished.store(true, Relaxed);
     handle.send(PlayerCommand::SetDevice { id: None });
 

@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::mix::{MixPlan, NextTrack};
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlayerCommand {
     /// 装载一首曲目。`autoplay` 为假时装载后停在开头。
@@ -8,11 +10,20 @@ pub enum PlayerCommand {
         path: PathBuf,
         autoplay: bool,
     },
-    /// 预载下一首。`after` 是调用方记录的当前曲目，不匹配即丢弃。
+    /// 预载下一首及可选混音计划。`after` 是调用方记录的当前曲目，不匹配即丢弃。
     SetNext {
         after: PathBuf,
-        next: Option<PathBuf>,
+        next: Option<NextTrack>,
     },
+    /// 试听过渡编辑结果，从 `from_start` 起播 `from` 并按 `plan` 混入 `to`。
+    PreviewMix {
+        from: PathBuf,
+        from_start: Duration,
+        to: PathBuf,
+        plan: MixPlan,
+    },
+    /// 通知后端自动混音总开关状态，独占后端据此决定是否启用预载混音链。
+    SetAutoMix(bool),
     Play,
     Pause,
     TogglePlay,

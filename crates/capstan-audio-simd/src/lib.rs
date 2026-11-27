@@ -1,5 +1,5 @@
 //! 交错 f32 采样 → 声卡要的 PCM 字节，独占渲染链路上最费 CPU 的一段。
-//! `F32` 走零拷贝视图，整数格式走 AVX2 / SSE2 内核，标量既兜底也是基准（差不得超过 1 LSB）。
+//! `F32` 走零拷贝视图，整数格式走 AVX2 与 SSE2 内核，标量兼作后备与基准，误差不得超过 1 LSB。
 //! 只有 SIMD 内核需要 `unsafe`。`[lints]` 在本 crate 局部放开，其余 crate 仍继承 forbid。
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -111,8 +111,8 @@ fn int16(samples: &[f32], out: &mut Vec<u8>) {
     scalar::i16(samples, out);
 }
 
-/// 标量实现。所有平台的兜底，也是 SIMD 内核的测试基准。
-/// 满刻度先乘 2^(n-1) 再饱和转整，与 cpal 的 f32 → 整数取法一致，两种模式不会打架。
+/// 标量实现，用作所有平台的后备实现，也是 SIMD 内核的测试基准。
+/// 满刻度先乘 `2^(n-1)` 再饱和转整，与 cpal 的 f32 → 整数取法一致，两种模式输出一致。
 mod scalar {
     use super::PcmFormat;
 

@@ -17,6 +17,8 @@ pub mod library_store;
 /// 「喜欢」集合与持久化。
 pub mod likes;
 pub mod logging;
+/// 曲目对混音覆盖（`mix_overrides.json`）读写。
+pub mod mix_overrides;
 /// 统一的 JSON 持久化层，负责数据目录定位、原子替换，以及各份 store 共用的读写语义。
 pub mod persist;
 pub mod platform;

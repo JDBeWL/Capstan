@@ -1,5 +1,6 @@
 //! GPUI 依赖的唯一入口。crates.io 上 `gpui` 有多个互不兼容、版本不互通的分叉，换分叉只改这个文件。
-//! 约定。只有这里可以出现 `gpui` / `gpui_component` 这两个名字，其余文件一律 `use crate::platform::*;`。
+//! 约定只有这里可以出现 `gpui` / `gpui_component` 这两个名字，
+//! 其余文件一律 `use crate::platform::*;`。
 //! `pub use gpui::*` 带入的同名 `test` 宏会遮蔽内置 `#[test]`，测试模块因此不 glob。
 
 use std::borrow::Cow;

@@ -160,7 +160,8 @@ impl ShellEntity {
 }
 
 /// 从任何入口进一个作用域。清搜索词 → 收窄 → 切到曲库页。搜索词属于离开的那一屏，带着它只会得到空结果。
-/// 历史由调用方按入口性质决定 `push_history` 还是 `clear_history`；切页不能省，`AlbumGrid` 不读 `Scope`。
+/// 历史由调用方按入口性质决定 `push_history` 还是 `clear_history`；
+/// 切页不能省，`AlbumGrid` 不读 `Scope`。
 pub fn enter_scope(
     scope: Scope,
     shell: &Entity<ShellEntity>,

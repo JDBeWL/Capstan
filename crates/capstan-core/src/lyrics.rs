@@ -631,8 +631,8 @@ pub fn load_for_audio(audio: &Path) -> Option<Lyrics> {
     (!lyrics.is_empty()).then_some(lyrics)
 }
 
-/// 侧文件没有强制编码，中文发行里 GBK/GB18030 仍常见。UTF-8 解码失败时整体回退到 GB18030，
-/// 不逐行试；逐行会让一首歌里混进两种编码。
+/// 侧文件没有强制编码，中文发行里 GBK 与 GB18030 仍常见。UTF-8 解码失败时
+/// 整体回退到 GB18030，不逐行试；逐行会让一首曲目里混进两种编码。
 fn decode_text(bytes: &[u8]) -> String {
     if let Ok(text) = std::str::from_utf8(bytes) {
         return text.to_owned();

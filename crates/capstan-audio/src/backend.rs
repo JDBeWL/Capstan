@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::error::{AudioError, Result};
+use crate::mix::{MixPlan, NextTrack};
 
 /// 后端在运行中异步产生、需要音频线程改写播放状态的信号。
 #[derive(Debug)]
@@ -10,8 +11,12 @@ pub enum BackendNotice {
     Lost(AudioError),
     /// 链路已自行重建并继续播放；音频线程应当把状态改回「播放中」。
     Resumed,
-    /// 已无缝接入预载的下一首。音频未中断，元信息随之更换。
-    Advanced { path: PathBuf, duration: Duration },
+    /// 已无缝或混音接入预载的下一首。`start` 为新曲目的起始媒体位置（非零表示从入点切入）。
+    Advanced {
+        path: PathBuf,
+        duration: Duration,
+        start: Duration,
+    },
 }
 
 /// 音频后端的抽象边界。实现者可以是 `!Send` 的，只在音频线程内部构造和使用。
@@ -19,11 +24,38 @@ pub trait AudioBackend: 'static {
     /// 装载曲目。返回解码出的时长，未知时返回 `Duration::ZERO`。
     fn load(&mut self, path: &Path, autoplay: bool) -> Result<Duration>;
 
-    /// 预载下一段，供自然播完时无缝接上。`after` 是调用方记录的当前曲目，
-    /// 不匹配即视为过期命令。不支持无缝的后端按空操作处理。
-    fn set_next(&mut self, after: &Path, next: Option<&Path>) -> Result<()> {
+    /// 预载下一段，供自然播完无缝衔接或按计划自动混音。`after` 是调用方记录的当前曲目，
+    /// 不匹配即视为过期命令。不支持预载的后端按空操作处理。
+    fn set_next(&mut self, after: &Path, next: Option<&NextTrack>) -> Result<()> {
         let _ = (after, next);
         Ok(())
+    }
+
+    /// 试听一段过渡。从 `from` 的 `from_start` 起播，立即挂载 `to` 与 `plan`。
+    /// 不支持试听的后端退回从头装载 `from`。
+    fn preview_mix(
+        &mut self,
+        from: &Path,
+        from_start: Duration,
+        to: &Path,
+        plan: &MixPlan,
+    ) -> Result<Duration> {
+        let _ = (to, plan);
+        let duration = self.load(from, true)?;
+        if !from_start.is_zero() {
+            self.seek(from_start)?;
+        }
+        Ok(duration)
+    }
+
+    /// 自动混音总开关。独占后端据此决定是否包装双轨混音链；关闭时维持位完美单段链。
+    fn set_auto_mix(&mut self, enabled: bool) {
+        let _ = enabled;
+    }
+
+    /// 当前是否处于双轨叠加过渡中。
+    fn is_mixing(&self) -> bool {
+        false
     }
 
     /// 开始（或继续）播放当前曲目。重播是按当前曲目重建音源链路，可能失败，

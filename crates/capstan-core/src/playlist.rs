@@ -12,8 +12,22 @@ fn cmp_ci(a: &str, b: &str) -> Ordering {
         .cmp(b.chars().flat_map(char::to_lowercase))
 }
 
-/// 缺失字段排在前面。
-fn compare_by(key: SortKey, a: &Track, b: &Track) -> Ordering {
+/// 读出一首曲目当前生效的 BPM，优先取离线分析缓存，其次取音频标签。
+fn effective_bpm_in(analyzed: &HashMap<TrackId, f32>, track: &Track) -> Option<f32> {
+    analyzed
+        .get(&track.id)
+        .copied()
+        .or(track.bpm_tag)
+        .filter(|bpm| bpm.is_finite() && *bpm > 0.0)
+}
+
+/// 缺失字段排在前面；BPM 例外，已知 BPM 升序排在前，尚未分析的排在末尾。
+fn compare_by(
+    key: SortKey,
+    a: &Track,
+    b: &Track,
+    analyzed_bpm: &HashMap<TrackId, f32>,
+) -> Ordering {
     match key {
         SortKey::ImportOrder => Ordering::Equal,
         SortKey::Title => cmp_ci(&a.title, &b.title),
@@ -29,6 +43,16 @@ fn compare_by(key: SortKey, a: &Track, b: &Track) -> Ordering {
             .duration
             .unwrap_or_default()
             .cmp(&b.duration.unwrap_or_default()),
+        SortKey::Bpm => {
+            let bpm_a = effective_bpm_in(analyzed_bpm, a);
+            let bpm_b = effective_bpm_in(analyzed_bpm, b);
+            match (bpm_a, bpm_b) {
+                (Some(x), Some(y)) => x.total_cmp(&y).then_with(|| cmp_ci(&a.title, &b.title)),
+                (Some(_), None) => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (None, None) => cmp_ci(&a.title, &b.title),
+            }
+        }
     }
 }
 
@@ -37,14 +61,17 @@ pub enum PlayMode {
     #[default]
     Sequential,
     Shuffle,
+    /// 按 BPM、调性与能量主动编排队列顺序的独立模式。
+    SmartMix,
     RepeatAll,
     RepeatOne,
 }
 
 impl PlayMode {
-    pub const ALL: [PlayMode; 4] = [
+    pub const ALL: [PlayMode; 5] = [
         PlayMode::Sequential,
         PlayMode::Shuffle,
+        PlayMode::SmartMix,
         PlayMode::RepeatAll,
         PlayMode::RepeatOne,
     ];
@@ -53,6 +80,7 @@ impl PlayMode {
         match self {
             PlayMode::Sequential => "顺序播放",
             PlayMode::Shuffle => "随机播放",
+            PlayMode::SmartMix => "智能混排",
             PlayMode::RepeatAll => "列表循环",
             PlayMode::RepeatOne => "单曲循环",
         }
@@ -61,7 +89,8 @@ impl PlayMode {
     pub fn next_in_cycle(self) -> Self {
         match self {
             PlayMode::Sequential => PlayMode::Shuffle,
-            PlayMode::Shuffle => PlayMode::RepeatAll,
+            PlayMode::Shuffle => PlayMode::SmartMix,
+            PlayMode::SmartMix => PlayMode::RepeatAll,
             PlayMode::RepeatAll => PlayMode::RepeatOne,
             PlayMode::RepeatOne => PlayMode::Sequential,
         }
@@ -69,6 +98,10 @@ impl PlayMode {
 
     pub fn is_shuffle(self) -> bool {
         matches!(self, PlayMode::Shuffle)
+    }
+
+    pub fn is_smart_mix(self) -> bool {
+        matches!(self, PlayMode::SmartMix)
     }
 }
 
@@ -81,15 +114,17 @@ pub enum SortKey {
     Artist,
     Album,
     Duration,
+    Bpm,
 }
 
 impl SortKey {
-    pub const ALL: [SortKey; 5] = [
+    pub const ALL: [SortKey; 6] = [
         SortKey::ImportOrder,
         SortKey::Title,
         SortKey::Artist,
         SortKey::Album,
         SortKey::Duration,
+        SortKey::Bpm,
     ];
 
     pub fn label(self) -> &'static str {
@@ -99,6 +134,7 @@ impl SortKey {
             SortKey::Artist => "艺术家",
             SortKey::Album => "专辑",
             SortKey::Duration => "时长",
+            SortKey::Bpm => "BPM",
         }
     }
 }
@@ -137,6 +173,9 @@ pub struct Playlist {
     /// 队列结构或游标的代次。队列面板据此缓存行模型，避免每次重绘都全量取曲目。
     #[serde(skip)]
     revision: u64,
+    /// 外部注入的离线分析 BPM 缓存（未落盘），按 BPM 排序时优先于 `Track::bpm_tag`。
+    #[serde(skip)]
+    analyzed_bpm: HashMap<TrackId, f32>,
 }
 
 impl Playlist {
@@ -247,6 +286,7 @@ impl Playlist {
         self.index.clear();
         self.order.clear();
         self.import_seq.clear();
+        self.analyzed_bpm.clear();
         self.queue = None;
         self.pos = 0;
         self.touch();
@@ -266,16 +306,54 @@ impl Playlist {
         self.sort
     }
 
+    /// 取曲目当前生效的 BPM，优先返回已注入的离线分析结果，缺失时退回标签 BPM。
+    pub fn effective_bpm(&self, track: &Track) -> Option<f32> {
+        effective_bpm_in(&self.analyzed_bpm, track)
+    }
+
+    /// 注入单首曲目的离线分析 BPM，返回该值是否发生实质变化。不自动重排。
+    pub fn set_analyzed_bpm(&mut self, id: TrackId, bpm: f32) -> bool {
+        if !bpm.is_finite() || bpm <= 0.0 {
+            return false;
+        }
+        let changed = self
+            .analyzed_bpm
+            .get(&id)
+            .is_none_or(|prev| (prev - bpm).abs() > 0.05);
+        if changed {
+            self.analyzed_bpm.insert(id, bpm);
+        }
+        changed
+    }
+
+    /// 批量注入离线分析 BPM，返回是否有条目发生变化。不自动重排。
+    pub fn set_analyzed_bpms(&mut self, entries: impl IntoIterator<Item = (TrackId, f32)>) -> bool {
+        let mut changed = false;
+        for (id, bpm) in entries {
+            changed |= self.set_analyzed_bpm(id, bpm);
+        }
+        changed
+    }
+
+    pub fn analyzed_bpm_map(&self) -> &HashMap<TrackId, f32> {
+        &self.analyzed_bpm
+    }
+
+    /// 按当前排序键重新排序 `tracks` 与 `order`（供批量注入 BPM 后刷新顺序）。
+    pub fn apply_current_sort(&mut self) {
+        self.apply_sort();
+    }
+
     /// 换键并立即重排 `tracks` 与 `order`。
     pub fn sort_by(&mut self, key: SortKey) {
         self.sort = key;
         self.apply_sort();
     }
 
-    /// 随机模式不重洗，保留现存 id 的相对序，新 id 追加末尾；`pos` 跟随曲目 id 而非下标。
+    /// 随机与智能混排模式不重洗，保留现存 id 的相对序，新 id 追加末尾；`pos` 跟随曲目 id 而非下标。
     fn apply_sort(&mut self) {
         if self.sort == SortKey::ImportOrder {
-            // 临时表把 position 查找从 O(n²) 压到 O(n)
+            // 临时表把 `position` 查找从 O(n²) 压到 O(n)。
             let position: HashMap<TrackId, usize> = self
                 .import_seq
                 .iter()
@@ -286,7 +364,9 @@ impl Playlist {
                 .sort_by_key(|t| position.get(&t.id).copied().unwrap_or(usize::MAX));
         } else {
             let key = self.sort;
-            self.tracks.sort_by(|a, b| compare_by(key, a, b));
+            let analyzed_bpm = &self.analyzed_bpm;
+            self.tracks
+                .sort_by(|a, b| compare_by(key, a, b, analyzed_bpm));
         }
 
         self.reindex();
@@ -294,7 +374,7 @@ impl Playlist {
 
         // 队列已定时排序只影响 `tracks`，队列的成分与相对序不动。之后改排序不该重排正在听的东西。
         let wanted = self.queue_ids();
-        self.order = if self.mode.is_shuffle() {
+        self.order = if self.mode.is_shuffle() || self.mode.is_smart_mix() {
             let allowed: HashSet<TrackId> = wanted.iter().copied().collect();
             let mut seen: HashSet<TrackId> = HashSet::with_capacity(wanted.len());
             let mut kept: Vec<TrackId> = Vec::with_capacity(wanted.len());
@@ -538,6 +618,31 @@ impl Playlist {
         }
     }
 
+    /// 智能混排等外部编排模式写回自定义播放顺序，不冻结 `queue`，切回顺序模式仍能还原原序。
+    /// 自动过滤不在当前队列的 id 并补齐漏项，保证 `order` 与当前队列集合严格一致。
+    pub fn apply_arranged_order(&mut self, arranged: Vec<TrackId>) {
+        let current = self.current_id();
+        let wanted = self.queue_ids();
+        let allowed: HashSet<TrackId> = wanted.iter().copied().collect();
+        let mut seen: HashSet<TrackId> = HashSet::with_capacity(wanted.len());
+        let mut next_order: Vec<TrackId> = Vec::with_capacity(wanted.len());
+
+        for id in arranged {
+            if allowed.contains(&id) && seen.insert(id) {
+                next_order.push(id);
+            }
+        }
+        for id in wanted {
+            if seen.insert(id) {
+                next_order.push(id);
+            }
+        }
+
+        self.order = next_order;
+        self.reseat(current);
+        self.touch();
+    }
+
     /// 随机模式把当前曲目旋转到随机序首位，否则排在它前面的曲目这一轮永远走不到。
     pub fn rebuild_order(&mut self, seed: u64) {
         let current = self.current_id();
@@ -629,7 +734,7 @@ impl Playlist {
         self.track_at_order(n).is_none_or(Track::is_playable)
     }
 
-    /// 一首歌自然播完，与 [`Playlist::next`] 的区别是单曲循环只在此时回头重播。
+    /// 一首曲目自然播完，与 [`Playlist::next`] 的区别是单曲循环只在此时回头重播。
     pub fn on_track_ended(&mut self) -> Advance {
         if self.mode == PlayMode::RepeatOne && !self.order.is_empty() {
             Advance::Restart
@@ -1488,5 +1593,50 @@ mod tests {
             picked,
             "队列是「按下播放那一刻看到的那批」，改排序不该动它"
         );
+    }
+
+    #[test]
+    fn sorting_by_bpm_prefers_analyzed_over_tag_and_puts_unknown_last() {
+        let mut t0 = track(0);
+        t0.bpm_tag = Some(130.0);
+        let mut t1 = track(1);
+        t1.bpm_tag = None;
+        let mut t2 = track(2);
+        t2.bpm_tag = Some(100.0);
+        let mut t3 = track(3);
+        t3.bpm_tag = Some(140.0);
+
+        let mut p = Playlist::new();
+        p.push([t0.clone(), t1.clone(), t2.clone(), t3.clone()]);
+        // 离线分析结果覆盖标签 BPM（t3 实际为 90 BPM）。
+        assert!(p.set_analyzed_bpm(t3.id, 90.0));
+        p.sort_by(SortKey::Bpm);
+
+        let ordered: Vec<TrackId> = p.tracks().iter().map(|t| t.id).collect();
+        assert_eq!(
+            ordered,
+            vec![t3.id, t2.id, t0.id, t1.id],
+            "按 BPM 排序应优先取分析值、次取标签，并将未知 BPM 置于末尾"
+        );
+    }
+
+    #[test]
+    fn smart_mix_applies_arranged_order_without_freezing_queue() {
+        let mut p = playlist(4);
+        p.play_order_index(1);
+        let current = p.current_id().unwrap();
+        p.set_mode(PlayMode::SmartMix, 1);
+
+        let arranged = vec![current, track(3).id, track(0).id, track(2).id];
+        p.apply_arranged_order(arranged.clone());
+        assert_eq!(p.order(), arranged.as_slice());
+        assert_eq!(p.current_id(), Some(current));
+        assert!(p.queue().is_none(), "智能混排不应冻结显式队列");
+
+        // 切回顺序播放应恢复原始顺序。
+        p.set_mode(PlayMode::Sequential, 1);
+        let expected: Vec<TrackId> = (0..4).map(|n| track(n).id).collect();
+        assert_eq!(p.order(), expected.as_slice());
+        assert_eq!(p.current_id(), Some(current));
     }
 }

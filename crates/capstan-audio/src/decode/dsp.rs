@@ -85,7 +85,7 @@ pub struct LfeConfig {
     pub include_lfe: bool,
     /// LFE 相对主声道的增益。0.316 ≈ −10 dB，正好抵消 LFE 录音时的抬高。
     pub gain: f32,
-    /// LFE 低通截止频率。LFE 本身就到 120 Hz，这里只是兜底。
+    /// LFE 低通截止频率。LFE 本身截止到 120 Hz，这里用于限幅保护。
     pub cutoff_hz: f32,
 }
 

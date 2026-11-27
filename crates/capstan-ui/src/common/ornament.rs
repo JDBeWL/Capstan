@@ -244,7 +244,7 @@ fn patch_image(
             None
         }
     });
-    // 淘汰的贴图须从图集释放，否则连续拖窗口会累积无人使用的贴图。
+    // 淘汰的贴图必须从图集释放，否则连续拖窗口会累积无人使用的贴图。
     if let Some(old) = evicted {
         window.drop_image(old).ok();
     }

@@ -17,11 +17,14 @@ use crate::decode::{
 };
 use crate::device;
 use crate::error::{AudioError, Result};
+use crate::mix::{CompiledMix, MixKind, MixPlan, NextTrack};
 
 /// 淡入、淡出与换设备交叉淡化的时长。60ms 够抹平接缝。
 const FADE: Duration = Duration::from_millis(60);
 /// 淡出结束后再多保留一段时间才丢弃旧输出流，确保增益确实到达 0。
 const FADE_MARGIN: Duration = Duration::from_millis(20);
+/// 共享模式下混音计划的最小提前量。晚于此窗口到达的计划退回普通无缝衔接。
+pub const MIN_LEAD_SHARED: Duration = Duration::from_secs(3);
 
 /// 一次链路构建的产物，含音源、时长、用于淡出的增益手柄，以及无缝换段所需的槽位与边界计数。
 struct BuiltSource {
@@ -50,9 +53,11 @@ pub struct RodioBackend {
     chain: Option<Chain>,
     /// 已经排进链路、尚未开始的下一段元信息。
     next: Option<Loaded>,
-    /// 交接期间收到的下一段路径，交接落地后装入新链路的槽位。
+    /// 已安装的下一段标识（路径与计划指纹），用于避免重复重建相同预载。
+    installed_next_key: Option<(PathBuf, Option<u64>)>,
+    /// 交接期间收到的下一段载荷，交接落地后装入新链路的槽位。
     /// 手动切歌也走交接，缺此记录时切歌后的曲目不会获得预载。
-    wanted_next: Option<PathBuf>,
+    wanted_next: Option<NextTrack>,
     /// 已上报的段序号，防止同一边界重复上报。
     promoted_seq: u64,
     /// 当前链路的增益手柄，淡出时用它把旧链路推到 0。
@@ -85,11 +90,15 @@ struct Loaded {
 enum Handoff {
     /// 清空队列（`stop()`）
     Stop,
-    Swap {
-        built: BuiltSource,
-        loaded: Loaded,
-        autoplay: bool,
-    },
+    Swap(Box<SwapPayload>),
+}
+
+struct SwapPayload {
+    built: BuiltSource,
+    loaded: Loaded,
+    autoplay: bool,
+    /// 试听混音时在交接落地前即已装入 `built.next` 槽位的下一段元信息。
+    preinstalled_next: Option<Loaded>,
 }
 
 struct Pending {
@@ -98,11 +107,11 @@ struct Pending {
 }
 
 impl Pending {
-    /// 挂起期间对外报的位置，交接落地之后才真的在那里。
+    /// 挂起期间对外上报的位置，交接落地后才真正到达该位置。
     fn position(&self) -> Duration {
         match &self.action {
             Handoff::Stop => Duration::ZERO,
-            Handoff::Swap { loaded, .. } => loaded.base,
+            Handoff::Swap(payload) => payload.loaded.base,
         }
     }
 }
@@ -260,6 +269,7 @@ impl RodioBackend {
             current: None,
             chain: None,
             next: None,
+            installed_next_key: None,
             wanted_next: None,
             promoted_seq: 0,
             gain: None,
@@ -314,12 +324,15 @@ impl RodioBackend {
                 self.gain = None;
                 self.chain = None;
                 self.next = None;
+                self.installed_next_key = None;
             }
-            Handoff::Swap {
-                built,
-                loaded,
-                autoplay,
-            } => {
+            Handoff::Swap(payload) => {
+                let SwapPayload {
+                    built,
+                    loaded,
+                    autoplay,
+                    preinstalled_next,
+                } = *payload;
                 self.swap_in(built.source, autoplay);
                 self.gain = Some(built.gain);
                 self.current = Some(loaded);
@@ -327,13 +340,15 @@ impl RodioBackend {
                     state: built.state,
                     next: built.next,
                 });
-                self.next = None;
+                self.next = preinstalled_next;
+                self.installed_next_key = None;
                 self.promoted_seq = 0;
                 self.stopped = false;
 
                 // 交接期间排队的曲目此时才有链路可挂载。
-                if let Some(path) = self.wanted_next.take()
-                    && let Err(err) = self.install_next(&path)
+                if self.next.is_none()
+                    && let Some(next) = self.wanted_next.take()
+                    && let Err(err) = self.install_next(&next, true)
                 {
                     log::warn!("预载下一首失败：{err}");
                 }
@@ -370,11 +385,9 @@ impl RodioBackend {
     /// 挂起的交接要跟随最新的播放意图。淡出那几十毫秒里用户可能又按了一次。
     fn aim_pending_at(&mut self, autoplay: bool) {
         if let Some(pending) = self.pending.as_mut()
-            && let Handoff::Swap {
-                autoplay: wanted, ..
-            } = &mut pending.action
+            && let Handoff::Swap(payload) = &mut pending.action
         {
-            *wanted = autoplay;
+            payload.autoplay = autoplay;
         }
     }
 
@@ -387,12 +400,13 @@ impl RodioBackend {
             *slot = None;
         }
         self.next = None;
+        self.installed_next_key = None;
         self.wanted_next = None;
     }
 
     /// 将一段预载音源装入当前链路的槽位。必须先清旧槽位再构建，
     /// 否则构建期间跨过边界会播出过期曲目，此时宁可该曲目没有预载。
-    fn install_next(&mut self, path: &Path) -> Result<()> {
+    fn install_next(&mut self, next: &NextTrack, enforce_lead: bool) -> Result<()> {
         let Some(chain) = self.chain.as_ref() else {
             return Ok(());
         };
@@ -401,25 +415,52 @@ impl RodioBackend {
             *guard = None;
         }
         self.next = None;
+        self.installed_next_key = None;
+
+        let current_base = self
+            .current
+            .as_ref()
+            .map_or(Duration::ZERO, |loaded| loaded.base);
+        let current_pos = self.position();
+
+        let effective_plan = resolve_effective_plan(
+            next.mix.as_ref(),
+            current_pos,
+            enforce_lead.then_some(MIN_LEAD_SHARED),
+        );
+        let in_start = effective_plan.map_or(Duration::ZERO, |plan| plan.in_start);
 
         let config = self.device.config();
-        let (segment, duration) = build_segment_for(
+        let (segment_source, duration) = build_segment_for(
             config.sample_rate(),
             config.channel_count(),
-            path,
-            Duration::ZERO,
+            &next.path,
+            in_start,
         )?;
+
+        let compiled = effective_plan
+            .and_then(|plan| CompiledMix::compile(plan, current_base, config.sample_rate().get()));
+        let segment = match compiled {
+            Some(mix) => Segment::with_mix(segment_source, mix),
+            None => Segment::new(segment_source),
+        };
+
         // 元信息必须先于槽位就位，否则音频回调可能在下一个样本就跨段取走音源。
         self.next = Some(Loaded {
-            path: path.to_path_buf(),
+            path: next.path.clone(),
             duration,
-            base: Duration::ZERO,
+            base: in_start,
             playing: true,
         });
+        self.installed_next_key = Some((
+            next.path.clone(),
+            next.mix.as_ref().map(MixPlan::fingerprint),
+        ));
         if let Ok(mut guard) = slot.lock() {
-            *guard = Some(Segment::new(segment));
+            *guard = Some(segment);
         } else {
             self.next = None;
+            self.installed_next_key = None;
         }
         Ok(())
     }
@@ -443,15 +484,17 @@ impl RodioBackend {
         let Some(next) = self.next.take() else {
             return;
         };
+        self.installed_next_key = None;
         self.current = Some(Loaded {
             path: next.path.clone(),
             duration: next.duration,
-            base: Duration::ZERO,
+            base: next.base,
             playing: true,
         });
         self.notices.push_back(BackendNotice::Advanced {
             path: next.path,
             duration: next.duration,
+            start: next.base,
         });
     }
 
@@ -552,18 +595,19 @@ impl AudioBackend for RodioBackend {
             base: Duration::ZERO,
             playing: autoplay,
         };
-        self.hand_off(Handoff::Swap {
+        self.hand_off(Handoff::Swap(Box::new(SwapPayload {
             built,
             loaded,
             autoplay,
-        });
+            preinstalled_next: None,
+        })));
 
         Ok(duration)
     }
 
     /// 预载下一段。`after` 是调用方记录的当前曲目，不匹配即视为过期命令并丢弃。
     /// 失败以 `Err` 返回，调用方只记日志，因为预载并非正确性前提，自然结束时仍会装载并报错。
-    fn set_next(&mut self, after: &Path, next: Option<&Path>) -> Result<()> {
+    fn set_next(&mut self, after: &Path, next: Option<&NextTrack>) -> Result<()> {
         self.sweep();
         // 队列可能在段边界之后、本次 tick 之前变化。先提交已跨过的段，
         // 否则其元信息会被当作「下一首」覆盖，界面与音频错位。
@@ -571,10 +615,10 @@ impl AudioBackend for RodioBackend {
 
         // 淡出交接期间新链路尚未落地，先记录，等交接完成再装入。
         if let Some(pending) = &self.pending {
-            if let Handoff::Swap { loaded, .. } = &pending.action
-                && loaded.path == after
+            if let Handoff::Swap(payload) = &pending.action
+                && payload.loaded.path == after
             {
-                self.wanted_next = next.map(Path::to_path_buf);
+                self.wanted_next = next.cloned();
             }
             return Ok(());
         }
@@ -582,18 +626,25 @@ impl AudioBackend for RodioBackend {
         let Some(current) = self.current.as_ref() else {
             return Ok(());
         };
-        if current.path != after || self.stopped || self.player.empty() {
+        // 用 `chain.is_none()` 而非 `player.empty()` 判定链路存活；刚 `append` 后的一瞬间
+        // rodio 的 `empty()` 可能仍为真，若据此早退会静默丢弃启动首曲的混音预载。
+        if current.path != after || self.stopped || self.chain.is_none() {
             return Ok(());
         }
 
-        if let Some(path) = next {
-            if self.next.as_ref().is_some_and(|loaded| loaded.path == path) {
+        if let Some(next_track) = next {
+            let key = (
+                next_track.path.clone(),
+                next_track.mix.as_ref().map(MixPlan::fingerprint),
+            );
+            if self.installed_next_key.as_ref() == Some(&key) {
                 return Ok(());
             }
             self.wanted_next = None;
-            self.install_next(path)
+            self.install_next(next_track, true)
         } else {
             self.wanted_next = None;
+            self.installed_next_key = None;
             if let Some(chain) = self.chain.as_ref()
                 && let Ok(mut slot) = chain.next.lock()
             {
@@ -602,6 +653,64 @@ impl AudioBackend for RodioBackend {
             self.next = None;
             Ok(())
         }
+    }
+
+    fn preview_mix(
+        &mut self,
+        from: &Path,
+        from_start: Duration,
+        to: &Path,
+        plan: &MixPlan,
+    ) -> Result<Duration> {
+        self.sweep();
+        self.clear_next();
+
+        let built = build_source(&self.device, from, from_start)?;
+        let duration = built.duration;
+        let config = self.device.config();
+        let (next_source, next_duration) = build_segment_for(
+            config.sample_rate(),
+            config.channel_count(),
+            to,
+            plan.in_start,
+        )?;
+
+        let compiled = CompiledMix::compile(plan, from_start, config.sample_rate().get());
+        let segment = match compiled {
+            Some(mix) => Segment::with_mix(next_source, mix),
+            None => Segment::new(next_source),
+        };
+        if let Ok(mut guard) = built.next.lock() {
+            *guard = Some(segment);
+        }
+
+        let loaded = Loaded {
+            path: from.to_path_buf(),
+            duration,
+            base: from_start,
+            playing: true,
+        };
+        let preinstalled_next = Some(Loaded {
+            path: to.to_path_buf(),
+            duration: next_duration,
+            base: plan.in_start,
+            playing: true,
+        });
+        self.hand_off(Handoff::Swap(Box::new(SwapPayload {
+            built,
+            loaded,
+            autoplay: true,
+            preinstalled_next,
+        })));
+        Ok(duration)
+    }
+
+    fn is_mixing(&self) -> bool {
+        self.pending.is_none()
+            && self
+                .chain
+                .as_ref()
+                .is_some_and(|chain| chain.state.is_mixing())
     }
 
     /// 队列空了（`stop()` 之后、或一首自然播完）时 `player.play()` 只放下暂停标志，
@@ -669,11 +778,12 @@ impl AudioBackend for RodioBackend {
             base: target,
             playing: was_playing,
         };
-        self.hand_off(Handoff::Swap {
+        self.hand_off(Handoff::Swap(Box::new(SwapPayload {
             built,
             loaded,
             autoplay: was_playing,
-        });
+            preinstalled_next: None,
+        })));
         self.stopped = false;
 
         Ok(())
@@ -734,6 +844,30 @@ impl AudioBackend for RodioBackend {
     fn set_smooth_switch(&mut self, enabled: bool) {
         self.smooth_switch = enabled;
     }
+}
+
+/// 校验混音计划是否满足提前量要求。已过窗口或为纯无缝计划时返回 `None`，退回普通无缝衔接。
+pub fn resolve_effective_plan(
+    plan: Option<&MixPlan>,
+    current_position: Duration,
+    min_lead: Option<Duration>,
+) -> Option<&MixPlan> {
+    let plan = plan?;
+    if plan.kind == MixKind::Gapless {
+        return None;
+    }
+    if let Some(lead) = min_lead
+        && plan.out_start < current_position.saturating_add(lead)
+    {
+        log::info!(
+            "混音出点 {:?} 距当前位置 {:?} 不足 {:?}，本次退回无缝衔接",
+            plan.out_start,
+            current_position,
+            lead
+        );
+        return None;
+    }
+    Some(plan)
 }
 
 #[cfg(test)]
@@ -911,5 +1045,63 @@ mod tests {
                 "第 {index} 个样本 = {sample}，期望约 {wanted}"
             );
         }
+    }
+
+    #[test]
+    fn expired_mix_plan_degrades_to_gapless() {
+        let plan = MixPlan {
+            kind: MixKind::BeatMatched,
+            out_start: Duration::from_secs(10),
+            out_end: Duration::from_secs(18),
+            in_start: Duration::from_secs(4),
+            a_gain: crate::mix::Automation::preset_out(crate::mix::CurvePreset::EqualPower),
+            b_gain: crate::mix::Automation::preset_in(crate::mix::CurvePreset::EqualPower),
+            ..MixPlan::default()
+        };
+        assert!(
+            resolve_effective_plan(Some(&plan), Duration::from_secs(8), Some(MIN_LEAD_SHARED))
+                .is_none(),
+            "剩余提前量不足 3 秒时必须退回无缝"
+        );
+        assert!(
+            resolve_effective_plan(Some(&plan), Duration::from_secs(5), Some(MIN_LEAD_SHARED))
+                .is_some(),
+            "剩余提前量充裕时保留混音计划"
+        );
+    }
+
+    #[test]
+    fn mixed_segment_starts_at_in_start_and_crossfades_wav_files() {
+        let first_dir = tempfile::tempdir().expect("临时目录");
+        let second_dir = tempfile::tempdir().expect("临时目录");
+        // 8000 Hz 下每首 8000 帧 = 1.0 秒。
+        let first = wav(&first_dir, 2, 8_000);
+        let second = wav(&second_dir, 2, 8_000);
+
+        let built = build_source_for(rate(SOURCE_RATE), channels(2), &first, Duration::ZERO)
+            .expect("构建当前段");
+        let plan = MixPlan {
+            kind: MixKind::Crossfade,
+            out_start: Duration::from_millis(400),
+            out_end: Duration::from_millis(600),
+            in_start: Duration::from_millis(200),
+            a_gain: crate::mix::Automation::preset_out(crate::mix::CurvePreset::Linear),
+            b_gain: crate::mix::Automation::preset_in(crate::mix::CurvePreset::Linear),
+            ..MixPlan::default()
+        };
+        let (seg_b, _) = build_segment_for(rate(SOURCE_RATE), channels(2), &second, plan.in_start)
+            .expect("构建从 in_start 起播的下一段");
+        let compiled = CompiledMix::compile(&plan, Duration::ZERO, SOURCE_RATE).unwrap();
+        *built.next.lock().expect("槽位锁") = Some(Segment::with_mix(seg_b, compiled));
+
+        let samples = drain(built.source);
+        // 0.4s（A 纯播）+ 0.8s（B 从 0.2s 到 1.0s，其中前 0.2s 与 A 重叠）= 1.2s = 9600 帧。
+        let expected = 9_600 * 2;
+        assert!(
+            samples.len().abs_diff(expected) <= 64,
+            "带裁剪与入点的双轨总长度应约 {expected} 样本，实测 {}",
+            samples.len()
+        );
+        assert_eq!(built.state.segment_seq(), 1, "应当触发一次换段");
     }
 }

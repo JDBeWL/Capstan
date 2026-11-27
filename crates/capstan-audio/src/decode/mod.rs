@@ -18,6 +18,9 @@ pub use convert::ChannelConvertSource;
 pub use decoder::SymphoniaDecoder;
 pub use dsp::LfeConfig;
 pub use fade::{GainControl, GainRamp};
-pub use gapless::{GaplessSource, GaplessState, NextSlot, Segment, new_slot};
+pub use gapless::{
+    GaplessSource, GaplessSource as MixSource, GaplessState, NextSlot, Segment, SegmentBoundary,
+    new_slot,
+};
 pub use source::{LockFreeSource, WhenEmpty};
 pub use track::TrackDecoder;

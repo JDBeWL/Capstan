@@ -6,8 +6,8 @@ use std::sync::mpsc::{self, TryRecvError};
 use std::time::Duration;
 
 use capstan_audio::{
-    AudioBackend, AudioDeviceInfo, AudioError, AudioHandle, OutputMode, PlaybackState,
-    PlayerCommand, PlayerEvent, Snapshot,
+    AudioBackend, AudioDeviceInfo, AudioError, AudioHandle, MixPlan, NextTrack, OutputMode,
+    PlaybackState, PlayerCommand, PlayerEvent, Snapshot,
 };
 use capstan_audio_exclusive::ExclusiveBackend;
 use capstan_core::Track;
@@ -32,11 +32,14 @@ pub enum PlaybackEvent {
     OutputModeChanged,
     /// 一首歌自然播完了，由上层决定下一曲还是循环。
     Finished,
-    /// 音频已无缝接入预载的下一首。上层据此将 `path` 解析为完整曲目，再调用 [`PlaybackEntity::adopt`]。
+    /// 音频已无缝或混音接入预载的下一首。上层据此将 `path` 解析为完整曲目，再调用 [`PlaybackEntity::adopt`]。
     TrackStarted {
         path: PathBuf,
         duration: Duration,
+        start: Duration,
     },
+    /// 双轨混音叠加态发生变化（进入或退出过渡期）。
+    MixingChanged,
     /// 用户执行了跳转。后端重建链路会清除预载，上层必须重新下发。
     Sought,
     /// 出声失败。同一句话连续失败只发一次，以免反复重置提示条计时。
@@ -74,6 +77,10 @@ pub struct PlaybackEntity {
     device_name: String,
     /// 已经下发给音频线程的换设备平滑开关；`false` 与音频线程的初值一致。
     smooth_switch: bool,
+    /// 已经下发给音频线程的自动混音总开关。
+    auto_mix: bool,
+    /// 最近一次触发自动混音前的上一首曲目，供过渡期间界面显示「A → B BPM」。
+    previous_track: Option<Track>,
     /// 已经下发给音频线程的独占开关。
     exclusive_wanted: bool,
     /// 实际生效的输出模式。
@@ -116,8 +123,9 @@ impl PlaybackEntity {
         let executor = cx.background_executor().clone();
         let pump = cx.spawn(async move |this, cx| {
             let rx = rx;
-            // 进度只写入共享快照、不发送事件，故「位置变化」需自行察觉，否则无人重绘。
+            // 进度只写入共享快照、不发送事件，故「位置变化」与「混音态变化」需自行察觉。
             let mut shown = Duration::ZERO;
+            let mut shown_mixing = false;
             loop {
                 executor.timer(PUMP_INTERVAL).await;
                 let mut batch: Vec<PlayerEvent> = Vec::new();
@@ -144,8 +152,14 @@ impl PlaybackEntity {
                         if moved {
                             shown = this.snapshot.position();
                         }
+                        let mixing = this.snapshot.is_mixing();
+                        let mix_flipped = mixing != shown_mixing;
+                        if mix_flipped {
+                            shown_mixing = mixing;
+                            emitted.push(PlaybackEvent::MixingChanged);
+                        }
                         // 暂停与空载时位置不动，也就不重绘。
-                        if got_events || moved {
+                        if got_events || moved || mix_flipped {
                             cx.notify();
                         }
                         for event in emitted {
@@ -177,6 +191,8 @@ impl PlaybackEntity {
             device: None,
             device_name: String::new(),
             smooth_switch: false,
+            auto_mix: false,
+            previous_track: None,
             exclusive_wanted: false,
             output_mode: OutputMode::Shared,
             output_detail: String::new(),
@@ -214,6 +230,15 @@ impl PlaybackEntity {
 
     pub fn current(&self) -> Option<&Track> {
         self.current.as_ref()
+    }
+
+    pub fn previous_track(&self) -> Option<&Track> {
+        self.previous_track.as_ref()
+    }
+
+    /// 当前是否正处于双轨混音叠加期。
+    pub fn is_mixing(&self) -> bool {
+        self.snapshot.is_mixing()
     }
 
     pub fn volume(&self) -> f32 {
@@ -271,6 +296,8 @@ impl PlaybackEntity {
         self.error = None;
         self.state = PlaybackState::Paused;
         self.duration = track.duration.unwrap_or(Duration::ZERO);
+        // 乐观写入恢复进度，确保紧随其后的首曲混音规划按真实续播位置计算提前量。
+        self.snapshot.set_position(position);
         self.send(PlayerCommand::Load {
             path: track.path.clone(),
             autoplay: false,
@@ -315,20 +342,44 @@ impl PlaybackEntity {
         cx.notify();
     }
 
-    /// 预载下一首。`after` 是当前曲目，音频线程据此丢弃过期命令。
-    pub fn preload_next(&self, after: &std::path::Path, next: Option<PathBuf>) {
+    /// 预载下一首及可选混音计划。`after` 是当前曲目，音频线程据此丢弃过期命令。
+    pub fn preload_next(&self, after: &std::path::Path, next: Option<NextTrack>) {
         self.send(PlayerCommand::SetNext {
             after: after.to_path_buf(),
             next,
         });
     }
 
-    /// 无缝换段后接管新曲目。音频已在播放，不再下发 `Load`。
+    /// 试听过渡编辑器里的混音计划，从 `from_start` 起播 `from` 并按 `plan` 混入 `to`。
+    pub fn preview_mix(
+        &mut self,
+        from: Track,
+        from_start: Duration,
+        to: PathBuf,
+        plan: MixPlan,
+        cx: &mut Context<Self>,
+    ) {
+        self.error = None;
+        self.state = PlaybackState::Playing;
+        self.duration = from.duration.unwrap_or(Duration::ZERO);
+        self.send(PlayerCommand::PreviewMix {
+            from: from.path.clone(),
+            from_start,
+            to,
+            plan,
+        });
+        self.current = Some(from);
+        cx.emit(PlaybackEvent::TrackChanged);
+        cx.notify();
+    }
+
+    /// 无缝或混音换段后接管新曲目。音频已在播放，不再下发 `Load`。
     /// `TrackChanged` 让续播、最近播放与界面高亮复用既有路径。
     pub fn adopt(&mut self, track: Track, duration: Duration, cx: &mut Context<Self>) {
         if duration > Duration::ZERO {
             self.duration = duration;
         }
+        self.previous_track = self.current.take();
         self.current = Some(track);
         // 播放与暂停状态沿用音频线程上报的值，用户恰在边界按下暂停时不得显示为播放中。
         cx.emit(PlaybackEvent::TrackChanged);
@@ -350,6 +401,15 @@ impl PlaybackEntity {
         }
         self.smooth_switch = enabled;
         self.send(PlayerCommand::SetSmoothSwitch(enabled));
+    }
+
+    /// 同步自动混音总开关到音频线程。
+    pub fn set_auto_mix(&mut self, enabled: bool) {
+        if self.auto_mix == enabled {
+            return;
+        }
+        self.auto_mix = enabled;
+        self.send(PlayerCommand::SetAutoMix(enabled));
     }
 
     /// 是否启用 WASAPI 独占输出。独占无法建立时，音频线程会自行退回共享模式并发回事件。
@@ -392,11 +452,19 @@ impl PlaybackEntity {
                 emitted.push(PlaybackEvent::Finished);
             }
 
-            PlayerEvent::TrackStarted { path, duration } => {
+            PlayerEvent::TrackStarted {
+                path,
+                duration,
+                start,
+            } => {
                 if duration > Duration::ZERO {
                     self.duration = duration;
                 }
-                emitted.push(PlaybackEvent::TrackStarted { path, duration });
+                emitted.push(PlaybackEvent::TrackStarted {
+                    path,
+                    duration,
+                    start,
+                });
             }
 
             PlayerEvent::Volume(volume) => {

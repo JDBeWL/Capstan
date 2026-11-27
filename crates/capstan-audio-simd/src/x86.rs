@@ -55,7 +55,7 @@ pub(super) unsafe fn i32(samples: &[f32], out: &mut Vec<u8>) {
     let ceiling = _mm256_set1_epi32(i32::MAX);
 
     // SAFETY: 调用方已确认 CPU 支持 AVX2；`base` 之后是刚 resize 出来的
-    // samples.len() * 4 字节，按 8 个采样一轮正好写满，不会越界。
+    // `samples.len() * 4` 字节，按 8 个采样一轮正好写满，不会越界。
     unsafe {
         let dst = out.as_mut_ptr().add(base);
 

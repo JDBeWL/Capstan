@@ -132,6 +132,9 @@ pub struct Track {
     /// 读这一首时的文件指纹。重扫拿它和磁盘上的现值比，一样就跳过整段标签解析。
     #[serde(default)]
     pub stamp: FileStamp,
+    /// 标签里写明的 BPM，供节奏分析作先验参考。缺失或超出合理区间时留空。
+    #[serde(default)]
+    pub bpm_tag: Option<f32>,
 }
 
 impl Track {
@@ -160,6 +163,7 @@ impl Track {
                 album: FieldSource::Filename,
             },
             stamp: FileStamp::of(path),
+            bpm_tag: None,
         }
     }
 

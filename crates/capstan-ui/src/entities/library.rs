@@ -7,7 +7,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use capstan_core::{
-    AlbumGroup, ArtistGroup, Collections, PlayMode, Playlist, Roots, SortKey, Track, TrackId,
+    AlbumGroup, ArtistGroup, CollectionId, Collections, PlayMode, Playlist, Roots, SortKey, Track,
+    TrackId,
 };
 
 use crate::platform::*;
@@ -56,9 +57,13 @@ pub enum LibraryEvent {
     },
     /// 一次操作未能完成，附带的文案直接展示给用户，即底部提示。
     Failed(String),
-    /// 曲库侧的偏好变了。随机、循环、排序键、跟随播放。落盘由 `RootView` 统一负责，
+    /// 曲库侧的偏好变了。随机、智能混排、循环、排序键、跟随播放。落盘由 `RootView` 统一负责，
     /// 曲库不持有设置实体，也不该知道 `settings.json` 长什么样。
     PrefsChanged,
+    /// 需要由上层结合离线分析结果重新执行智能混排队列编排。
+    SmartMixRequested,
+    /// 需要由上层结合离线分析结果对指定自建歌单执行一次性智能重排。
+    SmartReorderCollection(CollectionId),
 }
 
 pub struct LibraryEntity {
@@ -102,11 +107,14 @@ pub struct LibraryEntity {
     roots: Roots,
     /// 当前这轮扫描的停止标志。换目标时先设置，后台线程才不会继续读取无效标签。
     scan_cancel: Option<Arc<AtomicBool>>,
-    /// 随机轴，另一轴是 [`Self::repeat`]，由 [`Self::effective_mode`] 折算成 `PlayMode`。
+    /// 随机轴，与 `smart_mix` 互斥；另一轴是 [`Self::repeat`]，
+    /// 由 [`Self::effective_mode`] 折算成 `PlayMode`。
     shuffle: bool,
+    /// 智能混排轴，开启后按 BPM、调性与能量主动编排队列，与 `shuffle` 互斥。
+    smart_mix: bool,
     repeat: RepeatState,
-    /// 用户选的排序键。`playlist` 自己也记着，但它在首屏合并时会被整个换掉，
-    /// 那份记录随之退回默认，所以这里另存一份用来在合并之后重排。
+    /// 用户选的排序键。`playlist` 自身也记录该值，但首屏合并时会被整体替换并退回默认，
+    /// 因此这里另存一份，用于在合并后重排。
     sort: SortKey,
     liked: crate::likes::Likes,
     /// 已关注的艺术家，按名字键控，而非 id。
@@ -156,6 +164,7 @@ impl LibraryEntity {
             roots: crate::roots_store::load(),
             scan_cancel: None,
             shuffle: false,
+            smart_mix: false,
             repeat: RepeatState::Off,
             sort: SortKey::ImportOrder,
             liked: crate::likes::Likes::load(),
@@ -193,7 +202,14 @@ impl LibraryEntity {
         }
         let pending: Vec<capstan_core::Track> = self.playlist.tracks().to_vec();
         let had_pending = !pending.is_empty();
+        let existing_bpms: Vec<(TrackId, f32)> = self
+            .playlist
+            .analyzed_bpm_map()
+            .iter()
+            .map(|(&id, &bpm)| (id, bpm))
+            .collect();
         self.playlist = merge_tracks(loaded, pending);
+        self.playlist.set_analyzed_bpms(existing_bpms);
         // 合并用的是新建的 `Playlist`，它自带的排序键是默认值；用户上次选的那一档要从实体上补回去，
         // 否则工具栏会显示「导入顺序」而列表其实是按标题排的。
         self.playlist.sort_by(self.sort);
@@ -205,8 +221,9 @@ impl LibraryEntity {
             // 加载期间用户导入的曲目要补写；没有新导入就不必每次启动都重写整库。
             self.persist();
         }
-        // 队列先复位，`Loaded` 之后的续播才能在这条队列里找到上次那首。
+        // 队列先复位，`Loaded` 之后的续播才能在这条队列里找到上次那首；随后补回已持久化的播放模式。
         self.restore_queue();
+        self.apply_mode(false, cx);
         cx.emit(LibraryEvent::Loaded);
         cx.notify();
         // 缓存先当真画出来，核对文件还在不在放到后台单独跑。慢盘上几千次 stat 是启动路径
@@ -335,6 +352,15 @@ impl LibraryEntity {
     /// 当前排序键。读的是实体自身保存的那份，首屏合并前后都要给出用户选的那一档。
     pub fn sort_key(&self) -> SortKey {
         self.sort
+    }
+
+    /// 取曲目当前生效的 BPM，优先返回离线分析结果，缺失时退回音频标签。
+    pub fn effective_bpm(&self, track: &Track) -> Option<f32> {
+        self.playlist.effective_bpm(track)
+    }
+
+    pub fn seed(&self) -> u64 {
+        self.seed
     }
 
     pub fn data_revision(&self) -> u64 {

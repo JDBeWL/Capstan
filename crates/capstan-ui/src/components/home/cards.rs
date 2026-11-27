@@ -136,6 +136,7 @@ mod tests {
             audio: capstan_core::AudioInfo::default(),
             sources: capstan_core::FieldSources::default(),
             stamp: capstan_core::FileStamp::default(),
+            bpm_tag: None,
         }
     }
 

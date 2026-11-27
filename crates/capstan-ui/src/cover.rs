@@ -223,7 +223,7 @@ impl CoverCache {
         decode: impl FnOnce(&SharedImages) -> Option<Decoded> + Send + 'static,
         cx: &mut Context<Self>,
     ) {
-        // App::background_executor() 返回引用，必须 clone 出所有权值才能带进 'static 任务。
+        // `App::background_executor()` 返回引用，必须 clone 出所有权值才能带进 `'static` 任务。
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let slot = DecodeSlot::acquire(&executor).await;

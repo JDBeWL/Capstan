@@ -226,6 +226,33 @@ impl LibraryEntity {
         true
     }
 
+    /// 发出「智能重排歌单」语义请求，由根视图结合离线分析结果计算新顺序并写回。
+    pub fn request_smart_reorder_collection(&mut self, id: CollectionId, cx: &mut Context<Self>) {
+        cx.emit(super::LibraryEvent::SmartReorderCollection(id));
+    }
+
+    /// 将智能编排结果写回指定歌单并落盘。顺序未变化时返回 `false`。
+    pub fn apply_collection_order(
+        &mut self,
+        id: CollectionId,
+        ordered: &[TrackId],
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(list) = self.collections.get_mut(id) else {
+            return false;
+        };
+        if !list.reorder_matching(ordered) {
+            return false;
+        }
+        if self.scope == Scope::Collection(id) {
+            self.recompute_visible(cx);
+        }
+        self.persist_collections();
+        self.touch_data();
+        cx.notify();
+        true
+    }
+
     /// 可见行 → 歌单成员数组的下标。解析不出曲目的成员不占行，两个轴不是同一个，必须映射。
     fn collection_positions(&self, id: CollectionId) -> Vec<usize> {
         let Some(list) = self.collections.get(id) else {

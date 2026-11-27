@@ -133,9 +133,14 @@ impl Render for BottomBar {
                 shell.bottom_left_width(),
             )
         };
-        let (shuffle, repeat, count) = {
+        let (shuffle, smart_mix, repeat, count) = {
             let library = self.library.read(cx);
-            (library.is_shuffle(), library.repeat_state(), library.len())
+            (
+                library.is_shuffle(),
+                library.is_smart_mix(),
+                library.repeat_state(),
+                library.len(),
+            )
         };
 
         let bar = div()
@@ -269,6 +274,7 @@ impl Render for BottomBar {
                             self.transport.clone(),
                             &self.library,
                             shuffle,
+                            smart_mix,
                             repeat,
                             enabled,
                         ))
@@ -311,6 +317,7 @@ impl Render for BottomBar {
                 self.transport.clone(),
                 &self.library,
                 shuffle,
+                smart_mix,
                 repeat,
                 enabled,
             ))
@@ -327,14 +334,29 @@ impl Render for BottomBar {
     }
 }
 
-/// 传输区两侧的「随机」与「循环」按钮加中间的传输控件，合成一条操作带统一间距与基线。
+/// 传输区两侧的「智能混排」「随机」与「循环」按钮加中间的传输控件，合成一条操作带统一间距与基线。
 fn mode_group(
     transport: Entity<Transport>,
     library: &Entity<LibraryEntity>,
     shuffle: bool,
+    smart_mix: bool,
     repeat: crate::entities::RepeatState,
     enabled: bool,
 ) -> AnyElement {
+    let smart_mix_button = crate::common::button::IconButton::new("bar-smart-mix", Glyph::SmartMix)
+        .label(if smart_mix {
+            "智能混排：开（按 BPM、调性与能量主动编排队列）"
+        } else {
+            "智能混排：关（按 BPM、调性与能量主动编排队列）"
+        })
+        .active(smart_mix)
+        .enabled(enabled)
+        .on_click({
+            let library = library.clone();
+            move |_, _, cx| library.update(cx, LibraryEntity::toggle_smart_mix)
+        })
+        .render();
+
     let shuffle_button = crate::common::button::IconButton::new("bar-shuffle", Glyph::Shuffle)
         .label(if shuffle {
             "随机播放：开"
@@ -374,6 +396,7 @@ fn mode_group(
         .items_center()
         .justify_center()
         .gap(px(theme::GAP_MD))
+        .child(smart_mix_button)
         .child(shuffle_button)
         .child(transport)
         .child(repeat_button)

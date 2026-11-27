@@ -9,9 +9,11 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use capstan_audio::decode::{
-    ChannelConvertSource, GainControl, GainRamp, LfeConfig, LockFreeSource, SoftClip, TrackDecoder,
-    WhenEmpty,
+    ChannelConvertSource, GainControl, GainRamp, GaplessSource, GaplessState, LfeConfig,
+    LockFreeSource, NextSlot, Segment, SoftClip, TrackDecoder, WhenEmpty, new_slot,
 };
+use capstan_audio::mix::{CompiledMix, MixPlan, NextTrack};
+use capstan_audio::rodio_backend::resolve_effective_plan;
 use capstan_audio::{AudioBackend, AudioError, BackendNotice};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded};
 use rodio::{ChannelCount, SampleRate, Source};
@@ -29,6 +31,20 @@ const FADE: Duration = Duration::from_millis(60);
 /// 流中断后的首次重试间隔；此后按倍数退避，避免在故障设备上反复重试。
 const RETRY_INITIAL: Duration = Duration::from_millis(250);
 const RETRY_MAX: Duration = Duration::from_secs(2);
+/// 独占推送线程预缓冲约 2 秒，混音计划必须至少提前 4 秒送达，否则退回无缝直连。
+pub const MIN_LEAD_EXCLUSIVE: Duration = Duration::from_secs(4);
+
+#[derive(Clone)]
+struct Chain {
+    state: Arc<GaplessState>,
+    next: NextSlot,
+}
+
+/// 已经装进槽位、正等待推进的下一段元信息。
+struct QueuedNext {
+    loaded: Loaded,
+    key: (PathBuf, Option<u64>),
+}
 
 pub struct ExclusiveBackend {
     ring: Arc<SampleRing>,
@@ -50,9 +66,23 @@ pub struct ExclusiveBackend {
     preferred: Option<(u32, u16)>,
     /// 流失联后的待重建状态；`None` 表示链路正常。
     loss: Option<LostStream>,
-    /// 需要上浮给音频线程的异步通知（中断与恢复）。
+    /// 需要上浮给音频线程的异步通知（中断、恢复与换段）。
     notices: VecDeque<BackendNotice>,
     current: Option<Loaded>,
+    /// 自动混音总开关；关闭时维持单段直出，不包装混音链以保持位完美路径。
+    auto_mix: bool,
+    /// 开启自动混音或试听过渡时持有的双轨混音链状态与下一段槽位。
+    chain: Option<Chain>,
+    /// 尚未被推送线程取走的下一段元信息。
+    queued_next: Option<QueuedNext>,
+    /// 推送线程已取走写入采样环、正等待渲染线程消费至边界的段元信息。
+    in_flight: VecDeque<Loaded>,
+    /// 已归档到 `in_flight` 的生成侧段序号。
+    consumed_seq: u64,
+    /// 当前段起点对应的设备累计写入样本数。
+    segment_start_written: u64,
+    /// 当前生效的双轨重叠窗口 `[start_sample, mix_end_sample)`，用于扣除环缓冲延迟判定 `is_mixing`。
+    active_mix_window: Option<(u64, u64)>,
     volume: f32,
     stopped: bool,
 }
@@ -109,6 +139,13 @@ impl ExclusiveBackend {
             loss: None,
             notices: VecDeque::new(),
             current: None,
+            auto_mix: false,
+            chain: None,
+            queued_next: None,
+            in_flight: VecDeque::new(),
+            consumed_seq: 0,
+            segment_start_written: 0,
+            active_mix_window: None,
             volume: 1.0,
             stopped: false,
         };
@@ -227,19 +264,12 @@ impl ExclusiveBackend {
         }
     }
 
-    /// 先备好整条链（换采样率、按 `start` 跳转、预解码），再一次性换手，停旧推送线程、作废环、起新线程。
-    /// 顺序反了，建链耗时全变成断音。
-    fn rebuild(
-        &mut self,
+    /// 按当前协商格式构建单段音源（解码 → 按需重采样 → 声道对齐），供主段与预载段共用。
+    fn build_segment(
+        format: ExclusiveFormat,
         mut decoder: TrackDecoder,
-        path: &Path,
         start: Duration,
-        autoplay: bool,
-    ) -> Result<Duration> {
-        let format = self
-            .format
-            .ok_or_else(|| ExclusiveError::Initialize("独占格式尚未协商".to_owned()))?;
-
+    ) -> Result<(Box<dyn Source<Item = f32> + Send>, Duration)> {
         let duration = decoder.total_duration().unwrap_or(Duration::ZERO);
         if !start.is_zero() {
             decoder.seek(start)?;
@@ -264,9 +294,70 @@ impl ExclusiveBackend {
             channel_count(format.channels),
             LfeConfig::default(),
         );
+        Ok((Box::new(converted), duration))
+    }
+
+    /// 先备好整条链（换采样率、按 `start` 跳转、预解码），再一次性换手，停旧推送线程、作废环、起新线程。
+    /// 顺序反了，建链耗时全变成断音。
+    fn rebuild(
+        &mut self,
+        decoder: TrackDecoder,
+        path: &Path,
+        start: Duration,
+        autoplay: bool,
+    ) -> Result<Duration> {
+        self.rebuild_with_next(decoder, path, start, autoplay, None)
+    }
+
+    fn rebuild_with_next(
+        &mut self,
+        decoder: TrackDecoder,
+        path: &Path,
+        start: Duration,
+        autoplay: bool,
+        preinstalled: Option<(Segment, Loaded)>,
+    ) -> Result<Duration> {
+        let format = self
+            .format
+            .ok_or_else(|| ExclusiveError::Initialize("独占格式尚未协商".to_owned()))?;
+
+        let (segment, duration) = Self::build_segment(format, decoder, start)?;
+        let use_chain = self.auto_mix || preinstalled.is_some();
+
+        let (chain, queued_next, chained_source): (
+            Option<Chain>,
+            Option<QueuedNext>,
+            Box<dyn Source<Item = f32> + Send>,
+        ) = if use_chain {
+            let slot = new_slot();
+            let state = Arc::new(GaplessState::default());
+            let queued = if let Some((seg, next_loaded)) = preinstalled {
+                if let Ok(mut guard) = slot.lock() {
+                    *guard = Some(seg);
+                }
+                let key = (next_loaded.path.clone(), None);
+                Some(QueuedNext {
+                    loaded: next_loaded,
+                    key,
+                })
+            } else {
+                None
+            };
+            let source = GaplessSource::new(
+                segment,
+                Arc::clone(&slot),
+                Arc::clone(&state),
+                sample_rate(format.sample_rate),
+                channel_count(format.channels),
+            );
+            (Some(Chain { state, next: slot }), queued, Box::new(source))
+        } else {
+            (None, None, segment)
+        };
+
         let control = Arc::new(GainControl::new());
         let ramped = GainRamp::new(
-            converted,
+            chained_source,
             FADE,
             format.sample_rate,
             format.channels,
@@ -282,7 +373,7 @@ impl ExclusiveBackend {
         // 新线程可能已经把整首写完并置上了标志，渲染线程这才处理到那条清零命令。
         let generation = self.shared.begin_producer();
         // `written` 必须在此同步归零，不能只等渲染线程处理 `Flush`。
-        // 下面马上把 `base` 改成 `start`，旧计数会让 `position()` 多算一段，进度条先虚高再回落。
+        // 下面将 `base` 设为 `start`，旧计数会让 `position()` 多算一段，导致进度条先虚高再回落。
         self.shared.written.store(0, Ordering::SeqCst);
         let _ = self.commands.send(RenderCommand::Flush);
 
@@ -295,6 +386,12 @@ impl ExclusiveBackend {
             generation,
         )?);
 
+        self.chain = chain;
+        self.queued_next = queued_next;
+        self.in_flight.clear();
+        self.consumed_seq = 0;
+        self.segment_start_written = 0;
+        self.active_mix_window = None;
         self.current = Some(Loaded {
             path: path.to_path_buf(),
             duration,
@@ -306,6 +403,57 @@ impl ExclusiveBackend {
             let _ = self.commands.send(RenderCommand::Start);
         }
         Ok(duration)
+    }
+
+    fn clear_next(&mut self) {
+        if let Some(chain) = self.chain.as_ref()
+            && let Ok(mut guard) = chain.next.lock()
+        {
+            *guard = None;
+        }
+        self.queued_next = None;
+    }
+
+    /// 把推送线程已经从槽位取走写入采样环的下一段转入 `in_flight`，以免后续 `set_next` 覆盖其元信息。
+    fn capture_consumed_next(&mut self) {
+        let Some(chain) = self.chain.as_ref() else {
+            return;
+        };
+        let seq = chain.state.segment_seq();
+        if seq > self.consumed_seq {
+            self.consumed_seq = seq;
+            if let Some(queued) = self.queued_next.take() {
+                self.in_flight.push_back(queued.loaded);
+            }
+        }
+    }
+
+    /// 扣除环缓冲延迟；只有渲染线程实际写入设备的样本数到达边界落点，才上报 `Advanced`。
+    fn advance_if_needed(&mut self) {
+        self.capture_consumed_next();
+        let Some(chain) = self.chain.as_ref() else {
+            return;
+        };
+        let written = self.shared.written.load(Ordering::Acquire);
+        while let Some(boundary) = chain.state.pop_boundary_at(written) {
+            let Some(next) = self.in_flight.pop_front() else {
+                continue;
+            };
+            self.segment_start_written = boundary.start_sample;
+            self.active_mix_window = (boundary.mix_end_sample > boundary.start_sample)
+                .then_some((boundary.start_sample, boundary.mix_end_sample));
+            self.current = Some(Loaded {
+                path: next.path.clone(),
+                duration: next.duration,
+                base: next.base,
+                playing: true,
+            });
+            self.notices.push_back(BackendNotice::Advanced {
+                path: next.path,
+                duration: next.duration,
+                start: next.base,
+            });
+        }
     }
 
     fn stop_push(&mut self) {
@@ -430,6 +578,155 @@ impl AudioBackend for ExclusiveBackend {
             .map_err(AudioError::from)
     }
 
+    fn set_next(
+        &mut self,
+        after: &Path,
+        next: Option<&NextTrack>,
+    ) -> std::result::Result<(), AudioError> {
+        if !self.auto_mix {
+            return Ok(());
+        }
+        self.advance_if_needed();
+
+        let Some(current) = self.current.as_ref() else {
+            return Ok(());
+        };
+        if current.path != after || self.stopped || self.shared.finished.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let Some(chain) = self.chain.as_ref() else {
+            return Ok(());
+        };
+        let Some(format) = self.format else {
+            return Ok(());
+        };
+
+        let Some(next_track) = next else {
+            self.clear_next();
+            return Ok(());
+        };
+
+        let key = (
+            next_track.path.clone(),
+            next_track.mix.as_ref().map(MixPlan::fingerprint),
+        );
+        if self.queued_next.as_ref().is_some_and(|q| q.key == key) {
+            return Ok(());
+        }
+
+        let current_base = current.base;
+        let current_pos = self.position();
+        let slot = Arc::clone(&chain.next);
+
+        // 先清旧槽位再构建下一段，防止推送线程在构建期间消费过期曲目。
+        if let Ok(mut guard) = slot.lock() {
+            *guard = None;
+        }
+        self.queued_next = None;
+
+        let effective = resolve_effective_plan(
+            next_track.mix.as_ref(),
+            current_pos,
+            Some(MIN_LEAD_EXCLUSIVE),
+        );
+        let in_start = effective.map_or(Duration::ZERO, |plan| plan.in_start);
+
+        let decoder = TrackDecoder::open(&next_track.path)?;
+        let (source, duration) =
+            Self::build_segment(format, decoder, in_start).map_err(AudioError::from)?;
+        let compiled =
+            effective.and_then(|plan| CompiledMix::compile(plan, current_base, format.sample_rate));
+        let segment = match compiled {
+            Some(mix) => Segment::with_mix(source, mix),
+            None => Segment::new(source),
+        };
+
+        self.queued_next = Some(QueuedNext {
+            loaded: Loaded {
+                path: next_track.path.clone(),
+                duration,
+                base: in_start,
+                playing: true,
+            },
+            key,
+        });
+        if let Ok(mut guard) = slot.lock() {
+            *guard = Some(segment);
+        } else {
+            self.queued_next = None;
+        }
+        Ok(())
+    }
+
+    fn preview_mix(
+        &mut self,
+        from: &Path,
+        from_start: Duration,
+        to: &Path,
+        plan: &MixPlan,
+    ) -> std::result::Result<Duration, AudioError> {
+        let from_decoder = TrackDecoder::open(from)?;
+        let preferred = (from_decoder.sample_rate(), from_decoder.channels());
+        self.preferred = Some(preferred);
+        self.ensure_format(preferred).map_err(AudioError::from)?;
+
+        let format = self
+            .format
+            .ok_or_else(|| AudioError::Exclusive("独占格式尚未协商".to_owned()))?;
+        let to_decoder = TrackDecoder::open(to)?;
+        let (to_source, to_duration) =
+            Self::build_segment(format, to_decoder, plan.in_start).map_err(AudioError::from)?;
+        let compiled = CompiledMix::compile(plan, from_start, format.sample_rate);
+        let segment = match compiled {
+            Some(mix) => Segment::with_mix(to_source, mix),
+            None => Segment::new(to_source),
+        };
+        let next_loaded = Loaded {
+            path: to.to_path_buf(),
+            duration: to_duration,
+            base: plan.in_start,
+            playing: true,
+        };
+        self.rebuild_with_next(
+            from_decoder,
+            from,
+            from_start,
+            true,
+            Some((segment, next_loaded)),
+        )
+        .map_err(AudioError::from)
+    }
+
+    fn set_auto_mix(&mut self, enabled: bool) {
+        if self.auto_mix == enabled {
+            return;
+        }
+        self.auto_mix = enabled;
+        if !enabled {
+            self.clear_next();
+            return;
+        }
+        // 已在播单段直出链路时开启自动混音，就地以当前进度重建为带槽位链路，使本首就能混入下一首。
+        if self.chain.is_none()
+            && !self.stopped
+            && let Some(current) = self.current.as_ref()
+        {
+            let (path, playing) = (current.path.clone(), current.playing);
+            let pos = self.position();
+            if let Ok(decoder) = TrackDecoder::open(&path) {
+                let _ = self.rebuild(decoder, &path, pos, playing);
+            }
+        }
+    }
+
+    fn is_mixing(&self) -> bool {
+        let Some((start, end)) = self.active_mix_window else {
+            return false;
+        };
+        let written = self.shared.written.load(Ordering::Acquire);
+        written >= start && written < end
+    }
+
     fn play(&mut self) -> std::result::Result<(), AudioError> {
         if self.loss.is_some() {
             // 用户显式播放时不等退避，立刻按当前曲目重建一次。
@@ -468,7 +765,10 @@ impl AudioBackend for ExclusiveBackend {
 
     fn stop(&mut self) {
         let _ = self.commands.send(RenderCommand::Stop);
+        self.clear_next();
         self.stop_push();
+        self.in_flight.clear();
+        self.active_mix_window = None;
         if let Some(current) = self.current.as_mut() {
             current.base = Duration::ZERO;
             current.playing = false;
@@ -513,8 +813,10 @@ impl AudioBackend for ExclusiveBackend {
         if per_second == 0 {
             return current.base;
         }
-        // 只算已经交给设备的那部分，环里还没写进去的不算播过。
-        let seconds = self.shared.written.load(Ordering::Acquire) as f64 / per_second as f64;
+        // 只算已经交给设备的那部分，并扣除上一段边界前的累计样本，环里还没写进去的不算播过。
+        let written = self.shared.written.load(Ordering::Acquire);
+        let segment_written = written.saturating_sub(self.segment_start_written);
+        let seconds = segment_written as f64 / per_second as f64;
         let position = current.base + Duration::from_secs_f64(seconds);
 
         if current.duration > Duration::ZERO {
@@ -530,6 +832,7 @@ impl AudioBackend for ExclusiveBackend {
 
     fn tick(&mut self) {
         self.drain_responses();
+        self.advance_if_needed();
 
         if let Some(loss) = self.loss.as_mut()
             && !loss.reported
@@ -825,5 +1128,90 @@ mod tests {
 
         let position = backend.position();
         wait_position(&backend, position + Duration::from_millis(40));
+    }
+
+    #[test]
+    fn auto_mix_disabled_keeps_exclusive_single_segment_and_ignores_set_next() {
+        let dir = tempfile::tempdir().expect("临时目录");
+        let a = silent_wav(dir.path(), 44_100 * 2);
+        let dir_b = tempfile::tempdir().expect("临时目录");
+        let b = silent_wav(dir_b.path(), 44_100 * 2);
+
+        let open: OpenStream = Box::new(move |_, _| {
+            let control = Arc::new(FakeControl::default());
+            Ok(Box::new(FakeStream { control }) as Box<dyn RenderStream>)
+        });
+
+        let mut backend = ExclusiveBackend::open_with(None, open).expect("开流");
+        backend.load(&a, true).expect("装载");
+        assert!(backend.chain.is_none(), "默认关闭自动混音时不得包装混音链");
+
+        backend
+            .set_next(&a, Some(&NextTrack::gapless(b)))
+            .expect("关闭时应为空操作");
+        assert!(backend.queued_next.is_none());
+    }
+
+    #[test]
+    fn auto_mix_advances_only_after_written_reaches_ring_boundary() {
+        let dir_a = tempfile::tempdir().expect("临时目录");
+        let dir_b = tempfile::tempdir().expect("临时目录");
+        // 44.1 kHz 下各 5 秒，留足 4 秒提前量空间。
+        let a = silent_wav(dir_a.path(), 44_100 * 5);
+        let b = silent_wav(dir_b.path(), 44_100 * 5);
+
+        let open: OpenStream = Box::new(move |_, _| {
+            let control = Arc::new(FakeControl::default());
+            Ok(Box::new(FakeStream { control }) as Box<dyn RenderStream>)
+        });
+
+        let mut backend = ExclusiveBackend::open_with(None, open).expect("开流");
+        backend.set_auto_mix(true);
+
+        // 用 preview_mix 构造一段短出点（0.15s..0.35s）与非零入点（1.0s），加快测试执行。
+        let plan = MixPlan {
+            kind: capstan_audio::MixKind::Crossfade,
+            out_start: Duration::from_millis(150),
+            out_end: Duration::from_millis(350),
+            in_start: Duration::from_secs(1),
+            a_gain: capstan_audio::Automation::preset_out(capstan_audio::CurvePreset::Linear),
+            b_gain: capstan_audio::Automation::preset_in(capstan_audio::CurvePreset::Linear),
+            ..MixPlan::default()
+        };
+        backend
+            .preview_mix(&a, Duration::ZERO, &b, &plan)
+            .expect("试听混音装载");
+        assert!(backend.chain.is_some());
+
+        // 推送线程很快就会生成超过 150ms 并把段边界写入队列，但渲染线程未消费到 150ms 前不得上报。
+        let mut advanced = None;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            backend.tick();
+            while let Some(notice) = backend.take_notice() {
+                if let BackendNotice::Advanced { path, start, .. } = notice {
+                    let written = backend.shared.written.load(Ordering::Acquire);
+                    // 150ms @ 44.1kHz stereo ≈ 13230 样本，上报时刻 written 必须已到该处。
+                    assert!(
+                        written >= 13_000,
+                        "上报 Advanced 时 written={written} 尚未消费到边界，未扣除环缓冲延迟"
+                    );
+                    advanced = Some((path, start));
+                }
+            }
+            if advanced.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let (path, start) = advanced.expect("应当在消费到达边界后上报 Advanced");
+        assert_eq!(path, b);
+        assert_eq!(start, Duration::from_secs(1), "新曲起始位置应为 in_start");
+        assert!(
+            backend.position() >= Duration::from_secs(1),
+            "跨段后进度应从 in_start 起算：{:?}",
+            backend.position()
+        );
     }
 }

@@ -162,6 +162,7 @@ mod tests {
             audio: AudioInfo::default(),
             sources: FieldSources::default(),
             stamp: FileStamp::default(),
+            bpm_tag: None,
         }
     }
 }

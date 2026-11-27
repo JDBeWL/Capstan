@@ -162,7 +162,7 @@ impl SearchPage {
                     .take(BLOCK_MAX)
                     .map(|&index| all_albums[index].clone())
                     .collect();
-                // 收藏是虚拟歌单，不在 `Collections` 里，匹配时须先通过 `label_for` 取名字。
+                // 收藏是虚拟歌单，不在 `Collections` 里，匹配时必须先通过 `label_for` 取名字。
                 let mut list_total = 0usize;
                 let list_matches: Vec<(Scope, HeroInfo)> = library
                     .list_scopes()

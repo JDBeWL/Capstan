@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::event::PlaybackState;
@@ -12,6 +12,8 @@ pub struct Snapshot {
     state: AtomicU8,
     /// `f32::to_bits` 的结果。
     volume_bits: AtomicU32,
+    /// 当前是否处于双轨混音叠加期。
+    mixing: AtomicBool,
 }
 
 impl Default for Snapshot {
@@ -21,6 +23,7 @@ impl Default for Snapshot {
             duration_ms: AtomicU64::new(0),
             state: AtomicU8::new(PlaybackState::Idle.as_u8()),
             volume_bits: AtomicU32::new(1.0f32.to_bits()),
+            mixing: AtomicBool::new(false),
         }
     }
 }
@@ -59,6 +62,14 @@ impl Snapshot {
     pub fn set_volume(&self, value: f32) {
         self.volume_bits
             .store(value.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn is_mixing(&self) -> bool {
+        self.mixing.load(Ordering::Relaxed)
+    }
+
+    pub fn set_mixing(&self, active: bool) {
+        self.mixing.store(active, Ordering::Relaxed);
     }
 
     /// 已播比例，`0.0..=1.0`。时长未知时返回 0。

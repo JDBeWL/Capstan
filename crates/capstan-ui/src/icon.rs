@@ -28,6 +28,8 @@ pub enum Glyph {
     // 描边类图标，见 icon_data.rs。
     Search,
     Shuffle,
+    /// 智能混排，按 BPM、调性与能量主动编排队列。
+    SmartMix,
     RepeatAll,
     RepeatOne,
     List,
@@ -91,6 +93,7 @@ impl Glyph {
             Glyph::HeartFilled => "取消收藏",
             Glyph::Search => "搜索",
             Glyph::Shuffle => "随机播放",
+            Glyph::SmartMix => "智能混排",
             Glyph::RepeatAll => "列表循环",
             Glyph::RepeatOne => "单曲循环",
             Glyph::List => "列表视图",
@@ -182,6 +185,14 @@ fn svg_source(glyph: Glyph) -> &'static str {
         ),
         Glyph::HeartFilled => filled!(
             r#"<path d="M12 21.1l-1.38-1.26C5.5 15.24 2.2 12.24 2.2 8.55 2.2 5.55 4.55 3.2 7.55 3.2c1.7 0 3.33.79 4.45 2.04 1.12-1.25 2.75-2.04 4.45-2.04 3 0 5.35 2.35 5.35 5.35 0 3.69-3.3 6.69-8.42 11.29L12 21.1z"/>"#
+        ),
+        // 智能混排图标，五条节拍柱形传达按节奏与能量流动主动编排队列的语义。
+        Glyph::SmartMix => filled!(
+            r#"<rect x="2.5" y="10" width="2.2" height="4" rx="1.1"/>"#,
+            r#"<rect x="6.7" y="6.5" width="2.2" height="11" rx="1.1"/>"#,
+            r#"<rect x="10.9" y="3.5" width="2.2" height="17" rx="1.1"/>"#,
+            r#"<rect x="15.1" y="7.5" width="2.2" height="9" rx="1.1"/>"#,
+            r#"<rect x="19.3" y="10" width="2.2" height="4" rx="1.1"/>"#
         ),
         // 半实心圆。外圈描边 + 右半实心，缩到 14px 仍可辨认明暗两半。
         Glyph::Appearance => filled!(

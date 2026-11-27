@@ -17,7 +17,7 @@ pub struct AudioDeviceInfo {
 }
 
 /// cpal 的 WASAPI 后端把 `DEVPKEY_Device_FriendlyName` 放在 `extended()` 的第一项，
-/// `description().name()` 只是设备描述（"Speakers" 而非 "Speakers (Realtek...)"）。
+/// `description().name()` 只是设备描述，如 `"Speakers"` 而非 `"Speakers (Realtek...)"`。
 fn friendly_name(device: &cpal::Device) -> Option<String> {
     let description = device.description().ok()?;
     description

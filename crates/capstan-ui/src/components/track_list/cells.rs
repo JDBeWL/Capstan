@@ -142,7 +142,7 @@ pub(super) fn title_cell(
         );
 
     if two_lines {
-        // 副标题须自行确定宽度。`w_full` 在 gpui 下解不出一个确定宽度，`truncate` 就只剩裁切、
+        // 副标题必须自行确定宽度。`w_full` 在 gpui 下解不出一个确定宽度，`truncate` 就只剩裁切、
         // 没有省略号；专辑列之所以能收尾，是因为它的单元格写死了宽度。
         let subtitle_w =
             (env.title_width - env.thumb_size() - theme::GAP_MD - theme::GAP_MD).max(0.0);

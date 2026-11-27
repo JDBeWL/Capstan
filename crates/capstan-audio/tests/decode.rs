@@ -373,7 +373,7 @@ fn lockfree_source_forwards_track_metadata() {
     assert!((duration.as_secs_f64() - 0.1).abs() < 0.001);
 }
 
-/// 释放 `LockFreeSource` 之后，解码线程必须自行结束，`Drop` 中已无 `join` 作为兜底。
+/// 释放 `LockFreeSource` 之后，解码线程必须自行结束，`Drop` 中已无 `join` 等待。
 /// 素材需远大于有界通道（30 块 × 16384 样本 ≈ 49 万样本）且一帧都不消费，才会真正阻塞在 `send` 上。
 /// 判据是文件句柄。线程结束后 `File` 才 drop，而 Windows 上被占用的文件会使 `remove_file` 失败。
 #[test]

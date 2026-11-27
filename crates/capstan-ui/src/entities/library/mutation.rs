@@ -69,6 +69,36 @@ impl LibraryEntity {
         cx.notify();
     }
 
+    /// 注入单首曲目的离线分析 BPM，通知界面刷新 BPM 列。
+    pub fn set_analyzed_bpm(&mut self, id: TrackId, bpm: f32, cx: &mut Context<Self>) -> bool {
+        if !self.playlist.set_analyzed_bpm(id, bpm) {
+            return false;
+        }
+        cx.notify();
+        true
+    }
+
+    /// 批量注入离线分析 BPM，用于启动时一次性恢复磁盘缓存。
+    pub fn set_analyzed_bpms(
+        &mut self,
+        entries: impl IntoIterator<Item = (TrackId, f32)>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.playlist.set_analyzed_bpms(entries) {
+            return false;
+        }
+        cx.notify();
+        true
+    }
+
+    /// 按当前排序键重新排序并刷新投影，用于新分析的 BPM 落地后同步 BPM 排序。
+    pub fn apply_current_sort(&mut self, cx: &mut Context<Self>) {
+        self.playlist.apply_current_sort();
+        self.invalidate();
+        self.recompute_visible(cx);
+        cx.notify();
+    }
+
     pub fn remove_focused(&mut self, cx: &mut Context<Self>) -> Option<(Track, usize)> {
         let id = self.focus?;
         self.remove(id, cx)

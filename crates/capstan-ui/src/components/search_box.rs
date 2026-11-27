@@ -273,7 +273,7 @@ impl Render for SearchBox {
 mod tests {
     // 不写 `use super::*`，`platform::*` 里的 gpui `test` 过程宏会遮蔽内置 `#[test]`。
 
-    /// 两套主题下，组件库 `Input` 的文字色对搜索框底色都须达到 AA 对比度。
+    /// 两套主题下，组件库 `Input` 的文字色对搜索框底色都必须达到 AA 对比度。
     /// 文字色来自组件库全局态而非 `crate::theme`，两边的明暗必须一起切换。
     #[test]
     fn input_text_reads_against_the_search_pill_in_both_themes() {

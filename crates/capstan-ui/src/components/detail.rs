@@ -99,7 +99,9 @@ impl HeroInfo {
     }
 
     /// 副标题里可以点进艺术家页的名字。
-    /// 专辑页副标题取标签中的艺术家字段，多人时形如「甲 / 乙」。字段以 `/` 或 `,` 分隔时每位各是一个艺术家页，整串无法匹配，因此按 [`capstan_core::artist_keys_str`] 拆开。
+    /// 专辑页副标题取标签中的艺术家字段，多人时形如「甲 / 乙」。
+    /// 字段以 `/` 或 `,` 分隔时每位各是一个艺术家页，整串无法匹配，
+    /// 因此按 [`capstan_core::artist_keys_str`] 拆开。
     /// 艺术家页副标题为「N 张专辑」，歌单页为一句说明，都不指向任何人。
     pub fn artist_names(&self) -> Vec<&str> {
         if self.kind != HeroKind::Album {
@@ -467,7 +469,17 @@ fn more_button(
     crate::common::menu::dropdown(trigger, Anchor::TopLeft, move |menu, _window, _cx| {
         let open_queue = shell.clone();
         let open_now = shell.clone();
+        let smart_mix_lib = library.clone();
         let mut menu = menu
+            .item(
+                PopupMenuItem::new("智能混排播放").on_click(move |_, _, cx| {
+                    smart_mix_lib.update(cx, |library, cx| {
+                        library.set_smart_mix(true, cx);
+                        library.play_first_playable(cx);
+                    });
+                }),
+            )
+            .separator()
             .item(
                 PopupMenuItem::new("打开播放队列").on_click(move |_, _, cx| {
                     open_queue.update(cx, |shell, cx| shell.toggle_panel(PanelTab::Queue, cx));
@@ -492,10 +504,18 @@ fn more_button(
         }
 
         menu.when_some(collection, |menu, id| {
-            let library = library.clone();
+            let reorder_lib = library.clone();
+            let cover_lib = library.clone();
             menu.separator()
+                .item(
+                    PopupMenuItem::new("智能重排歌单").on_click(move |_, _, cx| {
+                        reorder_lib.update(cx, |library, cx| {
+                            library.request_smart_reorder_collection(id, cx);
+                        });
+                    }),
+                )
                 .item(PopupMenuItem::new("更换封面").on_click(move |_, _, cx| {
-                    library.update(cx, |library, cx| library.pick_collection_cover(id, cx));
+                    cover_lib.update(cx, |library, cx| library.pick_collection_cover(id, cx));
                 }))
         })
         .item(PopupMenuItem::new("分享（暂未支持）").disabled(true))
@@ -636,6 +656,7 @@ mod tests {
             audio: capstan_core::AudioInfo::default(),
             sources: capstan_core::FieldSources::default(),
             stamp: capstan_core::FileStamp::default(),
+            bpm_tag: None,
         }
     }
 

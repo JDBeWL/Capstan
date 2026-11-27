@@ -28,15 +28,20 @@ impl RootView {
 
     // 前进没有对称的方法。鼠标回调只拿得到 &mut App，只能走自由函数 `nav_click`。
 
-    /// Esc 一次只退一步，优先级，歌词遮罩 → 返回 → 收起右面板 → 清空搜索词。
+    /// Esc 一次只退一步，优先级，过渡编辑器 → 歌词遮罩 → 返回 → 收起右面板 → 清空搜索词。
     pub(super) fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.mix_editor.read(cx).is_open() {
+            self.mix_editor
+                .update(cx, crate::components::MixEditor::close);
+            return;
+        }
         // 遮罩在最上层，必须先关，否则这次 Esc 会去退导航。
         if self.shell.read(cx).shows_lyrics() {
             self.shell.update(cx, ShellEntity::toggle_lyrics);
             return;
         }
 
-        // 判据是历史栈不是 is_scoped()。栈空 + 收窄只可能是点侧栏「曲目」进来的，确实没有上一步。
+        // 判据是历史栈而不是 `is_scoped()`。栈空且收窄只可能是点侧栏「曲目」进来的，确实没有上一步。
         if self.go_back(cx) {
             return;
         }
@@ -50,8 +55,8 @@ impl RootView {
             return;
         }
 
-        // 走搜索框而不是直接清曲库，否则框里留着旧文字
-        // 判据用 has_query()。is_filtering() 在「只进了专辑没搜索」时也是 true，那一步会静默无效。
+        // 走搜索框而不是直接清曲库，否则框里留着旧文字。
+        // 判据用 `has_query()`；`is_filtering()` 在「只进了专辑没搜索」时也是 true，那一步会静默无效。
         if self.library.read(cx).has_query() {
             self.search
                 .update(cx, |search, cx| search.clear(window, cx));
@@ -94,7 +99,7 @@ pub(super) fn floating_back(
     let on_click = nav_click(shell, library, NavDirection::Back);
     let id = ElementId::from(FLOATING_BACK_ID);
     let hover = crate::common::hover::progress(id.clone(), window, cx);
-    // 黄底擦入到一半时图标跨在黑与黄之间，颜色须跟随进度，避免短暂失去可读性。
+    // 黄底擦入到一半时图标跨在黑与黄之间，颜色必须跟随进度，避免短暂失去可读性。
     let glyph_color = theme::text_on_control().blend(theme::text_on_accent().opacity(hover));
 
     div()

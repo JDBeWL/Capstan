@@ -7,7 +7,7 @@ use capstan_core::{PlayMode, Track, TrackId, format_duration};
 
 use crate::common::thousands;
 use crate::cover::CoverCache;
-use crate::entities::LibraryEntity;
+use crate::entities::{AnalysisEntity, LibraryEntity};
 use crate::icon::{Glyph, icon, icon_inherit};
 use crate::platform::*;
 use crate::shell::ShellEntity;
@@ -15,6 +15,11 @@ use crate::theme;
 
 use super::panel_close_button;
 use super::track_drag::{DragGhost, DragTrack};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueuePanelEvent {
+    EditTransition(TrackId, TrackId),
+}
 
 /// 行高要容得下 14px 标题行 + 12px 副标题行，合计约 51。
 const ROW_H: f32 = theme::ROW_H_COMFORTABLE;
@@ -31,9 +36,11 @@ pub struct QueuePanel {
     shell: Entity<ShellEntity>,
     /// 行首封面。解码完成时会 notify，这一栏跟着重绘。
     covers: Entity<CoverCache>,
+    analysis: Entity<AnalysisEntity>,
     _sub: Subscription,
     _shell_sub: Subscription,
     _covers_sub: Subscription,
+    _analysis_sub: Subscription,
     scroll: ListState,
     // `observe(library)` 在任何曲库变化时都会触发，所以记住上次定位的曲目，
     // 只在正在播放的那首确实换了时才滚动，否则用户翻看队列时会被强制滚回当前曲。
@@ -44,11 +51,14 @@ pub struct QueuePanel {
     rows_key: Option<QueueKey>,
 }
 
+impl EventEmitter<QueuePanelEvent> for QueuePanel {}
+
 impl QueuePanel {
     pub fn new(
         library: Entity<LibraryEntity>,
         shell: Entity<ShellEntity>,
         covers: Entity<CoverCache>,
+        analysis: Entity<AnalysisEntity>,
         cx: &mut Context<Self>,
     ) -> Self {
         // 换曲和切模式都改变队列，所以 observe 整个曲库实体。
@@ -61,13 +71,16 @@ impl QueuePanel {
         let shell_sub = cx.observe(&shell, |_, _, cx| cx.notify());
         // 封面是异步解码的，落地时这一栏要重绘一次，否则行首一直挂着占位图。
         let covers_sub = cx.observe(&covers, |_, _, cx| cx.notify());
+        let analysis_sub = cx.observe(&analysis, |_, _, cx| cx.notify());
         Self {
             library,
             shell,
             covers,
+            analysis,
             _sub: sub,
             _shell_sub: shell_sub,
             _covers_sub: covers_sub,
+            _analysis_sub: analysis_sub,
             scroll: ListState::new(0, ListAlignment::Top, px(ROW_H * 4.0)),
             last_anchored: None,
             rows: QueueRows::default(),
@@ -158,6 +171,17 @@ impl Render for QueuePanel {
         let ahead = self.rows.ahead;
         // 「共 N 首」说的是队列，不是曲库。有队列时两者不相等（列着 4 首却写 131 首）。
         let total = library.queue_len();
+        let analyzed_in_queue = if mode == PlayMode::SmartMix && total > 0 {
+            let analysis = self.analysis.read(cx);
+            library
+                .playlist()
+                .order()
+                .iter()
+                .filter(|id| analysis.is_analyzed(**id))
+                .count()
+        } else {
+            total
+        };
 
         let header = div()
             .flex_none()
@@ -187,10 +211,31 @@ impl Render for QueuePanel {
                     ),
             )
             .child(crate::common::section::field(thousands(total)))
-            .child(mode_badge(mode))
+            .child(mode_badge(mode, &self.library))
             .when(overlay, |row| {
                 row.child(panel_close_button("queue-close", &self.shell))
             });
+
+        let summary_text = if total == 0 {
+            "曲库为空".to_owned()
+        } else if playing.is_none() {
+            format!("共 {} 首 │ 尚未开始播放", thousands(total))
+        } else {
+            format!(
+                "共 {} 首 │ 接下来 {} 首",
+                thousands(total),
+                thousands(ahead)
+            )
+        };
+        let summary_text = if mode == PlayMode::SmartMix && total > 0 && analyzed_in_queue < total {
+            format!(
+                "{summary_text} │ 分析 {}/{}",
+                thousands(analyzed_in_queue),
+                thousands(total)
+            )
+        } else {
+            summary_text
+        };
 
         let summary = div()
             .flex_none()
@@ -202,22 +247,14 @@ impl Render for QueuePanel {
             .font(theme::field_font())
             .text_size(px(theme::FONT_CAPTION))
             .text_color(theme::text_muted())
-            .child(if total == 0 {
-                "曲库为空".to_owned()
-            } else if playing.is_none() {
-                format!("共 {} 首 │ 尚未开始播放", thousands(total))
-            } else {
-                format!(
-                    "共 {} 首 │ 接下来 {} 首",
-                    thousands(total),
-                    thousands(ahead)
-                )
-            });
+            .child(summary_text);
 
         let row_count = self.rows.entries().len();
         let rows = Rc::clone(&self.rows.entries);
         let library_entity = self.library.clone();
         let covers_entity = self.covers.clone();
+        let analysis_entity = self.analysis.clone();
+        let panel_entity = cx.entity().downgrade();
 
         let body: AnyElement = if row_count == 0 {
             empty_queue(total)
@@ -228,13 +265,53 @@ impl Render for QueuePanel {
                 };
                 match entry {
                     QueueEntry::Track { id, kind, number } => {
-                        // 先拷出曲目再放开曲库读取，行元素的回调还要可变借用 `cx`。
-                        let track = library_entity.read(cx).playlist().by_id(*id).cloned();
+                        // 查找下一条曲目用于提供「⇄ 编辑过渡」入口与契合度指示点。
+                        let next_id = rows.get(ix + 1..).and_then(|tail| {
+                            tail.iter().find_map(|next| match next {
+                                QueueEntry::Track { id, .. } => Some(*id),
+                                QueueEntry::Divider(_) => None,
+                            })
+                        });
+                        // 先拷出曲目、BPM、调性与过渡契合度再放开借用，行回调还要可变借用 `cx`。
+                        let (track, bpm, camelot, compat) = {
+                            let lib = library_entity.read(cx);
+                            let analysis = analysis_entity.read(cx);
+                            let track = lib.playlist().by_id(*id).cloned();
+                            let bpm = track.as_ref().and_then(|t| lib.effective_bpm(t));
+                            let camelot = analysis.camelot(*id);
+                            let compat = track.as_ref().zip(next_id).and_then(|(cur, next)| {
+                                if next == *id {
+                                    return None;
+                                }
+                                let an_a = analysis.get(*id)?;
+                                let an_b = analysis.get(next)?;
+                                let next_track = lib.playlist().by_id(next)?;
+                                let item_a = capstan_analysis::ArrangeItem::from_analysis(
+                                    *id,
+                                    &an_a,
+                                    cur.artist.as_deref(),
+                                    cur.album.as_deref(),
+                                );
+                                let item_b = capstan_analysis::ArrangeItem::from_analysis(
+                                    next,
+                                    &an_b,
+                                    next_track.artist.as_deref(),
+                                    next_track.album.as_deref(),
+                                );
+                                Some(capstan_analysis::pair_score(&item_a, &item_b))
+                            });
+                            (track, bpm, camelot, compat)
+                        };
                         match track {
                             Some(track) => queue_row(
                                 *number,
                                 &track,
                                 *kind,
+                                bpm,
+                                camelot,
+                                compat,
+                                next_id,
+                                &panel_entity,
                                 &library_entity,
                                 &covers_entity,
                                 window,
@@ -450,21 +527,23 @@ pub enum RowKind {
     Upcoming,
 }
 
-fn mode_badge(mode: PlayMode) -> impl IntoElement {
+fn mode_badge(mode: PlayMode, library: &Entity<LibraryEntity>) -> impl IntoElement {
     let (label, glyph, active) = match mode {
         PlayMode::Sequential => ("顺序", Glyph::List, false),
         PlayMode::Shuffle => ("随机", Glyph::Shuffle, true),
+        PlayMode::SmartMix => ("智能混排", Glyph::SmartMix, true),
         PlayMode::RepeatAll => ("列表循环", Glyph::RepeatAll, true),
         PlayMode::RepeatOne => ("单曲循环", Glyph::RepeatOne, true),
     };
 
-    div()
+    let mut badge = div()
+        .id("queue-mode-badge")
         .flex_none()
         .flex()
         .items_center()
         .gap(px(theme::GAP_XS))
         .px(px(theme::GAP_SM))
-        .py(px(2.))
+        .py(px(3.))
         .bg(if active {
             theme::control()
         } else {
@@ -475,19 +554,33 @@ fn mode_badge(mode: PlayMode) -> impl IntoElement {
         } else {
             theme::text_muted()
         })
-        .text_size(px(theme::FONT_MICRO))
+        .text_size(px(theme::FONT_CAPTION))
+        .font_weight(theme::WEIGHT_BUTTON)
         .child(
             div()
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(icon_inherit(glyph, 12.)),
+                .child(icon_inherit(glyph, 13.)),
         )
-        .child(label)
+        .child(label);
+
+    if mode == PlayMode::SmartMix {
+        let library = library.clone();
+        badge = badge
+            .cursor_pointer()
+            .tooltip(crate::common::tooltip::builder("点击重新编排智能混排队列"))
+            .hover(|s| s.bg(theme::accent()).text_color(theme::text_on_accent()))
+            .on_click(move |_, _, cx| {
+                library.update(cx, LibraryEntity::reroll_smart_mix);
+            });
+    }
+
+    badge
 }
 
 /// 行内的半个落点。`below` 为真时插到这一行之后，否则之前。
-/// 上半 + 下半拼起来正好铺满一行，落点线画在哪一半，曲子就插到哪一边。
+/// 上半与下半拼起来正好铺满一行，落点线画在哪一半，曲目就插到哪一边。
 fn queue_drop_zone(
     number: usize,
     below: bool,
@@ -538,10 +631,16 @@ fn drop_index(order_pos: Option<usize>, below: bool) -> usize {
 
 /// 队列的一行。`kind` 决定配色，点一下跳到这一首。
 /// `number` 兼作元素 id。id 跟着曲目而不是行数，换曲时标签增减才不会让滚动错位。
+#[allow(clippy::too_many_arguments)]
 fn queue_row(
     number: usize,
     track: &Track,
     kind: RowKind,
+    bpm: Option<f32>,
+    camelot: Option<String>,
+    compat: Option<f32>,
+    next_id: Option<TrackId>,
+    panel: &WeakEntity<QueuePanel>,
     library: &Entity<LibraryEntity>,
     covers: &Entity<CoverCache>,
     window: &mut Window,
@@ -667,22 +766,115 @@ fn queue_row(
         |drag: &DragTrack, _, _, cx| cx.new(|_| DragGhost::new(drag.title.clone())),
     );
 
-    // 时长列固定宽度而不是 `flex_1`，后者的右边界取决于标题长度，会把这一列撑宽。
-    let mut row = row.child(
-        div()
-            .flex_none()
-            .w(px(DURATION_W))
-            .flex()
-            .justify_end()
-            .text_size(px(theme::FONT_CAPTION))
-            .font(theme::field_font())
-            .text_color(if played {
-                theme::text_faint()
+    let tag_text = match (bpm, camelot) {
+        (Some(v), Some(code)) => Some(format!("{v:.0} · {code}")),
+        (Some(v), None) => Some(format!("{v:.0}")),
+        (None, Some(code)) => Some(code),
+        (None, None) => None,
+    };
+
+    // 存在下一首时在 BPM 左侧悬停露出「⇄」过渡编辑入口与和声、速度契合度色点，
+    // 保证末曲标签仍与时长列对齐。
+    let mut row = row
+        .when_some(next_id.filter(|&next| next != track_id), |row, next| {
+            let panel = panel.clone();
+            let group = group.clone();
+            let tip = match compat {
+                Some(score) => {
+                    let pct = (score.clamp(0.0, 1.0) * 100.0).round() as u32;
+                    let level = if score >= 0.72 {
+                        "顺滑"
+                    } else if score >= 0.48 {
+                        "适中"
+                    } else {
+                        "跨度较大"
+                    };
+                    format!("与下一首过渡契合度 {pct}%（{level}）· 点击编辑过渡")
+                }
+                None => "编辑与下一首之间的过渡".to_owned(),
+            };
+            row.child(
+                div()
+                    .id(("queue-mix-edit", number))
+                    .flex_none()
+                    .mr(px(theme::GAP_XS))
+                    .px(px(4.))
+                    .py(px(1.))
+                    .bg(theme::elevated())
+                    .text_color(theme::text_muted())
+                    .text_size(px(theme::FONT_MICRO))
+                    .opacity(0.0)
+                    .group_hover(group, |s| s.opacity(1.0))
+                    .hover(|s| s.bg(theme::accent()).text_color(theme::text_on_accent()))
+                    .tooltip(crate::common::tooltip::builder(tip))
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        let _ = panel.update(cx, |_, cx| {
+                            cx.emit(QueuePanelEvent::EditTransition(track_id, next));
+                        });
+                    })
+                    .child("⇄"),
+            )
+        })
+        .when_some(compat, |row, score| {
+            let dot_color = if score >= 0.72 {
+                rgb(0x22c55e)
+            } else if score >= 0.48 {
+                rgb(0xf59e0b)
             } else {
-                theme::text_muted()
-            })
-            .child(duration),
-    );
+                rgb(0xef4444)
+            };
+            let pct = (score.clamp(0.0, 1.0) * 100.0).round() as u32;
+            let level = if score >= 0.72 {
+                "顺滑"
+            } else if score >= 0.48 {
+                "适中"
+            } else {
+                "跨度较大"
+            };
+            row.child(
+                div()
+                    .id(("queue-compat-dot", number))
+                    .flex_none()
+                    .mr(px(theme::GAP_XS))
+                    .size(px(6.))
+                    .rounded(px(3.))
+                    .bg(dot_color)
+                    .tooltip(crate::common::tooltip::builder(format!(
+                        "与下一首过渡契合度 {pct}%（{level}）"
+                    ))),
+            )
+        })
+        .when_some(tag_text, |row, text| {
+            row.child(
+                div()
+                    .flex_none()
+                    .mr(px(theme::GAP_XS))
+                    .px(px(4.))
+                    .py(px(1.))
+                    .bg(theme::tag_bg())
+                    .text_color(theme::tag_fg())
+                    .font(theme::field_font())
+                    .text_size(px(theme::FONT_MICRO))
+                    .child(text),
+            )
+        })
+        // 时长列固定宽度而不是 `flex_1`，后者的右边界取决于标题长度，会把这一列撑宽。
+        .child(
+            div()
+                .flex_none()
+                .w(px(DURATION_W))
+                .flex()
+                .justify_end()
+                .text_size(px(theme::FONT_CAPTION))
+                .font(theme::field_font())
+                .text_color(if played {
+                    theme::text_faint()
+                } else {
+                    theme::text_muted()
+                })
+                .child(duration),
+        );
 
     // 引擎解不了的格式照常列出，只压暗并给出原因；队列推进会跳过它们，点击只得到一条提示。
     if let Some(reason) = track.unplayable_reason() {

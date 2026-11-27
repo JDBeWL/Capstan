@@ -5,6 +5,7 @@ members = [
     "crates/capstan-audio",
     "crates/capstan-audio-simd",
     "crates/capstan-audio-exclusive",
+    "crates/capstan-analysis",
     "crates/capstan-ui",
     "crates/capstan-taskbar",
     "crates/capstan-app",
@@ -16,11 +17,12 @@ rust-version = "1.99.1"
 license = "MIT OR Apache-2.0"
 
 [workspace.metadata.product]
-version = "0.5.2"
+version = "0.6.0"
 
 [workspace.dependencies]
 capstan-core = { path = "crates/capstan-core" }
 capstan-audio = { path = "crates/capstan-audio" }
+capstan-analysis = { path = "crates/capstan-analysis" }
 capstan-ui = { path = "crates/capstan-ui" }
 capstan-taskbar = { path = "crates/capstan-taskbar" }
 
@@ -28,6 +30,9 @@ thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 walkdir = "2"
+rustfft = "6"
+rubato = { version = "5", default-features = false }
+audioadapter-buffers = "5"
 
 # gpui-pre 是 Zed main 的快照分叉，必须与 gpui-component 0.8.1 钉的版本一致（`=0.3.10`），
 # 否则会解析出两份 gpui 而类型不匹配。
